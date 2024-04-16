@@ -20,7 +20,7 @@ The dataset consists of pretraining dataset, threat report cralwer (tool), and t
 
  - our evaluation set is well-filtered, manually-verified set 
 
- - we also provide the list from two public websites (Malpedia, ThaiCERT). Look at the [RAEDME](/threat-reports-per-group) file 
+ - we also provide the list from two public websites (Malpedia, ThaiCERT).
 
   ## threat report collector 
 
