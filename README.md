@@ -26,4 +26,10 @@ The dataset consists of pretraining dataset, threat report cralwer (tool), and t
 
   ## threat report collector 
 
-   - Our dataset is as of 2022. 06, we will be releasing our collector as a tool to collect threat reports (working on... will be uploaded soon)
+  - Our dataset is as of 2022. 06, we will be releasing our collector as a tool to collect threat reports (working on... will be uploaded soon)
+
+  ## Author Information 
+  
+  - Please contact us (Chanwoo Bae, bae68@purdue.edu) for any questions.
+
+  - We kidnly request to cite our paper with your use of dataset.
