@@ -8,21 +8,17 @@ The dataset consists of pretraining dataset, threat reports per APT groups and a
 
  ## Large-scale Pretraining, Threat Reports Corpus Dataset 
 
- - textual corpus of threat reports
+ - Textual corpus of threat reports
 
- - collected from 8 vendors
-
- - Table 2 in the paper 
+ - Collected from 8 vendors
 
  ## Threat Reports, Classified by APT Groups
 
- - a collection of threat reports by APT groups
+ - A collection of threat reports by APT groups
 
- - our evaluation set is well-filtered, manually-verified set 
+ - Our evaluation set is well-filtered, manually-verified set 
 
- - Section 5.2 in the paper 
-
- - we also provide the copied list from two public websites (Malpedia, ThaiCERT).
+ - We also provide the copied list from two public websites (Malpedia, ThaiCERT).
 
   ## Threat Report Collector 
 
