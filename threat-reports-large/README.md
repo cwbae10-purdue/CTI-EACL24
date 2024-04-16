@@ -1,6 +1,6 @@
 # Threat reports large 
 
-This a collection of large-scale threat reports. 
+This a collection of large-scale threat reports (Table 2). 
 
  - each directory contains each vendor's collection
 
