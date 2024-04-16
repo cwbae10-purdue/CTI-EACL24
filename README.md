@@ -1,4 +1,4 @@
-# CTI-EACL24
+# Cyber Threat Intelligence Dataset
 
 This is a dataset repository which is used on our work. 
 
