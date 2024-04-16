@@ -14,6 +14,14 @@ The dataset consists of pretraining dataset, threat report cralwer (tool), and t
 
  - Table 2 in the paper 
 
- ## threat reports cralwer (working on)
-
  ## threat reports classified by APT groups
+
+ - a collection of threat reports by APT groups
+
+ - our evaluation set is well-filtered, manually-verified set 
+
+ - we also provide the list from two public websites (Malpedia, ThaiCERT). Look at the [RAEDME](/threat-reports-per-group) file 
+
+  ## threat report collector 
+
+   - Our dataset is as of 2022. 06, we will be releasing our collector as a tool to collect threat reports (working on... will be uploaded soon)
