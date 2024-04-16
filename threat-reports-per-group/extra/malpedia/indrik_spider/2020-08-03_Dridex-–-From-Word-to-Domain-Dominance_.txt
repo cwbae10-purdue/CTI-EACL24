@@ -1,0 +1,93 @@
+Real Intrusions by Real Attackers, The Truth Behind the Intrusion
+We see a good example of this in our Dridex sample.
+We executed a malicious Word doc in our honeypot which later elevated to multiple Empire shells across the domain as well as additional Dridex installations.
+The threat actors used well known tools, moved like they were running a playbook, and used an Empire C2 server known to the community for 8 months.
+Dridex also known as Bugat and Cridex is a form of malware that specializes in stealing bank credentials via a system that utilizes macros from Microsoft Word.
+As we’ve seen over the last few years, Dridex is more than just a banking Trojan.
+Cybersecurity industry reporting attributes Dridex, BitPaymer, and Locky campaigns, as well as other massive malware spam (malspam) campaigns to actors known alternately as Evil Corp or TA505.
+Actors distributing Dridex likely employ ransomware with similar configurations.
+Code for BitPaymer, also known as Friedex, includes numerous similarities to Dridex, despite its function as ransomware rather than data extraction.
+The two malwares use the same mechanics for several functions, and the authors compiled the codes at nearly the same time.
+The ransomware distributed through these malwares has targeted U.S. financial institutions and resulted in data and financial loss.
+Additional Dridex write-ups on malpedia
+We’ll be trying out the Unified Kill Chain as our flow today.
+Like many threat activities today, this started with delivery of a malicious Word document.
+Using olevba to look at the file, we get some clues on the file’s linage and probable execution activity.
+From there, we saw the following scheduled task run on the system, as well as a registry key for persistence.
+As for command and control, from Dridex on the initial infected workstation, we saw it connect on port 443 to the follow any IP’s discovered by the Suricata signature for:
+ET TROJAN ABUSE.CH SSL Blacklist Malicious SSL certificate detected (Dridex)
+So, while we saw HTTPS encryption on the wire, defenders could catch this activity with freely available IDS rules.
+Hours later we saw the system run the following:
+The contents of J10B9.cmd made it obvious, we were on to the next stage.
+Below we can see the POST request of the PowerShell encoded command, run by the threat actor, via Dridex.
+Just looking at the syntax, can you guess what it is?
+We can see that we are looking at the Empire Post Exploitation Framework.
+This IP has been running an Empire C2 server since at least December 2019, as scanned by Urlscan and identified by the hash of the default webpage: b8c892fbb49921529be6f6ce17685c31724f76959111b28f39e39dc299b8acaf
+AdFind was dropped in the C:\Users\Public folder using Empire.
+ The following commands were run:
+It appears the attackers were looking for a list of computers and associated trusts.
+We can see that both command outputs were written to a file.
+Read more about AdFind recon here.
+Both files were then exfiled over the Dridex C2 channel:
+Other noteworthy commands ran during discovery:
+The threat actors utilized Sysinternals PsExec and Empire to move laterally through the environment.
+Soon after Empire’s execution on the entry system, the threat actor attempted to run Empire (via WMI) on all domain-joined systems.
+A few machines had Defender running, which blocked the execution of Empire.
+The threat actors successfully got an Empire shell on a few machines as well as a Domain Controller (DC).
+Shortly there-after, we see this on the compromised DC.
+They then used PsExec to execute Dridex on additional machines.
+PsExec was renamed to pse.exe and was downloaded using the below GET request:
+Through our investigation, we noticed that the directory where PsExec and AdFind were downloaded from was an open directory, where additional files were stored.
+We were not able to acquire all of these files but we were able to access 123.bin, a.txt, ufo.exe, and marple.exe.
+a.txt: is a list of 800+ hostnames, most likely from a previous or ongoing attack.
+module.php: appears to be a password protected webshell.
+marple.exe: is written in Korean, has invalid debug information and contradicting timestamps.
+123.bin has invalid debug information and similar contradicting timestamps.
+ufo.exe and 123.bin are very similar.
+The only difference is the time stamps.
+All three binaries had anti-VM instructions and anti-debugging instructions per capa and would not run in sandboxes.
+After pulling down PsExec, the threat actor ran the following command.
+Here’s what that command does:
+-accepteula: Suppresses the display of the license dialog.
+@file: Execute the command on each of the computers listed in the file.
+-c: Copy the specified executable to the remote system for execution.
+-f: Copy the specified program even if the file already exists on the remote system.
+-d: Don’t wait for process to terminate (non-interactive).
+-s: Run the remote process as the System account.
+As you can see above, ufo.exe is executed as System across multiple hosts, which is all logged to log.txt.
+The below snippet is from log.txt, showing that the file was copied/run.
+Unfamiliar with how PsExec works?
+Here’s a good summation by Guy Leech
+So when psexec is used to run something on a remote system, it works by creating a new service executable called psexesvc.exe which is embedded within the original psexec.exe file.
+This is copied to the Windows folder on the remote machine via the admin$ default share (hence why you need to be an admin to get psexec to work remotely).
+It then creates the PSEXESVC service with this, now local, executable, starts it and then runs the specified command.
+Here we can see psexesvc.exe being copied to the machine over SMB.
+You can rename but you can’t hide…
+After this, we saw Dridex begin beaconing out from hosts that were successfully compromised by this activity, including the DC with a new C2 address of:
+Here’s an overview of the lateral movement:
+However, their credential dumping attempts failed and the actor eventually dropped their connection to the Empire shell.
+Regardless, the multiple Dridex infections continued to beacon and would have allowed the actor instant access back into the environment at any time.
+In this particular event we did not see final action on objectives.
+We saw the threat actor attempt (but fail) to dump credentials from a DC multiple times and an attempt to execute Empire and Dridex on most domain joined systems.
+Although their attempt to dump credentials failed, we hypothesize, based upon what we saw and known similarities to other campaigns, that the likely end state would have been domain wide ransomware.
+Here’s a timeline of the major events:
+Please consider donating $1 or more to the project using Patreon.
+Thank you for your support!
+ET POLICY PsExec service created
+ET POLICY SMB2 NT Create AndX Request For an Executable File
+ET TROJAN ABUSE.CH SSL Blacklist Malicious SSL certificate detected (Dridex)
+Detects the execution of an Empire Launcher
+Detects the execution of a renamed PsExec
+Detects a PsExec service start
+Detects the execution of whoami
+Detects AdFind usage from our case:
+Empire download and beacon (validate upon using as it may only detect older versions of Empire)
+Enter your email address to subscribe to this blog and receive notifications of new posts by email.
+Intro The Ryuk threat actors went from a phishing email to domain wide ransomware in 5 hours.
+They escalated privileges using Zerologon (CVE-2020-1472), less than 2 hours after the initial … Read More
+Intro The Ryuk group went from an email to domain wide ransomware in 29 hours and asked for over $6 million to unlock our systems.
+They used tools such as … Read More
+The threat actor logged in through RDP, attempted to run a Cobalt Strike Beacon, and then dumped memory using ProcDump and Mimikatz.
+Next, they RDPed into a Domain Controller, minutes … Read More
+Here’s another example of threat actors brute forcing RDP to install ransomware, this time the brute forced system was not using the default RDP port.
+The threat actors installed ransomware … Read More

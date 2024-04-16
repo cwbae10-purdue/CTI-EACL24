@@ -1,0 +1,93 @@
+September 25, 2017 at 10:00 AM
+AgentTesla is a fairly popular key logger built using the Microsoft .NET Framework and has shown a substantial rise in usage over the past few months.
+It offers all of the standard features of a keylogger but goes beyond the typical confines of this type of software.
+One particular feature of interest is the custom packer it uses to hide the primary AgentTesla binary.
+Packers allow for a binary to essentially be wrapped in another binary to mask the original one from detection.
+There are a number of excellent blogs out there covering AgentTesla’s functionality and it’s various obfuscations, but having I recently unpacked a sample and wanted to focus on this particular function and provide some helpful tools to aide in unpacking it.
+For this analysis, I’ll be using a PE32 version AgentTesla file seen in the wild on August 29th with hash “ca29bd44fc1c4ec031eadf89fb2894bbe646bc0cafb6242a7631f7404ef7d15c”.
+You’ll find AgentTesla delivered commonly via phishing documents that usually contain VBA macros to download and run a file – like the one in question.
+As it’s a commercial product, you’ll find a lot of variety in the initial carrier files that deliver the AgentTesla binary; however, at some point you’ll find yourself with a PE.
+I suppose the first layer of obfuscation really begins with the file itself, called “one.jpeg.png.exe” and an icon of a JPG trying to create an illusion of legitimacy.
+This is a common technique to fool people and they’ve taken it one step further by opening an image when you execute the binary.
+The first executable is a .NET application, which is no surprise since AgentTesla is very well known for being a .NET key logger.
+To analyze .NET applications, I prefer to use the application dnSpy and, once loading up this sample, we can see there is only one namespace of interest with a handful of functions and a byte array.
+The Japanese kanji stands out at first glance but I believe this is less about language and more about being a form of obfuscation – I’ll explain why shortly.
+Looking at the Main() function shows a pattern of multiple calls to two other functions.
+Take for example the below string.
+The namespace is “ゆ” and the functions are “く” and “るこ”, with the latter taking a byte array as input and then the resulting output of that function being passed to the former.
+Starting with the first function, there are two XOR operations that occur with what looks like two values from the passed in byte array and then a static XOR key.
+Looking at this function deeper, it uses the last value in the byte array as one of the 3 XOR keys, then adjusts the array in size and begins the decoding loop.
+Starting at the first byte, it will take this number as the second XOR key and increment it each iteration.
+The final XOR key is pulled from the GetBytes call on the long string of kanji.
+Before going any further though, can you spot the issue with the function above?
+It works and successfully decodes the byte array but there is a flaw in codes logic that threw me for a loop when trying to implement the code in Python.
+If you manually XOR those values together (129 [first byte] ^ 214 [last byte] ^ 12375 [first kanji]), the resulting output isn’t what gets returned within the debugger.
+In fact, it’s not even close which left me scratching my head for a while.
+Instead, what we end up with is 104 (0x68).
+It’s clearly wrong though and I assumed I was missing something in what appeared to be a relatively straight forward, par for the course, decoding function.
+If I XOR the know good result with the two values from the byte array, I end up with 63 (0x3F), otherwise known as “?”.
+What’s happening is that the GetBytes call is set to use the default system encoding, which in my case is Windows-1252, so the bytes fall outside of the acceptable range and all return as 63 (0x3F), regardless of where the index pointer is in the array.
+Given this, the only two values I ever need to worry about are within the array itself and I can ignore most of this code.
+Below is a small Python script which will decode the strings passed into it.
+As the string successfully decodes with using XOR key 0x3F, it implies it was also encoded with this value initially, so the default code page used by the author when encoding it was also most likely Windows-1252.
+The reason I believe the kanji is more for obfuscation than anything else is because of this and what the XOR key displays, which is nothing but a jumble of random characters without any coherent message.
+This randomness in function and variable names is similar to the techniques they use in later payloads but now with a different character set.
+For the second function, “く” it simply returns a string from the byte array of the previous function.
+Going back to the previously mentioned byte array, it’s quite large and only has one reference inside this code, highlighted below.
+After the byte array is passed to the decoding function, the output is used as input into a new function, “うむれぐ”, that is responsible for decompressing the data.
+Once decompressed, the new data is returned in a byte array.
+At this point I copied out the list of integers for the byte array and ran it through the decoding Python function and decompressed the it with the zlib library into the next payload.
+Looking at the new file shows that it is a DLL named “rp.dll”.
+This was also a .NET file and we can load it into dnSpy for further analysis; however, before doing that I’ll go over the final part of the first packer.
+I’ve cleaned up the encoded strings so you can see what it’s doing but effectively, it takes the DLL assembly, loads it, and calls the main function, “とむ暮.とむ暮”, within it.
+This DLL uses the same byte array string obfuscation as the initial executable.
+In the above image, you can see it begins by checking whether the file “\\Products\\WinDecode.exe” exists and then will create the “\\Products\\” directory if it does not.
+After that it will enumerate processes to kill, delete files, establish itself in the registry for persistence and other characteristics typical of this malware.
+But, eventually during the execution, you’ll end up at the next part of the unpacking code.
+The first line calls multiple functions - starting on the far right is “れな”.
+This function can be seen below and creates an object from a PNG file in the resources section of the DLL.
+The PNG itself doesn’t visually show anything of note but static.
+The next function “こなき” is a bit more interesting.
+This loads the image as a bitmap and then it will read the pixels in a certain order to build an array from the values for Red, Green, and Blue that get returned.
+For example, if you look at the bottom left of the image (0,192), you will see a dark green with the hex value 0x1AE2C.
+The first entries in the array would be 0x2C (Blue), 0xAE (Green), 0x1 (Red)
+To unpack this, I once again re-wrote the code in Python and used the Python Imaging Library (PIL) to extract the bytes.
+This particular image is 192x192 pixels and 24bits per pixel (3 bytes – RGB) and it iterates over each pixel from left to right, bottom to top, for the array of data.
+After it returns, the byte array gets passed to the now familiar decode function and then the deflate function.
+As you can see, we have the MZ header and the next binary.
+Within the DLL are additional functions which handle executing the new payload and I’ve gone ahead and decoded some of the native API’s they use to show how they carry out activity.
+Arrival of the last binary – another .NET application called “RII9DKFR5LC4Y669MLOA2C50SFLPHZBN61CZ160Z.exe”.
+If you read any of the posts mentioned earlier on the analysis of AgentTesla, then this will look familiar.
+Function and variable names are encoded with Unicode values in the range of 0x200B-0x200E.
+Strings are decrypted by, in this sample, function “KMBHFDXSELJYYLVK\u3002”.
+This function uses a hardcoded password and salt to derive a key from the SHA1 hashing algorithm as implemented by Microsoft (modified PBKDF1).
+Afterwards, it uses the key and hardcoded IV to decrypt the string with AES-CBC.
+A quick Google for that IV shows hundreds of results for it, with most revolving around an encryption example that was used as the base for this function – it even copies the examples variable names.
+What I found interesting here is that none of these values ever change sample to sample.
+Even going back to the samples in the write-ups on AgentTesla from over 6 months ago, I was able to decrypt their base64 strings listed in the blog.
+This confirms the same values are in use and likely hard coded into the builder for AgentTesla.
+Given that everything is static then, it’s fairly trivial to extract all of the base64 encoded strings, decrypt them, and look for interesting IoC’s.
+What we end up with is a long list of values like the below.
+File names, registry keys, and e-mails to start off hunting with.
+You can also see where the corresponding base64 is within the code and then use dnSpy to obtain further context on how AgentTesla utilizes these values.
+For example, below is something that stood out as interesting almost immediately.
+Pivoting to these values in dnSpy will land you in a function that seems responsible for sending the stolen data back to the attacker.
+At this point, I’ve accomplished the goal I set out for – covering the packing techniques used by the current version of AgentTesla, offering some code to automate unpacking and decrypt some configuration data.
+But why stop when you’re ahead?
+I like to Google static values and constants when analyzing malware because you can usually find some interesting stuff – configurations, forums, accounts, panels, etc.
+When I began searching for the file “one.jpeg.png.exe” I stumbled across a site, “b-f-v[.
+]info”, which hosts various versions of this keylogger.
+They all function in the same way but the image that displays is related to the first part of the file name.
+The images are various sizes so the decoding would be different for each; however, the code shown previously will grab the correct Width and Height for building the array.
+Also take note of the dates and when they were modified.
+The sample covered in this blog was seen on August 29th, just two days before these were created – so the person or group behind these appear to be actively creating new versions to send out.
+I confirmed in these samples we find the same SMTP credentials.
+Hopefully this overview of their packing techniques, along with the scripts to unpack each phase, prove helpful to others when looking at AgentTesla.
+Given its recent spikes in popularity, it’s likely not going anywhere anytime soon so the more knowledge you have of the threat, the better you can defend yourself.
+You can continue to track this threat through the Palo Alto Networks AutoFocus AgentTesla tag and you will find the hashes for all of the files covered in this blog below:
+familyhome.jpeg.png.exe / myhome.jpeg.png.exe | 444e9fbf683e2cff9f1c64808d2e6769c13ed6b29899060d7662d1fe56c3121b
+Sign up to receive the latest news, cyber threat intelligence and research from us
+Please enter your email address!
+Please mark, I'm not a robot!
+By submitting this form, you agree to our Terms of Use and acknowledge our Privacy Statement.
+© 2021 Palo Alto Networks, Inc. All rights reserved.

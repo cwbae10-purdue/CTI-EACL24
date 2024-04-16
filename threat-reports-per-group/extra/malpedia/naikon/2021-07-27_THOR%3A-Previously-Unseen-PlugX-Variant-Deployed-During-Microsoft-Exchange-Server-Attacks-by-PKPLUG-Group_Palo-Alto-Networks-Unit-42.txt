@@ -1,0 +1,162 @@
+
+          By Mike Harbison and Alex Hinchliffe
+July 27, 2021 at 12:00 PM
+Tags: AutoFocus, Cortex, malware, NGFW, PKPLUG, PlugX, THOR, threat prevention, WildFire
+This post is also available in: 
+    日本語 (Japanese)
+While monitoring the Microsoft Exchange Server attacks in March 2021, Unit 42 researchers identified a PlugX variant delivered as a post-exploitation remote access tool (RAT) to one of the compromised servers.
+The variant observed by Unit 42 is unique in that it contains a change to its core source code: the replacement of its trademark word “PLUG” to “THOR.” The earliest THOR sample uncovered was from August 2019, and it is the earliest known instance of the rebranded code.
+New features were observed in this variant, including enhanced payload-delivery mechanisms and abuse of trusted binaries.
+First discovered in 2008, PlugX is a second-stage implant that’s been used by Chinese cyberespionage group PKPLUG (aka Mustang Panda) and other groups.
+In addition to being used in multiple high-profile attacks over the years, including the significant U.S. Government Office of Personnel Management (OPM) breach in 2015, PlugX is also known for its modularity and plug-in-style approach to malware development.
+Additional hunting and analysis led to the identification of several more samples along with an associated PlugX command and control (C2) infrastructure.
+This blog provides a technical overview of the PlugX variant discovered, indicators of compromise (IOCs) to identify it in networks and a tool developed by Unit 42 to handle payload decryption.
+Palo Alto Networks customers are protected from PlugX with Cortex XDR or the Next-Generation Firewall with WildFire and Threat Prevention security subscriptions.
+AutoFocus users can track PlugX and PKPLUG activity using the PlugX and PKPLUG tags, respectively.
+Full visualization of the techniques observed and their relevant courses of action can be viewed in the Unit 42 ATOM Viewer.
+On March 19, 2021, attackers were observed exploiting an Exchange Server via a chain of zero-days (CVE-2021-26855 and CVE-2021-27065), known as ProxyLogon, originating from IP 101.36.120[.]227.
+Upon successful exploitation, a webshell was uploaded to a publicly accessible web directory, allowing code execution at the highest privilege level.
+The attackers then used a technique known as “living off the land,” which uses trusted binaries to bypass antivirus detection.
+In this case, the Microsoft Windows binary bitsadmin.exe was used to download an innocuous file named Aro.dat (SHA256: 59BA902871E98934C054649CA582E2A01707998ACC78B2570FEF43DBD10F7B6F) from an actor-controlled GitHub repo to the target.
+(See Figure 1 for the download command executed.)
+The first one thousand bytes of Aro.dat (see Figure 2) indicate the file might be encrypted or possibly compressed.
+As it turns out, this data is nothing but random padding data likely added as a file header to evade AV signatures to thwart detection.
+The end of the filler data is null-terminated, which provides an identifier to the actual data entry point.
+Immediately following the NULL byte (0x00) is a set of x86 assembly instructions to unpack the file.
+In this sample, the x86 assembly starts at file offset 0x4EC with opcode 0x77.
+This translates to assembly mnemonic of JA (jump if above unsigned).
+Figure 2 illustrates the Aro.dat file header up until the NULL byte.
+The data was truncated for brevity, as the bytes up until the NULL are meaningless.
+Red denotes the NULL byte, and green is where code execution begins.
+0000h: 49 79 7A 45 48 4C 4B 78 75 77 55 48 66 77 46 65 IyzEHLKxuwUHfwFe
+0010h: 6C 46 44 6D 6D 55 6E 42 50 47 76 63 70 75 68 50 lFDmmUnBPGvcpuhP
+0020h: 78 57 5A 67 45 48 62 66 4A 45 57 53 76 74 44 6E xWZgEHbfJEWSvtDn
+0030h: 75 61 75 72 56 4C 63 77 41 79 44 58 6A 72 6E 69 uaurVLcwAyDXjrni
+0040h: 6F 74 70 77 67 73 71 52 67 7A 4D 64 50 6D 46 6A otpwgsqRgzMdPmFj
+0050h: 5A 4E 64 6F 70 72 50 77 70 68 6C 42 6E 6E 56 43 ZNdoprPwphlBnnVC
+0060h: 79 6B 52 45 59 6B 75 50 61 75 63 56 54 55 73 51 ykREYkuPaucVTUsQ
+0070h: 68 73 41 4A 4E 7A 4F 49 61 51 75 4D 46 6C 54 42 hsAJNzOIaQuMFlTB
+0080h: 77 42 44 6B 4A 55 76 43 6C 51 47 68 46 66 69 56 wBDkJUvClQGhFfiV
+0090h: 66 62 6A 4C 46 77 78 41 68 50 67 44 46 6F 47 44 fbjLFwxAhPgDFoGD
+04B0h: 37 35 38 37 35 35 30 39 37 38 32 36 39 30 33 36 7587550978269036
+04C0h: 39 39 33 32 33 32 36 38 39 36 33 30 35 35 39 30 9932326896305590
+04D0h: 37 35 35 35 37 39 35 32 39 38 30 32 33 35 38 33 7555795298023583
+04E0h: 30 36 32 37 36 36 30 32 35 37 36 00 77 06 81 EE 06276602576.w.
+Aro.dat is designed to remain undetected and cannot run without the aid of a specific loader.
+As with previous PlugX variants, code execution is achieved via a technique known as DLL side loading.
+Static analysis reveals that once loaded into memory, Aro.dat begins to unpack itself and initiates communication with a C2 server.
+Aro.dat is, in fact, an encrypted and compressed PlugX payload.
+The decryption routine within Aro.dat closely resembles that of older PlugX variants (see Figure 3 below) in that it involves multiple decryption keys and bit shift operations.
+Once decrypted, it gets decompressed via the Windows API RtlDecompressBuffer into a Windows module (DLL).
+The compression algorithm is LZ compression (COMPRESSION_FORMAT_LZNT1).
+The highlighted entries shown in Figure 3 are the static decryption keys used by Aro.dat and an older 2012 PlugX sample (SHA256: A68CA9D35D26505A83C92202B0220F7BB8F615BC1E8D4E2266AADDB0DFE7BD15).
+The decryption routine differs slightly with each PlugX build by using different static keys and varying the use of addition and subtraction.
+The decrypted, decompressed Aro.dat is an x86 Windows DLL or PE file.
+The Aro.dat file contains the following string names: aross.dll, aro.exe and aro.dat.
+The association of these three files together provides insight into how code execution is likely achieved.
+VirusTotal has the following files:
+Open-source research suggests Aro.exe is part of the “ARO 2012 advanced repair and optimization tool.” It is a freely available tool that claims to fix Windows registry errors.
+It is digitally signed, has known associations with a PlugX loader and dynamically loads Aross.dll.
+Aross.dll is the actor’s DLL file that is responsible for loading the encrypted payload file, Aro.dat.
+With this information, we can infer that these two files are necessary and responsible for loading the encrypted THOR payload, Aro.dat.
+See Figure 4 for an illustration of how code execution is achieved.
+Once the decrypted payload runs in memory, it exhibits the same behaviors as previous PlugX implant variants.
+It starts by decrypting the embedded PlugX hardcoded configuration settings.
+The decryption algorithm and XOR keys are fairly consistent across multiple PlugX implants.
+Code behavior closely resembles that of the RedDelta PlugX that’s been reported by Insikt Group.
+One noticeable difference with this sample compared to all the other known PlugX malware families is the magic number check performed during the initialization of the PlugX plugins.
+Historically, that number has always been 0x504C5547, which corresponds to the PLUG value in ASCII encoding.
+In this sample, the magic number is 0x54484F52, corresponding to the THOR value in ASCII encoding.
+Figure 5 below illustrates the differences.
+The hardcoded PlugX configuration settings within the sample decoded to the following values (truncated):
+As illustrated in Figure 6, this particular PlugX implant is configured for the following:
+When running, system events such as process creation, date and time and username are logged to a hidden file named NTUSER.DAT, located in the C:\ProgramData\MSDN\6.0 directory.
+This file is encrypted with a two-byte key of 0x4F6F.
+There are two other identifiable attributes for PlugX:
+The hidden Windows class name, Static, shown in Figure 10.
+This window is used for inner-process communications.
+The MZ and PE headers of the RWX in-memory module are removed and replaced with ASCII ROHT (THOR backwards), shown in Figure 11.
+This sample has the following PlugX plugins, which have an individual hardcoded date stamp, as illustrated in Table 1 below.
+Much has been said about these plugins in the past.
+In summary, they provide attackers various capabilities to monitor, update and interact with the compromised system to fulfil their objectives.
+This sample also appears to contain a key or a hard-coded date of 20180209, which is used within a structure and passed whenever a function object is called.
+PlugX modules, such as Aro.dat, include hardcoded configuration information allowing for multiple C2 addresses.
+This provides fallback options for the backdoor in case some remote services are unavailable at the time of compromise.
+In this particular PlugX implant (SHA256: 59BA902871E98934C054649CA582E2A01707998ACC78B2570FEF43DBD10F7B6F), and as shown in Figure 6 above, all four C2 configuration options reference the domain name rainydaysweb[.
+Overlaps between the recently discovered PlugX samples with the THOR magic bytes (the infrastructure) and other entities associated with known PKPLUG activity are highlighted in Figure 12 below, stemming from the orange rectangle and the red square, respectively.
+As previously mentioned, Aro.dat (SHA256: 59BA902871E98934C054649CA582E2A01707998ACC78B2570FEF43DBD10F7B6F) was downloaded from an actor-controlled GitHub repository to the target Microsoft Exchange Server using bitsadmin.
+As such, the specific component responsible for loading and decrypting the module is unknown.
+However, the connection from it to rainydaysweb[.
+]com is shown in the blue oval shape in Figure 12.
+Several overlaps of related infrastructure and common malicious behaviors were found and are described below using reference number notation [x] that references parts of Figure 12.
+PlugX sample (SHA256: 93D33626886E97ABF4087F5445B2A02738EA21D8624B3F015625CD646E9D986E)[1], first seen March 19, 2021, uses the traditional PLUG (not THOR) identifier and communicates with the same C2, rainydaysweb[.]com.
+This sample also shares some behavioral characteristics with other PlugX samples, namely registry activity specific to the creation of the key, HKLM\Software\CLASSES\ms-pu\PROXY[2].
+Some of those samples make use of the C2 infrastructure linked to PKPLUG activity in the past, such as PlugX sample (SHA256: A15FED60E69EC07BFD01A23BEEC2C8E9B14AD457EA052BA29BD7A7B806AB63B4)[3] from late 2020 using C2 manager2013[.
+Other samples from the set using the common registry key, through the use of shared infrastructure, reveal further samples containing C2 communication information relating to the third-level domain, upload.ukbbcnews[.]com[4].
+This domain is not and has never been a legitimate BBC domain and was registered to appear as such to victims.
+This domain resolved to IPv4 address 45.248.87[.
+]217 up until April 12, 2021, providing the C2 channel for PlugX sample (SHA256: 690C488A9902978F2EF05AA23D21F4FA30A52DD9D11191F9B49667CD08618D87)[5] with its THOR module mpsvc.ui (SHA256: 64E2FE0E9D52812D2DA956B1D92B51E7C215E579241649316CF996F9721E466E) from early August 2020.
+Other "ukbbcnews" third-level domains (i.e.
+)existed and resolved to the same 45.248.87[.
+]217 IPv4 address from as far back as May 2019 through March 2021.
+In 2018, the same third-level domains resolved to some IPv4 addresses in the 134835 ASN range, including 185.239.226[.
+]14, which have been used as C2 channels for various PlugX samples, seemingly throughout 2018, 2019 and 2020.
+PlugX sample (SHA256: 3CDD33DEA12F21A4F222EB060E1E8CA8A20D5F6CA0FD849715F125B973F3A257)[6] from June 2018 shares behavioral traits, namely setting the value of registry key HKLM\SOFTWARE\Classes\KET.FAST\CLSID[7] to -1, with two other PlugX samples over the last three years.
+Out of the set of three such PlugX samples known to Unit 42 that changed the value of that registry key, one sample (SHA256: A9511CDAA96ED59DE73A7A7C7DC375DE204BEE7A9511C5EE71BF013010324A91)[8] existed around the same timeframe (June 2018) using the domain tibetsl[.
+]com and many third-level domains from it for C2 communication.
+The third PlugX sample, (SHA256: 80DEED939A520696968335D1BB2A9FCCE7053C0156F679BA261824D0A2D44967)[9], from the set also used the THOR identifier.
+From November 2019, this sample and its configuration module aross.dat (SHA256: C5DCD3073904FAD5D9A8FE1026141A832E05C9CA03A88FEE96587921F42773D4) used 108.61.182[.
+]34 for its C2 communication, which resolved to the indonesiaport[.
+]info[10] domain between September 2019 and February 2020.
+The same domain has been used for C2 communications by several other PlugX samples (using the PLUG identifier) that Unit 42 tracks as related to PKPLUG, dating as far back as August 2017.
+Another configuration module using the THOR identifier, acrobat.chm (SHA256: B5C0DB62184325FFBE2B8EF7E6F13F5D5926DEAC331EF6D542C5FA50144E0280)[11] loaded by PlugX sample Acrobat.dll (SHA256: 3C5E2A4AFE58634F45C48F4E800DC56BAE3907DDE308FF97740E9CD5684D1C53) was first seen at the end of October 2020.
+The C2 channel from the configuration is tools.scbbgroup[.
+]com, which at the time resolved to 167.88.180[.
+]131, and since early February 2021, it continues to resolve to 103.85.24[.
+]158 under the ASNs 6134 and 134835, respectively[12].
+Other known PKPLUG infrastructure using additional IP addresses from the range under both ASNs are tracked by Unit 42 and other vendors.
+]com that resolved in April and May 2020 respectively to 103.85.24[.
+]190, which acted as C2 channels for several PlugX samples (using the PLUG identifier).
+Shortly after the brief, two-day period when www.systeminfor[.
+]190, the resolution briefly changed to 167.88.180[.
+]32 (ASN 6134), which other PKPLUG-related domains resolved to throughout the course of 2020.
+One such domain was www.cabsecnow[.
+]com, which was used as a C2 channel for another PlugX sample (SHA256: A9CBCE007A7467BA1394EED32B9C1774AD09A9A9FB74EB2CCC584749273FAC01)[13] and configuration module Smadav.dat (SHA256: E2D21B5E34189FA1ACA39A13A405C792B19B6EDF020907FB9840AF1AAFBAA2F4) using the THOR magic bytes in August 2020.
+First seen in March 2021, this sample's C2 references news.cqpeizi[.
+]com, which since late 2019 resolves to the loopback address 127.0.0[.
+With an understanding of how the encrypted payload files are constructed, Unit 42 researchers created a signature based on the x86 assembly instructions.
+These instructions are used to unpack the payload.
+(See Table 2 for a list of files discovered.)
+During our research, we discovered other PlugX-encrypted payloads that have a different encoding scheme and file header.
+These samples are XOR encoded with the decryption key consisting of the bytes starting at file offset zero, up until the NULL byte.
+Typically, the key is 10 bytes in length.
+Once decrypted, the sample is that of a PE file (DLL).
+(Reference Table 3 for a list of files uncovered that follow this format.)
+We’ve identified two other PlugX-encrypted payload files with different encoding schemes.
+These files were manually decrypted and confirmed to be PlugX variants.
+Unit 42 created a Python script that can decrypt and unpack encrypted PlugX payloads without having the associated PlugX loaders.
+It attempts to detect the type of PlugX-encrypted samples and then outputs the following:
+Example of the tool in action:
+The decryptor tool is hosted on Unit 42’s public tools GitHub repository.
+Thirteen years after its initial discovery, the PlugX malware family remains a threat.
+After 10+ years of consistent source code components, the developers made an unexpected change to its signature magic value from “PLUG” to “THOR.” New features were observed in this variant, including enhanced payload delivery mechanisms and abuse of trusted binaries.
+With the THOR identifier signature, Unit 42 will continue to search for additional samples and variants that may be associated with this new PlugX variant.
+Palo Alto Networks customers are protected from PlugX with Cortex XDR or the Next-Generation Firewall with WildFire and Threat Prevention security subscriptions.
+AutoFocus users can track PlugX and PKPLUG activity using the PlugX and PKPLUG tags, respectively.
+Palo Alto Networks has shared our findings, including file samples and indicators of compromise, in this report with our fellow Cyber Threat Alliance members.
+CTA members use this intelligence to rapidly deploy protections to their customers and systematically disrupt malicious cyber actors.
+Visit the Cyber Threat Alliance for more information
+PlugX-encrypted payloads containing THOR magic bytes
+PlugX loaders using THOR payloads
+PlugX loaders using PLUG payloads
+PlugX (THOR magic bytes) related to Microsoft Exchange Vulnerability
+rainydaysweb[.
+Other PlugX (THOR magic bytes)
+upload.ukbbcnews[.
+Other PlugX (PLUG magic bytes):
+web.flashplayerup[.
+Sign up to receive the latest news, cyber threat intelligence and research from us
+Please enter your email address!
+Please mark, I'm not a robot!
+By submitting this form, you agree to our Terms of Use and acknowledge our Privacy Statement.
+© 2021 Palo Alto Networks, Inc. All rights reserved.

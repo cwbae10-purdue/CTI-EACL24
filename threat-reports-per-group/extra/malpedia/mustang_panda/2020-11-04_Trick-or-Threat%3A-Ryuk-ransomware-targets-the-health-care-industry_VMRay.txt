@@ -1,0 +1,131 @@
+A recent report [1] from the Cybersecurity and Infrastructure and Security Agency (CISA) has alerted the public about possible forthcoming ransomware attacks that target the health industry.
+This report has raised concerns [2] especially because of the current pandemic, which has strained the resources of hospitals and care centers.
+As a consequence, a ransomware attack, in addition to crippling a healthcare provider’s infrastructure, might actually put at risk the lives of patients.
+The advisory describes in detail the tactics, techniques, and procedures (TTPs) followed by the malicious actors who, at the moment, seem to be associated with Russian crime groups.
+The attack uses a number of malware components, such as TrickBot, BazarLoader, Ryuk, and Cobalt Strike, in order to compromise networks, create bridgeheads, and then move laterally so that, eventually, a ransomware attack can be successfully carried out.
+In the rest of this report, we present the characteristics of the various components of the attacks.
+We look at both the actual malware components (i.e., the code that performs the malicious actions), as well as the network evidence associated with their actions.
+Even though a number of these components (as well as similar ones) have been covered previously by our threat intelligence group [3] [4] and recently by other researchers [5], it is useful to see how this particular attack plays out and how it can be detected.
+In most cases, the initial steps of the attack are social engineering attacks that trick users into downloading and executing downloaders (TrickBot and BazarLoader), which, in turn, download the ransomware (Ryuk).
+In this analysis, we cover TrickBot, BazarLoader, and Ryuk in more detail.
+All three malware samples are successfully identified as malicious by our artifact analysis sandbox, by relaying on the extracted malicious behaviors.
+TrickBot was initially devised as a banking Trojan, and, since its inception, has evolved in a number of different ways, adding new modules that provide different types of functionality.
+In the attacks that have been observed recently, TrickBot has been mainly used as a conduit to drop additional malware, and, in this particular case, the Ryuk ransomware.
+An interesting aspect of TrickBot is the recent introduction of a DNS tunneling component, called Anchor DNS, which allows the malware to establish a command-and-control channel with
+DNS tunneling is often leveraged because outgoing TCP connections might be blocked or receive unwanted attention, while, instead, DNS requests to outside hosts are usually allowed as they are necessary for the normal operation of the network.
+An interesting aspect of this DNS tunnel is the use of a simple obfuscation technique (i.e., XOR-ing the content with a single byte) to avoid immediate detection.
+Some example of this kind of behavior were detected and blocked on our customers’ networks as early as August 2020.
+We were able to collect a number of TrickBot samples and we used our sandbox analysis systems to extract the behavior of the samples.
+below shows the results of the analysis of one of the samples.
+Table 1: One of the TrickBot samples collected.
+In the following figure, we can see the full behavioral analysis when analyzing the sample dynamically.
+Figure 1: Analysis overview for the sample shown in Table 1.
+In addition to the TrickBot samples discussed above, we also identified some specific instances of the Anchor DNS module.
+Figure 2 shows the detection timeline of Anchor DNS by VMware NSX.
+Interestingly, the detonations go as far back as late August 2020, showing that the threat was active since then.
+Figure 2: Detection timeline of Anchor DNS by VMware NSX.
+The most peculiar aspect of Anchor DNS is its ability to communicate to the C2 servers over DNS in an obfuscated fashion [6].
+Emerging Threat describes both protocol and signatures in a recent report [7].
+Figure below shows how the network activity produced by analyzing dynamically the sample 942701c5dc21bd6af902181fa673d8459683479b in the VMware NSX sandbox.
+Figure 3: Analysis overview of an Anchor DNS sample.
+BazarLoader is another malware downloader similar to TrickBot, often used as a precursor of a ransomware attack that involves Ryuk.
+Usually BazarLoader is delivered through social engineering, by luring an unsuspecting user into clicking on an email link.
+The link often points to a file on Google Drive that appears to be a PDF file, which, in turn, contains a URL that points to the malware payload [8].
+Below (see Figure 4) there is an analysis of a BazarLoader sample that was associated with the “Text_Report.exe” file name, which is one of the IoCs described in the recent advisory [1].
+See Figure 5 for the PCAP analysis of the generated network traffic.
+Figure 4: Analysis overview for a BazarLoader sample.
+Figure 5: PCAP analysis detecting resolution of the bazar domain.
+Ryuk is a ransomware that uses a number of techniques to spread through a network and encrypt files [9].
+Ryuk is believed to be an evolution of the HERMES ransomware, which appeared first in 2017 [10].
+Ryuk relies on both Cobalt Strike and PowerShell Empire, as well as “live off the land” tools, such as RDP, in order to move laterally through the network, using a combination of scanning techniques and credentials harvesting.
+Similar to other ransomware threats, once the target has been profiled, the ransomware encrypts the files, and attempts to delete any backup and shadow copies.
+Table 2: One of the Ryuk samples collected.
+Figure 6: Analysis overview for a Ryuk sample in VMware NSX sandbox.
+Our solution provides a number of signatures to detect various aspects of the network behavior of the malware components described in the previous section.
+More precisely the following table shows the currently deployed network signatures that target these threats.
+Table 3: Network signatures for the threats under analysis.
+As shown in the figure below, our threat intelligence sensors have been detecting malicious network activity originating from the IP addresses included in the CISA report [1] in the month of October.
+Figure 7: Detection timeline of malicious network activities from the IP addresses in [1].
+While 5% of all the detection is related to education, 95% of all detections targeted the Healthcare sector, and involved the IP address 38.89.106[.
+In the following, we provide an in-depth analysis that focuses on the following samples:
+The chain of attack starts with a phishing email.
+The user clicks on the link in the email, which downloads an executable and runs it.
+The executable is a BazarLoader, which downloads and runs the Bazar Backdoor.
+The backdoor runs Cobalt Strike and eventually starts the Ryuk ransomware (for a more detailed analysis of this kill chain see [11]).
+BazarLoader’s main tactic is to use as many legitimate services as possible, namely:
+All samples are trying to reach a C&C via a normal domain name to download and run the Bazar
+BazarLoader runs a shellcode similarly to Ryuk’s EXEs and DLLs (see below).
+The shellcode is almost the same one which is used in Ryuk (see below) except for the constants that the code loads into the registers:
+Even though this file is an EXE file (not a DLL), it mimics rasadhlp.dll:
+Figure 8: Ryuk mimics rasdhlp.dll.
+This component is signed by MADAS d.o.o.
+Figure 9: The Ryuk rasdhlp.dll certificate.
+The executable is a matryoshka-style malware:
+There is a shellcode in EXE’s resources;
+2.
+The shellcode contains a DLL;
+3.
+The DLL contains another DLL stored in the .data section, where the main functionality is.
+CSBhvSWCvFRvfCfAoJdoFuAUmK runs the next stage – the shellcode:
+Calls GetProcAddress to get the address of VirtualAlloc
+2.
+Loads resource 888\8895 with help of: FindResourceA, LoadResource, SizeofResource 3.
+Allocates 0x4461E bytes of RWX memory with VirtualAlloc
+4.
+Copies the shellcode into the allocated memory, then decrypt it
+5.
+Calls the beginning of the allocated memory
+The purpose of the shellcode is to map the next stage DLL into memory and then transfer execution:
+This is not a sophisticated component: with the help of VirtualAlloc, LoadLibraryA and GetProcAddress it maps the second DLL into memory, fixes imports, and then, with the help of GetProcAddress, finds a function called “StartFunc”, which the second DLLs exports.
+It calls that StartFunc and then calls ExitProcess.
+The DLL is lightly obfuscated.
+StartFunc starts by setting up a timer for 60 seconds with SetTimer call and then waits for the signal calling GetMessageA and DispatchMessageA in a cycle.
+Even though it is importing a significant amount of normal-looking APIs, it retrieves pointers to the most interesting ones manually:
+Before the DLL performs anything malicious, it makes sure it is not running on a Russian system:
+Ryuk implements HTTPS with help of CryptXxx functions from advapi32.dll and CertXxx functions from crypt32.dll.
+The Winsock functions from ws2_32.dll mentioned above are used for data transfer.
+This is the first message sent out by the DLL:
+Attackers run this DLL manually (according to [12], [13]):
+Despite the name used, it is not a SOCKS library.
+This DLL acts similarly to EXE described above:
+Loads a shellcode from resources;
+2.
+The shellcode maps and runs the first DLL;
+3.
+The first DLL maps and runs second DLL, where the main functionality is.
+The most important functions exported by the DLL are called “rundll” and “SGeruIUrgVdfMaxMccIKRh”.
+rundll is the starting point, which must be executed manually.
+It finds the address of SGeruIUrgVdfMaxMccIKRh in the exports, and then calls it.
+SGeruIUrgVdfMaxMccIKRh loads the shellcode in a similar way to CSBhvSWCvFRvfCfAoJdoFuAUmK (as described above).
+Afterwards the sample adds itself to autorun:
+Calls StringFromGUID2 to get “{9E683E3F-9A8E-4109-B067-0CD924DB653E}”
+2.
+Calls GetModuleFileNameW to get its full path
+3.
+Calls a series of RegCreateKeyExW+RegSetValueExW+RegCloseKey calls to create this
+hierarchy (assuming that “C:\\share\\socks64.dll” is DLL’s full path):
+The shellcode is identical to the one found in EXE (see above).
+The technique used to run the second DLL is identical to the one found in EXE (see above).
+This DLL contains the main functionality.
+Before it does anything malicious it needs to reach its C&C server.
+All interesting strings (such as IP addresses) are encrypted.
+It decrypts them on the fly, holding decrypted strings on the stack for the time of use.
+It does not perform any further actions until it establishes connection with a server.
+If the connection succeeds, then the sample:
+The combination of the TrickBot and BazarLoader downloaders with the Ryuk ransomware represents a notable threat.
+These malware samples can be detected by performing behavioral analysis (i.e., executing the artifacts in a sandbox) or by building models (both signatures and anomaly detectors) that identify both malicious and suspicious network activity.
+VMware NSX, by composing network analysis with program analysis, provides complete visibility into this threat.
+[1]  CISA, “Ransomware Activity Targeting the Healthcare and Public Health Sector,” 28 October 2020.
+Hospitals Targeted In Rising Wave Of Ransomware Attacks, Federal Agencies Say,” 29 October 2020.
+[3]  R. Henderson, “Ryuk: Defending Against This Increasingly Busy Ransomware Family,” 27 February 2020.
+[4]  S. Ortolani and J. Haughom, “Evolution of Excel 4.0 Macro Weaponization,” 2 June 2020.
+[5]  Sophos, “They’re back: inside a new Ryuk ransomware attack,” 14 October 2020.
+[6]  Cybereason, “Dropping Anchor: From a TrickBot Infection to the Discovery of the Anchor Malware,” 11 December 2019.
+[7]  NTT, “TrickBot variant “Anchor_DNS” communicating over DNS,” [Online].
+[8]  FireEye, “Unhappy Hour Special: KEGTAP and SINGLEMALT With a Ransomware Chaser,” 28 October 2020.
+[9]  Crowdstrike, “Big Game Hunting with Ryuk: Another Lucrative Targeted Ransomware,” 10 January 2019.
+[10]  TrendMicro, “Examining Ryuk Ransomware Through the Lens of Managed Detection and Response,” 14 March 2019.
+[11]  R. Marshanski and V. Kremez, “”Front Door” into BazarBackdoor: Stealthy Cybercrime Weapon,” 12 October 2020.
+[12]  The DFIR Report, “Ryuk in 5 Hours,” 18 October 2020.
+[13]  The DIFR Report, “Ryuk’s Return,” 8 October 2020.
+0 Comments have been added so far

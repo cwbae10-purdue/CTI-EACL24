@@ -1,0 +1,101 @@
+Now, you get the original Andromeda build file.
+Load the unpacked sample at OllyDBG.
+After getting inside the CALL, it will calculate the hash of a buffer located at 00402028:
+Then, it compared it with 0xBD274BDB, if not matches, it calls RtlExitUserThread, we will figure out soon what kind of data has been hashed.
+Afterwards, ZwAllocateVirtualMemory will be called and return for me 7FFA0000 then the CALL at 00401343 will copy the whole buffer to the allocated space.
+Next, we see the CALL at VA 00401351 which takes 4 arguments and one of them is a pointer to our unknown buffer.
+This routine is actually preforming a RC4 encryption, you could recognize that by looking at the constants, this is how basically some cryptographic algorithm is detected; RC4 have loops that go till 256 which is 0x100 in hexadecimal.
+Using ZwAllocateVirtualMemory again, we allocate a new memory space to the partially decrypted payload so it is finally decompressed using the aPLib-library.
+The code that follows is responsible for processing relocations and fixing imports.
+For instance, from NTDLL Andromeda is importing these APIs:
+You can find a script here of an old version of Andromeda thanks to
+0xEBFE.
+You still need to make some minor changes on it to get it works correctly particularly the APIs and Imports, which changed a bit:
+ ‘ws2_32.dll’ : (‘connect’, ‘shutdown’, ‘WSACreateEvent’, ‘closesocket’, ‘WSAStartup’, ‘WSAEventSelect’, ‘socket’, ‘sendto’, ‘recvfrom’, ‘getsockname’, ‘gethostbyname’, ‘listen’, ‘accept’, ‘WSASocketA’, ‘bind’, ‘htons’),
+ ‘dnsapi.dll’ : (‘DnsWriteQuestionToBuffer_W’, ‘DnsRecordListFree’, ‘DnsExtractRecordsFromMessage_W’)}
+ x = (x + box[i] + key[i % len(key)]) % 256
+ box[i], box[x] = box[x], box[i]
+ x = (x + 1) % 256
+ y = (y + box[x]) % 256
+ box[x], box[y] = box[y], box[x]
+ out += bytearray([byte ^ box[(box[x] + box[y]) % 256]])
+ base = Dword(segment + relocs_offset + current_offset)
+ size = Dword(segment + relocs_offset + current_offset + 4)
+ if (base == 0 and current_offset != 0) or size == 0:
+ size = (size – 8) // 2
+ reloc = Word(segment + relocs_offset + current_offset)
+ reloc = reloc & 0xFFF
+ PatchDword(segment + base + reloc, Dword(segment + base + reloc) + segment)
+ SetFixup(segment + base + reloc, idaapi.FIXUP_OFF32 or idaapi.FIXUP_CREATED, 0, Dword(segment + base + reloc) + segment, 0)
+ module_hash = Dword(segment + relocs_offset + current_offset)
+ import_offset = Dword(segment + relocs_offset + current_offset + 4)
+ if module_hash == 0 or import_offset == 0:
+ func_hash = Dword(segment + relocs_offset + current_offset)
+ if module is not None:
+ MakeName(segment + import_offset, SegName(segment) + ‘_’ + module.split(‘.’)[0] + ‘_’ + function)
+ print(‘Import not found: module = 0x{0:08X}, function = 0x{1:08X}’.format(module_hash, func_hash))
+def decrypt_payload(encrypted_addr, rc4key, encrypted_size, unpacked_size, entry_point, relocs, relocs_size):
+ buffer[i] = Byte(encrypted_addr + i)
+ # checking for free segment address
+ AddSeg(seg_start, seg_start + unpacked_size, 0, 1, idaapi.saRelPara, idaapi.scPub)
+ # copying data to new segment
+ payload_addr = AskAddr(ScreenEA(), “Enter address of andromeda payload”)
+ if payload_addr != idaapi.BADADDR and payload_addr is not None:
+ payload[i] = Byte(payload_addr + i)
+ dwords = struct.unpack_from(‘<LLLLLL’, bytes(payload), 0x10)
+ decrypt_payload(payload_addr + 0x28, payload[:16], dwords[0], dwords[2], dwords[3], dwords[4], dwords[5])
+At the end, you see the call to: 00401532 |.
+This will transfer the control to the payload.
+Here is a screenshot about the payload decrypted.
+The next step shows anti-analysis tricks that are employed.
+Furthermore, this trick is not changed.
+As in version 2.07 and 2.08, the 2.09 version continues to calculate the CRC32 hash of the volume name of drive C:, which is then compared with the hardcoded value 0x20C7DD84.
+If you get caught, you will run in infinite loop that call ZwDelayExecution !
+just patch the JNZ after the call or put RET in ZwDelayExecution.
+Next, because processes run by the user can’t do everything like writing in explorer.exe memory, the malware is trying to use SeDebugPrivilege and calling ZwAdjustTokenPrivilege to escalate to System privileges.
+It calls the SetEnvironmentVariableW API to save the original bot’s full path to the environment variable.
+Afterwards, it comes the injection process, depending if you have a 32 or a 64 bits operating system, the malware will launch a hallowed version of msiexe.exe and inject its code there:
+The injection process involves several steps:
+As with the previous versions, the malware calls CreateFile to get the handle of the file it wants to inject.
+It then gets its section handle by calling ZwCreateSection, which is used by ZwMapViewOfSection to get the image of the file in memory.
+From this image, it extracts the size of image and the address of the entry point from the PE header.
+A memory address with the same size as that of the image of the file that it wants to inject is created with PAGE_EXECUTE_READWRITE access.
+Then the image of the file is copied over to this memory address.
+Another memory address is created with the same size as that of the image of the original bot file, also with PAGE_EXECUTE_READWRITE access.
+The original file is then copied over to this new memory address.
+A suspended process of the file to be injected is created.
+The memory address containing the original file is unmapped.
+ZwMapViewOfSection is called with the bot’s file handle and the process handle (acquired from creating the suspended file process).
+So now the injected file’s process handle has a map view of the botnet file.
+The final step is the call to ZwResumeThread, which resume the process.
+If the User is an admin, it checks that with CheckTokenMemberShip, it installes into “%ALLUSERPROFILE%” and autostarts using an uncommon Registry Path “softwaremicrosoftwindowscurrentversionPoliciesExplorerRun” – with a random Key name.
+If not it only installs into “%USERPROFILE%”.
+Before establishing a connection, the bot prepares the message to be sent to the C&C server.
+It uses the following format: id:%lu|bid:%lu|os:%lu|la:%lu|rg:%lu
+This string is encrypted using RC4 with a hard-coded key of length 0x20 and is further encoded using base64.
+The message is then sent to the server.
+Once a message is received, the bot calculates the CRC32 hash of the message without including the first DWORD.
+If the calculated hash matches the first DWORD, the message is valid.
+Later it is decrypted using RC4 with the VolumeSerialNumber as the key.
+After the RC4 decryption the message is in the format gn([base64-encoded string]).
+This used to be just the base64-encoded string, but for some reason the author decided not to make the server backward compatible with the older bot versions.
+Then it decodes the base64 string inside the brackets to get the message in plain text.
+The first DWORD of the message is used as a multiplier to multiply a value in a fixed offset.
+The DWORD in that offset is used as an interval to delay calling the thread again to establish another connection.
+The next byte indicates what action to carry out – there are seven options:
+Once the message has been sent, the thread exits and waits for the delay interval period to pass before it reconnects to the server to receive additional instructions.
+Andromeda’s current version 2.09 increased the barriers that it has set up for security researchers.
+The new features raise additional difficulty for analysis, but are still easy to skip.
+We anticipate that the Andromeda botnet will keep on evolving.
+Our botnet monitoring system is continuing to track its activities and we will respond immediately when it enters its next generation.
+We've encountered a new and totally unexpected error.
+Get instant boot camp pricing
+A new tab for your requested boot camp pricing will open in 5 seconds.
+If it doesn't open, click here.
+Ayoub Faouzi is interested to computer viruses and reverse engineering,  In the first hand, he likes to study PE packers and protectors, and write security tools.
+In the other hand, he enjoys coding in python and assembly.
+How did you identify the encryption algorithm as RC4
+Here is how it’s possible to make 95 bucks /an hour… After being without work for half-a-year , I started making money over this internet site and now I am very satisfied.
+After 3 months doing this my income is around five-thousand dollars/month If this interests you: 1)navigate to the site link in description
+Your email address will not be published.
+Required fields are marked *

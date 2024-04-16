@@ -1,0 +1,204 @@
+Critical infrastructure on the frontline
+Stop being an easy target
+Can your security keep up with you?
+Take control of your ERP security
+Vulnerability and compliance management system.
+Advanced sandbox with customizable virtual environments
+Full-featured SIEM for mid-sized IT infrastructures.
+Knows your infrastructure, delivers pinpoint detection.
+Cyberthreat detection and incident response in ICS.
+Multilayered protection against malware attacks.
+Intelligent protection of business applications.
+NDR system to detect attacks on the perimeter and inside the network.
+Full Range of ICS-specific Security Services
+Security Analysis and Compliance Audit
+Independent Expert Analysis of Your Source Code
+Black Box and White Box Analysis
+Secure Application Development at Your Organization
+Upgrade Your View of Perimeter Security
+
+	In late April 2020, a client invited the CSIRT incident response team at the Positive Technologies Expert Security Center (PT ESC) to investigate a network compromise that resulted in encryption of files on servers and employee workstations.
+
+	We initially assumed that this was yet another attack on corporate networks with a common variety of ransomware.
+However, what we found was different: this intrusion was the work of a well-known Asian APT group implicated in cyberespionage against government targets.
+The initial successful compromise had taken place two years prior.
+
+	In this article, we will share the results of our investigation of this targeted attack, which started with the compromise of a foreign office.
+Ultimately, we succeeded in bringing the infrastructure back to a secure condition and reversing the damage that had been done.
+
+	Mass encryption of files on the client's infrastructure and a ransom demand formed the starting point of the investigation.
+A large number of damaged files is itself a very visible attack indicator that enabled detecting the intrusion.
+Retrospective analysis showed that the client's infrastructure had been compromised not three or four days before (or even a few hours before, as often happens in mass attacks), but in early 2018.
+What's more, the initial infection was of a foreign office of the client.
+Then a subsequent breach of the head office back home.
+
+	We believe that the initial entry point to the foreign office's network was a vulnerable server on the network perimeter.
+Exploitation in February 2018 enabled the attackers to gain initial access and then persistence, with the help of the ChinaChopper and TwoFace web shells.
+
+	The attackers used NBTScan for network reconnaissance and PsExec for lateral movement.
+They obtained credentials for pivoting with Mimikatz.
+In some cases, we were able to detect memory dumps of the lsass process that had been archived and uploaded.
+Because use of Mimikatz was likely blocked by endpoint security software, the attackers were forced to run bruteforcing offline.
+Another method was to scan hosts for so-called Eternal* SMB vulnerabilities with SMBTouch and then, where possible, run the EternalBlue exploit and infect the computer.
+On the hosts of presumably greatest interest, the SysUpdate and HyperBro backdoors were installed for reliable persistence and access.
+
+	One unexpected result of the compromise was cryptocurrency mining at both the foreign office and headquarters.
+Such activity remained unnoticed for one and a half years.
+During this time the attackers only maintained their access abilities by periodically obtaining new accounts or building tunnel chains.
+Our belief is that by early 2020, the attackers had lost their access (for reasons unknown to us).
+We can see use of web shells on the foreign office's servers on February 9, 2020.
+Subsequent actions were very similar to what had happened two years earlier.
+By using the tools already described, the attackers obtained the credentials of a domain administration at headquarters.
+This time, they deleted OS logs and stopped Shadow Copy services, complicating subsequent incident analysis.
+
+	For the finale, on April 29, 2020, the account of the compromised domain admin was used to push Polar ransomware to computers and run it, encrypting user files and demanding a ransom.
+While our specialists were assisting the client in May 2020, the attackers made yet another attempt to regain control of infrastructure with the help of web shells that were still in place on the network of the headquarters and office, but this time to no success.
+
+	Here we have provided a timeline to better show the sequence of events.
+
+	CSIRT's objectives included recovering the client's data, which included key information belonging to different departments.
+We performed analysis of the encryption malware and were able to recover the lost files.
+
+	The method used to run the ransomware is classic and, indeed, characteristic of certain Asian groups.
+Three files are sent to the victim's computer:
+
+	This component is not actually legitimate, however: attacker code is executed after the GameExplorerInstallW symbol is exported.
+This frequently used technique of loading malicious code in the context of a legitimate application is known as DLL hijacking.
+
+	The file c:\programdata\Sysurl.Hex is read (after being copied from c:\windows\system32\Sysurl.Hex, if absent) and then simple XOR decrypted with key ABCSCDFRWFFSDJJHGYUOIj.
+The result is decoded with Base64, yielding a PE file that is loaded and run in memory with .NET.
+The payload and intermediate library are deleted before completion.
+Deletion occurs in the standard (insecure) way, which enables recovering the data if disk access is stopped in time and the information has not been overwritten.
+
+	This payload call sequence (in which a legitimate application loads a malicious library, which in turn decrypts a third component and passes control to it) is very commonly used to run the PlugX backdoor, which is widely seen among such Asian APT groups as APT10, APT41, TA459, and Bronze Union.
+
+	Let's consider the decrypted and decoded version of the ransomware (MD5: 841980b4ae02a4e6520ab834deee241b) in greater detail.
+
+	Based on how GameuxInstallHelper.dll is launched, we quickly can guess that this file, too, is an executable file compiled with .NET.
+The compilation date is April 9, 2020.
+The code entry point is the Actions method of the Encode class in the Polar name space (which is the name we have used for the malware family).
+
+	The malware deletes system event logs and shadow copies by performing the following commands:
+
+	It then looks for and stops the following processes:
+
+	Then the malware gets a list of connected disks and starts recursive traversal of directories, skipping a few of them:
+
+	It cares only about files with the following extensions:
+
+	Before starting encryption, the malware creates what we will call a base encryption key consisting of eight randomly chosen characters from the following alphabet: abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890*!=&?&/
+
+	Two approaches to encryption are used, depending on the file size.
+Each approach involves a different encryption key.
+The base encryption key is used in both approaches, however.
+
+	First we will look at the approach for encryption of files with size less than 64,052,000 bytes (approximately 61 MB).
+The intermediate password is the SHA-256 hash sum of the base encryption key.
+It is identical for all files and is used with a hard-coded salt and 1,000 iterations to generate the encryption key and initialization vector.
+Each key is encrypted with AES-CBC.
+The .locked extension is added to encrypted files.
+
+	Larger files are encrypted in a different way.
+In this case, the 16-byte encryption key is formed by taking the first 8 bytes from the base encryption key and the remaining 8 bytes from an additional hard-coded array.
+This is followed by a custom implementation of AES-ECB.
+Blocks of 16 bytes are encrypted, with the next 12,800 bytes skipped.
+The result is that only small parts of the file—not the entire file—are encrypted.
+This method was likely to chosen to speed up the encryption process.
+Encrypted files have the .cryptd extension.
+
+	Note that the result is creation of a new file (where the encrypted stream is written).
+The original file is insecurely deleted.
+Therefore, the original files can also be recovered from unallocated disk space if they have not yet been overwritten with fresh information.
+
+	In each directory containing encrypted files, a file named readme_contact_alex.dali@iran.ir.htm is created with the following contents:
+
+	The text of the ransom demand resembles that used by MegaCortex ransomware.
+
+	The ransom demand contains a modified version of the base encryption key.
+This version is derived by encrypting the base encryption key with RSA (with a hard-coded 1024-byte public key) and encoding it in Base64.
+
+	After file encryption is completed, the malware writes an image (contained in executable file resources) to disk at the path c:\programdata\Rs.bmp and sets it as the desktop background.
+
+	The malware subsequently repeats the same procedure for deleting system event logs and shadow copies that it performed at the start.
+Then it sends an HTTP POST request with the name of the victim's computer to a server at hxxp://www.therockbrazil.com.br/assinaturas/logs.php.
+
+	Readers following the chain of encryption steps have likely noticed that the security of this whole encryption system depends on what we have called the base encryption key.
+Its value is encrypted with RSA-1024 and placed in the ransom demand.
+Currently, there are no methods that are both cheap and fast for factoring a key of such size.
+So we tried another tactic.
+
+	Remember that the base key is generated by taking eight random characters from the alphabet quoted earlier.
+Here is how the implementation works:
+
+	The Random function is called once, without any arguments.
+This call returns a random number, the seed for pseudorandom generation of which is taken from the value of the Environment.TickCount variable.
+This variable is 4 bytes and stores the number of milliseconds since the operating system started.
+
+	So to decode the files, all we need to know is the uptime (how long the computer has been turned on) as of when the ransomware ran.
+But how simple is it to calculate?
+
+	Most of the affected computers had not only been disconnected from the corporate network, but turned off for analysis of the hard drive contents.
+Due to this, the uptime of the computers could not be known.
+The operating system logs contain timestamps for shutdown and power on.
+But in this case, the ransomware destroys these logs twice.
+So we were unable to find any clues pointing at possible values of uptime on the affected computers themselves.
+
+	Fortunately, however, SCCM was used on the client infrastructure, with client-side agents running on all the encrypted computers.
+The information we needed was stored centrally and had not been tampered with: all we needed was some trial-and-error to choose the right values.
+
+	Now that we had relatively precise uptime values, we needed to determine when the ransomware had run.
+Remember that at the end, the malware deletes the intermediate DLL library and encrypted ransomware, but not the legitimate executable file whose process is used for performing the malicious actions.
+In other words, the time at which this file appeared on the system should be the approximate time when the ransomware ran, to within several seconds.
+We succeeded in bruteforcing the exact value of the base encryption key in about a minute on an ordinary workstation (on the order of a few tens of thousands of iterations).
+We could then decrypt the remaining files.
+In a few cases, we had a tougher time bruteforcing the key at first.
+The reason was that the timezones had been set incorrectly.
+With this realization, we were able to conquer this issue as well.
+
+	We mentioned the SysUpdate and HyperBro backdoors from the attackers' toolkit.
+These are somewhat esoteric Remote Access Trojans used by the APT27 group (also known as Bronze Union, LuckyMouse, Emissary Panda, or Iron Tiger).
+The group likely has Asian roots, with activity since at least 2010.
+The group focuses its attention on government targets in the defense and energy industries, as well as aerospace and manufacturing.
+Most commonly, the original attack vector is a compromise of the victim's web servers by exploiting vulnerabilities, bruteforcing credentials, or taking advantage of web server misconfigurations.
+Despite the similarities in tactics, techniques, and procedures (TTPs) and use of a telltale toolkit, some of the team's researchers are skeptical about attribution of the attacks to APT27.
+
+	Media companies had never been of interest for APT27.
+This is consistent with the findings of our incident investigation: the attackers did not try to access private information on the target infrastructure, instead only running software for direct financial gain.
+
+	This is atypical and, moreover, ill-suited software that can quickly attract attention and wreck any plans for long-term cyberspying.
+The URL address to which the ransomware "phones home" upon completing its work does not have anything in common with APT27 network infrastructure.
+Of course, some groups (such as Lazarus and Winnti) combine cyberspying with direct financial motivations, so perhaps APT27 is broadening its previously limited range of interests.
+Or, as an alternative, the group has reached an agreement with other attackers for use of their software in return for a part of the proceeds.
+In favor of attribution of Polar to APT27, we can note the sequence of payload, execution, and naming: the encrypted SysUpdate backdoor is often named sys.bin.url and the Polar ransomware was named Sysurl.Hex, in a rather similar way.
+However, this could also be a false flag.
+Automation in 2018 and 2020
+
+	Here is the script used to automatically install a cryptocurrency miner on a list of computers in 2018:
+
+	And this is the script used to automatically delete the ransomware from a list of computers in 2020:
+
+	(We replaced sensitive information with '*')
+
+	The scripts show certain similarities in structure and have the same loop of file lines at the same path.
+On the other hand, the indentation, script tasks, and file naming are different.
+Some of the commands are too general to tell, since they could have been found in online search results and reused.
+Bodies of the SysUpdate and HyperBro backdoors
+
+	We were not able in some cases to confirm the presence of a given backdoor based on the body of the Trojan itself.
+We identified the HyperBro backdoor, which had been used in 2018, based on the distinctive file name combined with other confirmed tools.
+We confirmed the SysUpdate backdoor, used in 2020, by looking at the C2 address and backdoor body in the process dump memory that had been uploaded to VirusTotal during investigation from an organization not linked to our client.
+
+	Taken together, these similarities certainly point to APT27 as a culprit, but are not entirely conclusive.
+Therefore we leave it to the reader to choose whether to concur regarding involvement by APT27.
+
+	In this article, we have described an APT27 attack on a media company.
+The cybercriminals obtained access to the company's headquarters by compromising an office in a foreign country.
+They maintained control of the infrastructure for two years.
+They used both publicly available and custom-developed tools that had been seen previously.
+The hackers, while not changing their TTPs, chose rather unusual software to monetize their attacks.
+Perhaps the compromise of this client was an accident and this was merely an attempt to obtain at least some benefit.
+User data was encrypted, after which a ransom demand was made.
+A mistake in the ransomware's cryptographic algorithms enabled us to recover the encrypted files.
+To our knowledge, the attackers did not obtain access to information of any value whatsoever, ultimately leaving them with nothing to show for their efforts.
+
+Authors: Denis Goydenko and Alexey Vishnyakov, Positive Technologies

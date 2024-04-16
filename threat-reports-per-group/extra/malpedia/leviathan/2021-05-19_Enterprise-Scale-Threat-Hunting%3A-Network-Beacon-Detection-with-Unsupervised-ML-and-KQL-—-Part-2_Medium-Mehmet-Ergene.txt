@@ -1,0 +1,61 @@
+This blog is part two of a two-part series focused on C2 beacon detection.
+In the previous blog in this series, I explained approaches and problems in network beacon detection.
+In this post, I’ll develop an approach and solve the problems as much as possible with KQL and create queries for Sysmon, Palo Alto, and Microsoft Defender for Endpoint.
+You’ll be able to modify them according to your environment as well.
+Using the information above, we can calculate the approximate/exact jitter ratio.
+Well, it’s basic mathematics: we have an equation with several variables.
+CalculatedJitter = (MaxStdev(BeaconSleep) / AvgBeaconSleep ) * 100 = 14.2%
+The reason for the calculated jitter being smaller than the configured jitter is the behavior of the Cobalt Strike Beacon.
+The jitter in Cobalt Strike shifts the average beacon sleep to the left of the configured sleep value.
+If this were an Empire beacon, the calculated jitter would be 25%.
+To make things more clear, we have some values that are configured in the beacon.
+On the other hand, we have the data that is a result of the configuration.
+What we are doing here is that, since we don’t know the beacon configuration, we are analyzing the resulting data to verify it’s from a beacon or not(kind of reverse engineering).
+Since we are trying to perform verification, we can define what kind of beacon configuration we are trying to verify.
+In order to detect beaconing, we can use firewall logs, proxy logs, process network connection logs, etc.
+The logs must have at least below information:
+We can use requestURL or URLHostname information for proxy logs if we want.
+Using Source IP information is not recommended because IP assignments during VPN connections are not cached in DHCP.
+Therefore, you can see one device with several different IPs assigned to it, which will break the detection logic.
+With KQL, we can put TimeGenerated, SentBytes, and ReceivedBytes into lists using make_set/make_list.
+Then, we can sort the timestamp values by using array_sort_asc (Using serialize and sort doesn’t work when the data is big).
+Since we have an array, we can use its length to apply some filtering:
+Now, we have one row for each source-destination pair, and all the connection timestamps are in the array.
+This approach makes the data size small, and small data size means faster processing.
+Next, we can use mv-apply on the array of timestamps, set_TimeGenerated, to run a subquery for each connection pair.
+This approach also improves the query performance.
+In the subquery, we can perform the first step of beacon analysis by using the JitterThreshold we just defined:
+Note that we are storing the query result into the BeaconCandidates variable.
+We will perform further analysis on the stored results for fine-tuning.
+Now, we have all beacon candidates based on the thresholds defined.
+Next, we can filter out the beacons based on the CompromisedDeviceCountMax threshold.
+If there are more devices/users beaconing to the same destination, the beacons are most likely nonmalicious.
+We put the results into a new variable, PotentialBeacons, for further analysis.
+Next, we will find connections that can’t be a beacon.
+We will use TimeDeltaList and list_SentBytes:
+We used series_outliers to analyze the outliers.
+The function performs custom Tukey’s analysis that accepts some outliers to exist in the data.
+In addition to that, if there are too many outliers, the connection can’t be a beacon.
+Since the device can be turned off or not connected to a network for a while, time deltas can have spikes, but these spikes shouldn’t happen a lot.
+That’s why we put the OutlierCountMax condition; to accept more spikes.
+As we now have the PotentialBeacons, ImpossibleBeaconsByTimeDelta and ImpossibleBeaconsBySentBytes, we can finally get all real beacons by removing the ImpossibleBeaconsByTimeDelta and ImpossibleBeaconsBySentBytes from PotentialBeacons:
+Sample result(redacted) and how to read the data:
+Update: We can even go further and perform a historical analysis of the destination host/IP to get prevalence information for investigation prioritization.
+I’ve developed queries for Palo Alto FW (Azure Sentinel), Sysmon (Azure Sentinel), and Microsoft Defender for Endpoint/Microsoft 365 Defender.
+You can find the queries in my GitHub repo.
+They run super-fast (90 million events are analyzed in 20 seconds) and are able to detect beacons with high jitter, like 90%.
+We first need to define boundaries for the beacons you want to detect.
+Defining the boundaries based on the Empire beacon behavior covers Cobalt Strike and others.
+In this scenario, we want to detect all beacons without filtering them based on the sleep interval.
+Just change the JitterThreshold and run the query.
+In this scenario, we want to filter beacons based on the jitter and sleep interval thresholds.
+Example: Beacons that have at least 15-minute(900s) sleep with %25 jitter
+Optionally, we want to set an upper boundary for the sleep interval:
+Based on these values, we can filter the results.
+Detecting C2 beacons is hard but not impossible(just requires some statistics knowledge).
+Beacons with high jitter configuration like 100% are harder to detect, but still possible if you have time to analyze the results.
+You can automate the analysis of the results in several ways like using Logic Apps, enriching the data with VT score, using Jupyter Notebook, etc.
+Although the series ends here, I’ll cover a specific C2 scenario using the method I’ve explained.
+If you see a mistake or want to ask something about the method, send me a message on Twitter.
+Cyber Defense Professional | Threat Hunting | Detection Engineering | SOC | SIEM | @Cyb3rMonk
+Cyber Defense Professional | Threat Hunting | Detection Engineering | SOC | SIEM | @Cyb3rMonk

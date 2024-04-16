@@ -1,0 +1,98 @@
+Log in to your Bitdefender account and manage security for what matters.
+Complete protection and unlimited VPN for 10 users.
+Complete protection for 5 or 10 devices.
+Windows only security with limited VPN.
+Basic protection for Windows only.
+Basic protection for Mac only.
+Ultra-fast VPN that keeps your online identity and activities safe from hackers, ISP's and snoops.
+Live Support offered by certified experts
+Live Support offered by certified experts
+Live Support offered by certified experts
+Live Support offered by certified experts
+Prevention, Hardening, Risk, and Incident Analytics
+Advanced attack visibility with guided investigation
+Integrated Prevention, EDR and Risk Analytics
+Next-Gen AV for All Infrastructures
+Next-Gen AV for Small Businesses
+Protection for Virtual Servers and Desktops
+Purpose-built Container and Linux security
+Log in to your Bitdefender account and manage security for what matters.
+A few months ago, Bitdefender researchers started to investigate an extended operation that targeted victims from Myanmar and Thailand for what looked like cyber espionage and intelligence gathering.
+Many aspects of this operation were recently comprehensively described in this article by the Kaspersky team, but we decided to present our perspective on the operation and offer other IOCs we spotted.
+The investigation started with our usual triage process where we observed suspicious activity of two processes; C:\Users\Public\Music\WinWord.exe and C:\ProgramData\Msolutions\svmetrics.exe.
+As a result, we were able to identify an infection vector and we collected the tools and TTPs specific to this operation.
+We analyzed the chain of events and traced the start of the infection on some victims to the file C:\Users\<user>\Downloads\COVID-19 Case 12-11-2020(MOTC)\COVID-19 Case 12-11-2020(1).exe, the creation of which corresponds to 2020-11-12 08:21.
+This file is a legitimate WinWord.exe executable vulnerable to sideloading.
+The actions on behalf of this COVID-19 Case 12-11-2020(1).exe we were able to reconstruct are:
+More details on tools and TTPs can be found in the sections below.
+The svmetrics.exe (InternalName from version info: fmtoptions.exe) is vulnerable to sideloading and is abused to load Fmtoptions.dll.
+Analyzing the malicious Fmtoptions.dll file, we established that they read the content of a walk.dat file and decrypt the shellcode that is, subsequently, executed.
+The shellcode is responsible for decompressing and loading the final payload, the PlugX  implant, that represents a DLL with the damaged MZ and PE magic values.
+More details on the recovered payloads are presented in the following table:
+It’s worth noting that all tools and commands mentioned in the following sections are executed by the svmetrics.exe process that hosts the PlugX implant.
+During our research, we noticed the execution of the C:\Users\Public\Downloads\unsecapp.exe, a legitimate ESET EHttpSrv.exe file that is abused to load http_dll.dll.
+The sample of http_dll.dll we identified implements the file collection feature.
+After loading the malicious DLL file, the ini file C:\Users\Public\Downloads\BITS.ini is parsed using GetPrivateProfileIntW and GetPrivateProfileStringW to obtain three parameters, as follows:
+An integer that indicates the maximum of days after the creation time of the file.
+If that limit is exceeded for a file, it will not be collected.
+The default value is 60.
+An integer that indicateds the maximum of days after the last write time of the file.
+If that limit is exceeded for a file, it will not be collected.
+The default value is 60.
+The username targeted for exfiltration.
+It will recursively list folders under the C:\Users\<username>\.
+The malware, then, creates a folder using the current time and the format string “%Y-%m-%d %H-%M-%S” in the “C:\Users\Public\Downloads\” where all files will be staged.
+It starts scanning for files in the folders Documents, Desktop and Downloads belonging to the specified user in the “FLIN” string.
+It also scans for files on all drives except the C:\ drive and all CDROM ones.
+Another technical detail worthy of note is the mechanism used to ensure that all files are unique in the staging folder.
+The MD5 hash for each file is calculated and it is checked if the hash is not contained in a vector with all previous hashes.
+If not, it will be stored in the vector and will be written into the C:\Users\Public\Downloads\Background-Intelligent-Transfer-Service.bin file as a hex string.
+Each time the DLL is executed, the content of the file with MD5 hashes is parsed and the vector of hashes is populated.
+The targeted files are those with the following extensions:
+A noteworthy turn took place on 2021-03-09 when the svmetrics.exe executed another interesting piece of malware – C:\Users\<username>\AppData\Roaming\Zoom\ZoomVideoApp.exe.
+The ZoomVideoApp.exe implements the same collection function, but with more features, as it automatically archives the staging folder and exfiltrates the files to the C&C.
+The sample was analyzed in Kaspersky's blogpost.
+There are many differences between the http_dll.dll and ZoomVideoApp.exe, but both of these samples use an ini file for customizing the behavior, the common parameters by functionality being “meeting” and “ssb_sdk” as they are equivalent to the “CreateRAM” and “ModifyRAM”, respectively.
+The deployment of the ZoomVideoApp.exe can be interpreted as an update to the collection and exfiltration mechanism, as for the files collected by the http_dll.dll, the attackers were forced to manually archive and exfiltrate the files.
+The attackers deployed another piece of malware to exfiltrate files, as we noticed the execution of a binary from an unusual location having an archive name and an authentication token as parameters from the command line.
+The files were put into an archive created using the rar.exe utility.
+The process C:\Kpcms\Send1.exe was executed multiple times by the svmetrics.exe.
+After analysis, we concluded that the sample uploads the files to Google Drive as it uses the endpoint https://www.googleapis.com/upload/drive/v3/files?uploadType=media to perform a simple upload.
+According to the documentation of the endpoint, it is used for the transfer of files that are smaller than 5MB.
+To bypass this limitation, the attackers were forced to split the archive into multiple parts and upload each one as suggested by the archives names that we encounter.
+This limitation was fixed into a new version of the tool as the attackers start to use another sample, C:\ProgramData\Adobe\Send3.exe, for the same purpose.
+The major improvement of the tool was the use of a resumable upload mechanism to upload files bigger than 5MB.
+New command line parameters were introduced like the one for specifying the chunk size, which allows the uploading of the file by performing multiple HTTP PUT operations.
+There is also an option for resuming an upload by specifying the UploadID and for checking if the upload was successful.
+After the deploying ZoomVideoApp.exe, the tool wasn’t seen in use anymore, probably because of the exfiltration capabilities of the ZoomVideoApp.exe.
+After finding that svmetrics.exe executed the C:\ProgramData\Adobe\Send3.exe and C:\ProgramData\Adobe\GetChromeCookies.exe on one victim, we took a closer look on files from the C:\ProgramData\Adobe\ as it seems to be a location where the attackers staged many tools.
+As a result, we noticed the C:\ProgramData\adobe\arpspoof.exe file.
+Our analysis of this file found that the location path links to the attackers, and found many other details that will be mentioned below.
+The particular HTML is hardcoded into the binary itself and is similar to:
+We analyzed the sample and compared it with the code from GitHub, and we noticed another custom modification in the CARPSpoof::HackHtml function:
+As can be seen from the image, the HTML will be injected only into the responses that have the 200-status code and don’t contain the strings
+The injected HTML intends to redirect the user to http://microsoft.updatecatalogs.com/Microsoft Update Catalog.htm - a web page belonging to the attackers, as the domain updatecatalogs.com is a known C&C for the Cobalt Strike beacon.
+Another interesting thing is the 2.58.230.5 IP and the fact that the tool skips injection into the http responses from that IP, probably because that IP was part of the attacker’s infrastructure.
+Moreover, at the time of this writing, the domain new.mmtimes.org is resolved to that IP and it is pretty similar to the mmtimes.net found in the PlugX sample.
+The mmtimes.org was already mentioned in the Kaspersky report as being used in earlier operations performed by Mustang Panda, and therefore, the arpspoof.exe, the malicious URL http://microsoft.updatecatalogs[.
+]com/Microsoft Update Catalog.htm from the injected HTML code and the 2.58.230.5 IP address to which the domain mmtimes.org resolves to, suggest that the LuminousMoth and Mustang Panda, are connected.
+There are certainly more tools used by actors in this operation as, beside the fmtoptions.exe, WinWord.exe and igfxEM.EXE files vulnerable to sideloading, we found two other vulnerable binaries abused to load a malicious DLL file.
+The first case we want to address is C:\Users\Public\Music\VSTOInstaller.exe, which was executed by the same svmetrics.exe.
+This sample of Visual Studio Tools for Office Solution Installer loads the vstoloader.dll and the malicious DLL loaded this way is C:\Users\Public\music\vstoloader.dll that extracts a shellcode from the ret.bin file and executes it.
+Unfortunately, we weren’t able to obtain the ret.bin file, so we don’t know what role the tool might have.
+Being executed by the same svmetrics.exe process, the C:\Intel\install\stay\AtlTraceTool8.exe is another legitimate binary abused by the attackers.
+The only thing we were able to establish about this binary is that it loads the malicious C:\Intel\install\stay\1033\ AtlTraceToolUI.dll, but the file could not be obtained.
+The data we gathered suggests at least two of the tools we encounter are setting up persistence:
+We also spotted the persistence setup via the svmetrics.exe for a few tools:
+schtasks.exe /create /sc onstart /ru system /tn MicrosoftOneDirve /tr C:\Intel\install\stay\AtlTraceTool8.exe" "-svc /F
+REG ADD HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run /v "Zoom" /t REG_SZ /d "C:\Users\<username>\AppData\Roaming\Zoom\ZoomVideoApp.exe" /F
+REG ADD HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run /v BGClient /t REG_SZ /d "c:\Users\Public\Music\VSTOInstaller.exe" /F
+Winword from microsoft office that loads wwlib.dll
+FmtOptions.exe from Quest Software Inc.; loads fmtoptions.dll
+Visual Studio Tools for Office Solution Installer; loads vstoloader.dll
+Microsoft ATL Trace Tool; loads 1033\AtlTraceToolUI.dll
+URL used in injected HTML code
+Living my second childhood at 
+@Bitdefender as director of threat research.
+Victor VRABIE is a security researcher at Bitdefender Iasi, Romania.
+Focusing on malware research, advanced persistent threats and cybercrime investigations, he's also a graduate of Computer Sciences.

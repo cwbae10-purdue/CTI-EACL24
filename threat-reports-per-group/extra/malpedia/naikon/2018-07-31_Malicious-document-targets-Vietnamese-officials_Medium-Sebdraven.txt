@@ -1,0 +1,101 @@
+Jul 31, 2018·9 min read
+After our investigation of APT SideWinder, we’ve done a yara rule for hunting RTF document exploiting the CVE-2017–11882.
+We found a document written in Vietnamese dealing with a summary about differents projects in the district Hải Châu of Đà Nẵng.
+In this article, we’ll detail the infection chains and the infrastructures of the attackers and the TTPs of this campaign.
+The infrastructures and TTPs during this campaign seem to the Chinese hacking group 1937CN.
+Joe sandbox has a good representation of the behaviour of the infection.
+This rtf document is really malicious and it exploits the equation vulnerability to write two files in the system:
+This document is interesting to analyze so let’go !
+With rtfobj, we found three ole objects in the document:
+two non well formed ole object and a third named package ole object.
+The package ole object is used to write a file in the disk when the document is opened at the destination described by the ole object.
+That’s why, there is a path and a name in the ole object.
+This technique is used to execute code like sct file to download an executable on the operating system.
+McAfee labs has detailed all this stuff with sct file: https://securingtomorrow.mcafee.com/mcafee-labs/dropping-files-temp-folder-raises-security-concerns/
+Many attackers use it in the wild because it’ very easy to use and it’ supported by the office software with RTF files.
+So, in our case, a file named 8.t is dropped on %TMP% folder.
+If we check it, it’s clearly encrypted.
+The others object ole seem to the exploit of CVE-2017–11882.
+At the end of the object ole, we have differents API functions to make a runPE.
+Another interesting thing is this string at the begin of the object: 7e079a2524fa63a55fbcfe
+We have the same string used by APT SideWinder in the equation object ole.
+It’s the same toolset to create the malicious document.
+So now, we have to debug the malicious document to find how the file 8.t is used and find this runPE.
+At the start of the analysis, we think the process EQNEDT32.exe is created by Winword.exe using the function CreateProcess.
+So we decided to set a breakpoint at the call of his function.
+But EQNEDT32.exe is invoked by Winword.exe using COM Object.
+It’s not CreateProcess that used and Winword.exe is not the parent process of EQNEDT32.exe.
+So we have to attach the debugger when EQNEDT32.exe is launched.
+For that, we used a technique named Image File Execution Options that was documented by Microsoft.
+We create a key EQNEDT32.exe.
+And we set a value string for launching the debugger when EQNEDT32.exe is executed and attaching the debugger to the process .
+When we open the rtf document, Winword is launched and EQNEDT32.exe also.
+And the debugger is attached at the entrypoint of EQNEDT32.exe.
+We check if it’s 8.t is correctly created in the %TMP% folder.
+Now we set a breakpoint at the createFile to check if the shellcode of the exploit reads the file 8.t.
+CreateFile is called at call eqnedt32.41E5EE.
+The param of the path of file is pushed on the stack push dword ptr ss:[ebp-4].
+The shellcode uses CreateFile to the 8.t in the %TMP% folder
+So now, we can return of the user code at the calling function.
+After a step into, we enter in the shellcode, the address space has changed:
+After CreateFile, GetFileSize is called to have the size of the file
+After is Virtualloc, and it create a memory page at 1FD0000 (eax value)
+And 8.t is loaded at 1FD0000:
+And the shellcode decrypts the 8.t file in memory at 0066C82A.
+The loop of decryption is a xoring with different manipulations on the decryption key.
+At the start of the decryption the key is set to 7BF48E63.
+And the xor is made after key manipulation.
+If we check the destination of the result of the xoring (here edx + ebx), we find 01FD0000 where 8.t is loaded.
+After two step of the loop, we can see the magic number MZ set at the begin of memory section.
+At the end of the decryption loop, we have a PE in memory at 01FD0000.
+the file 8.t has been decrypted.
+Then, the shellcode uses the VirtualAlloc and create a memory page at 02070000.
+And the new PE at 01FD0000 is copied at this address.
+After GetModuleFileNameA is called to have the path of EQNEDT32.exe
+And EQNEDT32.exe is forked in suspend status by a CreateProcess and the shellcode overwrite it by the PE at the address 02070000
+And the shellcode does a ResumeThread to launch the new PE.
+So, We’ve found all API Calls in the object ole at the beginning and we have a runPE to launch the new EQNEDT32.exe overwritten.
+We know that this process has to create on disk two files following the Joe SandBox Analysis:
+If we dump EQNEDT32.exe and we put in IDA, we found quickly the function that drops the files on disk (sub_00401150) renamed dropFiles.
+And at the start of this functions, we have a loop with a xor.
+And just after we have a call of the decompression function.
+The function dropFiles is called twice by the sub_4012D0.
+If we check the call graph, DropFiles is called only by the function sub_4012D0.
+So we set a breakpoint on CreateFile because at each execution, EQNEDT32.exe starts by CreateFile onstaticcache.dat.
+And we return at the user code to set a new breakpoint to check the static analysis.
+So we set a breakpoint at 0040159A when DropFiles is called.
+And now we can analyse the second loop of decryption.
+The first step is the initialization of the decryption function.
+And after we find the xor and store the result in esi+eax.
+In the first step of the decryption loop, the result is written to 411BC0 in the address space of EQNEDT32.exe.
+After tree loops, we obtains the header of zlib compressed object.
+And at the memory page 021E0000, a PE is decompressed.
+And after the file is created with the following path: L”C:\\Users\\IEUser\\AppData\\Roaming\\Microsoft\\Windows\\Network Shortcuts\\RasTls.dll”
+DropFiles is called a twice to decrypt and decompress the executable file.
+The offset where store the file is 00434EF8 and the pe decompressed is stored at 025D0020
+And the path of the new file is : ebx=005DA228 L”C:\\Users\\IEUser\\AppData\\Roaming\\Microsoft\\Windows\\Network Shortcuts\\dascgosrky.exe”
+So we have two files in networks shortcuts of Windows.
+Dascgosrky.exe is a legit and trusted software develop by Symantec.
+To load the library RasTls.dll, the executable calls LoadLibrary and GetProcaddress in sub_401940 to execute the malicious functions
+If we check the exports in IDA, we just have a dllentrypoint.
+The dll is executed like this.
+We’ll analyse the RAT in the second Part.
+The domain contacted is wouderfulu.impresstravel.ga and this domain resolved on 192.99.181.14.
+This IP has differents domains found with PassiveTotal and theses domains is recorded in the IP 176.223.165.122.
+Many domain names is used for Vietnameses people.
+There are two domains really interesting:
+Halong.dulichculao.com is already used in the campaign targeting Vietnameses organizations.
+For Fortinet is the Chinese hacking group 1937CN.
+If we compare the TTPs, it’s really similar.
+They used RTFs to make the intrusion and dll hijacking to load the real payload.
+And the name of domains are really similar between the campaings.
+Cat.toonganuh.com is a subdomain of tooganuh.com recorded by florence1972@scryptmail.com
+The Chinese hacking group 1937CN continues to target Vietnam officials with the same TTPs with a refreshing on the tools used.
+The toolset used by this group to create RTF malicious document has the same properpy of the SideWinder.
+I want to thank my buddies on “Zone de Confort”.
+It’s with this dreamteam, I can finalize correctly this analyses.
+In the second part, we analyze the RAT using in this campaign.
+Or if another reverse can make that, I’ll paid a beer ;)
+Thanks to Gabor Szappanos https://twitter.com/GaborSzappanos/status/1024622354582908928
+OSINT, Python,Malware Analysis, Botnet Tracker, SIEM and IPS/IDS and Threats Expert / co-organizer #BotConf / co-creator of #FastIR/ Researcher at @Epita
+OSINT, Python,Malware Analysis, Botnet Tracker, SIEM and IPS/IDS and Threats Expert / co-organizer #BotConf / co-creator of #FastIR/ Researcher at @Epita

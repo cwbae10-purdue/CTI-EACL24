@@ -1,0 +1,68 @@
+Trickbot has long been one of the key banking malware families in the wild.
+Despite recent disruption events, the operators continue to drive forward with the malware and have recently begun porting portions of its code to the Linux operating system.
+As this technical deep dives shows, the  communication between the command-and-control (C2) server and the bot are extremely complex.
+Additionally, we have  analyzed  the C2 communication process of the Linux2 version of Trickbots’ Anchor module.
+Trickbot’s Anchor framework is a backdoor module discovered in 2018.
+Unlike Trickbot’s typically broad-based campaigns, Anchor is deployed exclusively on selected targets.
+Anchor’s communication with the C2  currently uses DNS tunneling, which we will break down later.
+This communication involves a few different steps.
+The purpose of this blog is to make sense of this communication and understand how the C2 operates the bot.
+
+From a high-level view, Figure 1 shows the flow of communication between the bot and the C2.
+Throughout the communication process; there are commands meant for the bot (which will be termed as bot_commands) as well as the C2 (termed as c2_commands).
+A description of the commands seen in Figure 1 is provided in Table 1 below.
+Every part of communication (Figure 1) made to the C2 follows a sequence of 3 different DNS queries (Figure 2).
+NTT previously published an article that explores how the DNS queries were created by the bot to the Anchor C2 server.
+In this blog, we researched further into the protocol to  better understand the role of each part of the DNS query.
+Figure 2 gives a high-level overview of what the DNS queries look like.
+Each of these queries have their own format on the type of data that is sent to the malware C2, as explained below:
+The Anchor module generates a GUID which is different for each platform:
+Each command sent to the C2 is followed by its own set of content (Table 2):
+Table 2: Content for c2_command
+Since the maximum length of a DNS name is 255 bytes, the data sent for the first query gets sent in parts.
+This also explain the fields current_path and total_parts seen in the type 0 query.
+Below is the pseudocode on how many parts the data gets divided into:
+The data sent to the C2 is crafted as subdomains after it is xor’ed with the key.
+The key continues to remain 0xb9.
+The example below shows what this data would look like with content sent to c2_command 0 and how many parts it gets divided into:
+After every part of the query gets sent, the C2 responds with an IP.
+The bot uses this IP to obtain the identifier value that will be used in the next query sequence.
+Both platforms have the same query for type 1.
+And similarly, the data is created as a subdomain after being xor’ed with 0xb9.
+The C2 responds with an IP.
+This IP is also passed through the same function routine as get_identifier in the pseudocode above, and the resulting value is the size of the data to be expected from the final query type.
+Both platforms have the same query for type 2.
+The bot keeps sending a query type 2 request until the total size of the data received from the C2 matches that of the value sent by C2 in response to query type 1.
+With each type 2 DNS query made by the bot, the C2 responds with a list of IP records.
+This list of IPs (Figure 3) is a structure on how the data is constructed and is exactly as that mentioned by NTT.
+
+The first dotted decimal number of the IP gives the order in which the list of IPs is parsed by the bot.
+In Figure 4 below, we see an example PE file payload of IP records sent by the C2.
+The final data received from the C2 has the following structure:
+base64_encoded_data from C2 – decodes to a series of arguments
+base64_encoded_data from C2 – decodes to filename and/or file arguments
+base64_encoded_data from C2 – decodes to filename and/or file arguments
+base64_encoded_data from C2 – decodes to filename and/or file arguments
+base64_encoded_data from C2 – decodes to filename and/or file arguments
+•    The bot makes DNS queries to C2 for a PE file.
+o    bot_command 5 sends c2_command 5
+o    bot_command 6 sends c2_command <filename>
+•    The PE file is injected into a process via process doppelgänging.
+base64_encoded_data from C2 – decodes to a series of arguments
+base64_encoded_data from C2 – decodes to a series of arguments
+base64_encoded_data from C2 – decodes to filename
+base64_encoded_data from C2 – decodes to a scheduled task string
+The Linux Anchor module was first discovered by Stage 2 Security.
+The analysis done by Stage 2 Security is extensive, but we wanted to take a closer look at the C2 communications in the same way we did with the Windows version above.
+The bot_commands from 0-4 contains smb2 information (which includes domain, user, and password) to be used by the Linux module when attempting to connect to any Windows shares.
+The module has an embedded PE file that is used to execute commands or files on the Windows shares.
+base64_encoded_data from C2 - decodes to a series of arguments
+base64_encoded_data from C2 - decodes to filename and/or file arguments
+base64_encoded_data from C2 - decodes to filename and/or file arguments
+base64_encoded_data from C2 - decodes to a GUID
+The complexity of Anchor’s C2 communication and the payloads that the bot can execute reflect not only a portion of the Trickbot actors’ considerable capabilities, but also their ability to constantly innovate, as evidenced by their move to Linux.
+It is important to note that Trickbot operators aren’t the only adversaries to realize the value of targeting other operation systems.
+Earlier this year, we analyzed a DDoS bot called Lucifer designed to run on both Windows and Linux platforms.
+As we see more adversaries building cross-compile malware families, it seems clear that security professionals must re-evaluate security practices for Linux systems to ensure they are well-prepared to defend against these increasing threats.
+Anchor PE 32bit Helper file for Linux
+Sign up now to receive the latest notifications and updates from NETSCOUT's ASERT.

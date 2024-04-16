@@ -1,0 +1,125 @@
+Simplify threat detection and response with FireEye XDR.
+A global network of support experts available 24x7.
+We offer simple and flexible support programs to maximize the value of your FireEye products and services.
+Access for our registered Partners to help you be successful with FireEye.
+Collateral, deal registration, request for funds, training, enablement, and more.
+Read our digital magazine providing expert-authored stories, information, unique insights, and advice on cyber security.
+
+To give you the best possible experience, this site uses cookies.
+Find out more on how we use cookies.Accept
+In our last post we shared our initial analysis of the malware that is installed as a result of the PDF found in the wild that exploits the then-zero-day vulnerabilities, CVE-2013-0640 and CVE-2013-0641.
+Today we are sharing more details about this new malware, which we have dubbed "666."
+The following is not a complete analysis, but outlines some of the main functionality and its interesting features.
+At its heart, this malware is a remote administration tool (RAT) with information-stealing capabilities.
+It initially accomplishes its goals through the use of three separate DLLs that work in harmony, each playing its own role.
+We say "initially" because there appears to be support for DLL plugins to be added in the future.
+There are also references to 64-bit versions of the initial three DLLs.
+For example, there is a LangBar64.dll to complement LangBar32.dll.
+For the remainder of this post, we will refer to the DLLs by their filenames but without the "32" or "64" characters at the end.
+The DLLs appear to be compiled with MinGW, judging by the way parameters are placed on the stack and from strings found in the DLLs.
+They all employ a string encryption technique for which we are sharing an IDA IDC script to aid any researchers who wish to study further.
+A simplified illustration of how key stroke, clipboard, and account data are collected and exfiltrated
+LangBar is the main module that drives execution.
+It has an export named CallW that is called in order to install it on the system.
+It maintains persistence by creating several registry items, including HKCU\Software\Microsoft\CTF\LangBarAddin\{12345678-1234-1234-1234567890AB}\’FilePath’ = .
+With ctfmon.exe running and the proper registry values set, this DLL will be loaded into all created processes.
+It behaves differently depending on which process it is loaded into.
+The DLL loaded into explorer.exe is the main instance, coordinating behavior with all the other instances of the loaded DLLs.
+Any behavior that the author designed to only occur in one instance happens from Explorer.
+LangBar is responsible for loading the other DLLs into its process and lbarext is only loaded into the Explorer process due to its nature, which will be explained later.
+Coordination between the processes and DLLs occur in several ways, including registry keys and values stored under the key HKCU\Software\Microsoft\Media\Other (referred to as "the Media key" for the remainder of this blog), named file mapping objects, and a named pipe.
+Instances where Langbar is loaded into processes for popular internet applications such as the browsers, messengers, and mail clients mentioned in our previous blog can serve as the downloading/uploading component, using the mutex JKDFHIUEJDH to coordinate whose responsibility it is.
+lbarhlp is mainly a data theft component.
+It writes the stolen data to the named pipe \\.\pipe\H5_kds..8j23_zsP2.
+It checks which process it is loaded into against a small list (iexplore.exe,outlook.exe,msnmsgr.exe,wlmail.exe,winmail.exe) and performs data theft specific to that application, usually account- and cache-related, using various Windows APIs and the registry.
+It installs a key logging hook that also steals clipboard data.
+We found a very interesting easter egg of sorts in the key logging thread.
+If the victim types the letters "optresclone," a message box appears that reads, "It's a kind of magic!"
+and it proceeds to log this event with a timestamp and the word "secreto."
+The message box text may be a reference to the Queen song "A Kind of Magic."
+This seemed to be a peculiar move by the author.
+It's somewhat of a risk to put this in as a joke since it could give the malware's presence away in the off chance someone happens to type this sequence of characters.
+Further pondering on this led to the theory that this may be some kind of extortion feature.
+The attacker could spy on his target(s) for a while and then threaten them.
+If they ask for proof that he has compromised them, the attacker can just tell them to type the magic word and the victims would be able to see for themselves.
+As a result, this provides an easy way for someone to determine if he was the victim of this attack: just type "optresclone" into one of the monitored applications such as Internet Explorer and see if the message box appears.
+We caution that victims' computers should be disconnected from the network before performing this test and not allowed back onto a network until the malware has been disabled in order to avoid tipping off the attacker that you are aware of his presence.
+lbarext is mainly responsible for receiving stolen data from lbarhlp and then packaging and encrypting it.
+It reads this data from the named pipe and stores it in an encrypted file named kmt32.pod.
+It is also responsible for processing commands that are received from the command and control (C&C) server.
+In addition to these tasks, it opens an invisible window with a Windows procedure that logs whenever a new volume is introduced to the system, including information provided by GetVolumeInformation for all attached drives.
+An interesting thing to note here is that the author spells disk with a "c" ("disc") in all cases.
+Typically, those in technology would refer to magnetic media using the "k" spelling ("disk") while using the "c" spelling to refer to optical media.
+For common usage of the word referring to flat, round objects, those in the UK typically use the word "c" spelling while those in the USA use the "k" spelling.
+Of course, no strong conclusions can be made from this.
+The commands it supports can be broken down into two categories: "configuration commands" and "RAT commands."
+The RAT commands include the following:
+The scan/steal commands follow blacklists and whitelists for directory names and file extensions that are stored under the Media key.
+Directory names and file extensions that are present in the blacklists are ignored, and only whitelisted file extensions are considered.
+Information about files already stolen is also stored under the Media key to avoid sending the same file twice.
+The initial configuration of these lists tends to slant towards documents and away from media and code related files.
+The extensibility of this RAT is noteworthy.
+It has a plugin architecture, allowing the user to craft new DLLs that export functions that follow a particular convention and can be integrated seamlessly.
+One of the arguments passed to a plugin DLL must be the name of the named pipe, \\.\pipe\H5_kds..8j23_zsP2, which is where the data is written to be sent out.
+The configuration commands include the following:
+Of note here is the ability to change C&C servers and the ability to configure automated tasks.
+Automated tasks can be any supported command and can be configured to run at specific times.
+HTTP is used for C&C.
+Each beacon is a GET request followed by a POST request.
+The GET request is used as a test to ensure that the C&C server is still available and valid.
+In the case that a "Proxy Authentication Required" response code is issued (407), the malware will attempt to authenticate using each set of credentials it has stolen in turn.
+If an "OK" response code is issued (200), these credentials are stored in a separate value in the registry under the Media key for future use.
+The original C&C server information is hardcoded as encrypted strings.
+The domain name "Bollsilloner.es" is interesting because "bolsillo" is Spanish for "pocket" and when you pronounce "Bolsilloner" aloud, it sounds like "bazillionaire."
+The POST request sends its data in multipart/form-data format.
+During our live run of the malware, we were able to capture a pcap of the initial communications sent and received.
+We witnessed the requests for the lbarhlp and lbarext DLLs and what we believe to be a request for commands.
+The field name "i" was present in all POST requests and is the same value that can be found in the "ID" value under the Media key.
+This may be an identifier for the victim based on the name "ID" and the fact that it is sent with each request.
+The field name "c" was set to "2" when requesting files to be downloaded, "0" when uploading files, and "1" for the requests that received a response with an empty body.
+A "c" value of "1" may indicate the request for commands.
+Most of the inbound and outbound data is compressed and encrypted.
+There are many registry values employed by this malware.
+Below are a few of the more significant ones to which we have uncovered the meaning.
+Most of these values use wide characters and are encrypted.
+We have provided a python decryption tool for researchers and those affected by this RAT who wish to learn more about its configuration and activities.
+"UI:" A boolean value that, when set to true, will trigger uninstallation.
+May possibly be short for "Uninstall."
+"SD:" 8 characters representing a date: "YYYYMMDD."
+This value is used for a long term sleep feature where the malware will remain inactive until the date is reached.
+May possibly be short for "Sleep Date."
+"SP:" The directory where the installed DLL modules are located.
+May possibly be short for "Storage Path."
+"UT:" Another date formatted like "SD."
+When this date is reached, the malware uninstalls itself (sets "UI" to 1).
+May possibly be short for "Uninstall Time."
+"ID:" A string used as the value for the "i" parameter in the HTTP POST requests sent by the malware.
+This string may be an identifier for the victim, and also designates the filename used to store commands received that are to be processed.
+"AD:" An alternative URL for C&C, the default URL is hardcoded as an encrypted string.
+May possibly be short for
+"PI:" Base64 encoded value that holds the proxy name, username, and password for an HTTP proxy.
+May possibly be short for "Proxy Information."
+"PIS:" Base64 encoded value that holds all the sets of credentials stolen by the malware.
+May possibly be short for
+Kaspersky and CrySyS Lab recently released a report providing some details on another series of attacks using the same exploit that delivers this payload.
+They named the malware "MiniDuke" and raised the pertinent question of whether these attacks are related.
+Our initial research into this topic, although not conclusive, hints towards at least the authors of the malware being different.
+The same name has been used for all the droppers in the attacks found so far: "L2P.T."
+This was likely done out of convenience to avoid having to change the shellcode in any way.
+However, many differences are found in the droppers used in the MiniDuke attacks as compared to the dropper used in this attack.
+For starters, in this attack, the dropper was compiled with MinGW just like the malware payload itself.
+It also employs the same string encryption and error handling functions as the malware, whereas the MiniDuke droppers’ strings are plainly visible.
+The decoy PDF found in this dropper is encrypted whereas the MiniDuke dropper’s  decoy PDF is plainly visible in the resource section.
+This dropper opens its decoy PDF directly using the ShellExecute API whereas MiniDuke’s dropper creates a BAT file that kills the existing acrobat process along with opening the decoy PDF.
+Lastly, the project’s pdb file path is not visible in this dropper’s strings as it is in MiniDuke’s droppers strings.
+Despite all these differences, there is still the curious reference to the number "666," which both of the payloads share, albeit in different ways.
+In this case, "666" is specified as the preferred image base address whereas in MiniDuke’s case, it is referenced as stray bytes in its code.
+The question remains: is this a coincidence or is there a connection?
+Here are the MD5 hashes of the DLLs:
+Special thanks to Gregory Newman for his assistance in analysis and tool writing.
+Get email updates as new blog posts are added.
+Cette page est également disponible en français.
+Diese Seite ist auch auf Deutsch verfügbar
+해당 페이지는 한글 버전으로 보실 수 있습니다
+Continue viewing this page in English
+Privacy & Cookies Policy | Legal Documentation

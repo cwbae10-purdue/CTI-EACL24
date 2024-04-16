@@ -1,0 +1,195 @@
+Critical infrastructure on the frontline
+Stop being an easy target
+Can your security keep up with you?
+Take control of your ERP security
+Vulnerability and compliance management system.
+Advanced sandbox with customizable virtual environments
+Full-featured SIEM for mid-sized IT infrastructures.
+Knows your infrastructure, delivers pinpoint detection.
+Cyberthreat detection and incident response in ICS.
+Multilayered protection against malware attacks.
+Intelligent protection of business applications.
+NDR system to detect attacks on the perimeter and inside the network.
+Full Range of ICS-specific Security Services
+Security Analysis and Compliance Audit
+Independent Expert Analysis of Your Source Code
+Black Box and White Box Analysis
+Secure Application Development at Your Organization
+Upgrade Your View of Perimeter Security
+
+	Malware is one of the main tools of any hacking group.
+Depending on the level of qualification and the specifics of operation, hackers can use both publicly available tools (such as the Cobalt Strike framework) and their own developments.
+
+	Creating a unique set of tools for each attack requires huge resources; therefore, hackers tend to reuse malware in different operations and also share it with other groups.
+The mass use of the same tool inevitably leads to its getting on the radar of antivirus companies, which, as a result, reduces its efficiency.
+
+	To prevent it from happening, hackers use code packing, encryption, and mutation techniques.
+Such techniques can often be handled by separate tools called crypters or sometimes simply packers.
+In this article, we will use the example of the RTM banking trojan to discuss which packers attackers can use, how they complicate detection of the malware, and what other malware they can pack.
+
+	A hacker group responsible for RTM distribution regularly sent mass phishing emails with malicious attachments until the end of 2020.
+Apparently, the attacks were automated.
+
+	Each attachment contained files that significantly differed from each other, but the final payload remained almost the same.
+
+	Such feature is a natural consequence of using crypters.
+Initially, the group behind RTM used its own unique crypter.
+In 2020, however, the group changed it twice.
+
+	When analyzing samples packed in a new way, we detected numerous other malware protected by similar method.
+Taking into account the fact that packing process is automated, such overlapping with other malware allows us to assume that attackers use the packer-as-a-service model.
+In this model, packing of malicious files is delegated to a special service managed by a third party.
+
+	Access to such services can often be found on sale on hacker forums.
+
+	Later in this article, we will discuss specific examples of crypters used by the RTM group.
+
+	The first use of this packer by the RTM group that we detected dates back to November 2019.
+The group started actively using the packer in April–May 2020.
+Rare uses of the packer for distributing old versions of the RTM trojan were also observed in late January 2021.
+
+	We couldn't associate this packer with any of the publicly described ones, so we named it according to three specifics of its working: recursion, bit reverse, and reflective loading of PE files (reflection), hence the name Rex3Packer.
+
+	The overall algorithm for extracting the payload is as follows:
+
+	A specific algorithm for decoding packed data is of special interest to us.
+In this case, it would be incorrect to compare packing with compression, as the algorithm is such that the size of packed data is always bigger than that of the initial data.
+
+	The packed data is preceded by a 16-byte header that contains four 4-byte fields:
+
+	The decoding looks as follows:
+
+		For example, in mode 4, the last byte is composed of even bits of the block's first byte and odd bits of the block's second byte.
+As a result of "returning" these bits to the first and second bytes, an original sequence of two bytes is composed.
+
+	To complicate code analysis, various obfuscation techniques are used in the packer:
+
+		In between the execution of significant code, various WinAPI functions are called.
+Their results are saved but not used, and the functions are selected so that not to affect the program operation.
+
+		A typical feature of this packer is the presence of cycles (not performing useful operations) implemented via a recursive function.
+
+		For further obfuscation, several dozens of randomly generated functions are added to executable file.
+They may call each other, but none of them obtains control ever.
+
+	In addition to RTM samples, we detected the use of Rex3Packer for packing various malware, mainly originating from the CIS countries.
+Below is the list with examples of such malware:
+
+	We also detected the use of this packer for packing malware samples of the Nemty, Pony, and Amadey families.
+This is, of course, not an exhaustive list of all cases of using Rex3Packer.
+
+	In May 2020, RTM started using a new packer and went on using it until the beginning of 2021.
+We called it HellowinPacker because of the file name "hellowin.wav" we spotted in strings of some samples.
+
+	The packer's key feature is two levels of code mutation.
+The first one significantly changes the unpacking code structure, making samples look different from each other.
+
+	The example above shows the comparison of samples 5b5f30f7cbd6343efd409f727e656a7039bff007be73a04827cce2277d873aa0 (on the left) and 1f9a8b3c060c2940a81442c9d9c9e36c31ad37aaa7cd61e1d7aec2d86fe1c585 (on the right).
+
+	The second level only changes some details, and the code structure remains in general the same.
+The changes mainly affect assembler instructions and constants that do not impact the program operation.
+As a result, the code looks almost identical when decompiled.
+
+	Just like Rex3Packer, HellowinPacker is actively used by attackers to pack various malware.
+Note that malware from the same family has the same structure when packed.
+This lasts for at least some time, after which the structure can change.
+
+	All these features coincide with the description of a packing service the access to which is sold on hacker forums:
+
+	Apparently, each unique crypter has its own structure of generated code.
+The crypter itself can also mutate code but at a lower level, without changing the program structure.
+In any case, the significant executable code remains the same.
+
+	One of the first actions in all packed files is an attempt to open the registry key HKEY_CLASSES_ROOT\Interface\{b196b287-bab4-101a-b69c-00aa00341d07} (character case may differ in each particular case) and request a default value.
+Correct program operation in some modifications of generated code depends on whether these operations are successful.
+
+	Interface GUIDs may also differ.
+Here are some of the possible options:
+
+	The subsequent code obtains the address at which a block of encrypted data is located.
+
+	This block starts with a 4-byte number, which stores the size of initial data (those that will be obtained after decoding).
+By calling VirtualAlloc, a memory block of required size with RWX rights is allocated for decrypted data.
+Encrypted data is copied to the allocated memory by blocks of X bytes each.
+In the original file, "spaces" of Y byte length are located between these blocks.
+
+	Data is then decrypted by 4-byte blocks:
+
+	Example of algorithm implementation in Python:
+
+	Values X, Y, and Z vary depending on a particular packed sample.
+
+	The next stage of extracting payload—the shellcode—is located inside the decrypted data.
+The shellcode takes control when the decryption ends.
+
+	The shellcode dynamically loads functions required for its operation.
+These functions are listed in the "import table" located at the beginning of decrypted data.
+
+	For greater variability, the strings in the "import table" may be partially filled with random symbols.
+In the example above, the first function name "GetProcAddress" is fully replaced by the string "aaa45678901234", and the names "VirtualAlloc" and "VirtualProtect" are damaged.
+Right before processing the table, the shellcode restores correct values of all the symbols.
+
+	Payload (this time, it is the PE file) is extracted by the shellcode from the rest of the decrypted data.
+It is encrypted again by the same algorithm as described above.
+For Z key, figure 1001 is always used.
+
+	When the decryption is finished, the shellcode performs reflective loading of the PE file using the functions imported at the first stage.
+
+	Just like Rex3Packer, HellowinPacker samples call WinAPI functions not related to the main program logic.
+However, in this case, they are mostly used to complicate behavior analysis and detection in sandboxes.
+This is also confirmed by the fact that in most cases various functions are called in a row at the very beginning of the program.
+
+	An additional effect of the WinAPI use is the impossibility of detection by a list of imported functions and by imphash.
+
+	When working with various numeric values, a certain "arithmetic" obfuscation is often observed: necessary constants are represented as sums or differences of other constants (which in some cases equal zero).
+To obtain constants, WinAPI functions can also be called, yielding predictable results (for example, 0 in case of failure).
+
+	An example of such obfuscation is given on the Figure below: the only goal of this function is to assign the value of the argument source to a variable pointed by target.
+In this case, the output of calling GetStockObject(789644) will always equal zero, as the function was given an intentionally incorrect argument.
+
+	Various mutations are encountered at the assembler level as well: inserting junk code, using opaque predicates, calling functions with unused arguments and repeated calls of the functions, and replacing instructions with their equivalents.
+
+	HellowinPacker exists at least since 2014 and has been so far used in various mass malware.
+Here are only a few examples:
+
+	The packer has been frequently mentioned in reports by other researchers.
+The earliest mention we found dates back to 2015.
+In an article about crypters, Malwarebytes experts analyze malware samples that use HellowinPacker.
+Later, other researchers referred to it as the Emotet packer (1, 2).
+In 2020, our colleagues from NCC Group called it CryptOne and described how it can be used to pack the WastedLocker ransomware.
+According to NCC Group, the crypter was also used by the Netwalker, Gozi ISFB v3, ZLoader, and Smokeloader malware families.
+
+	Our example of using the crypters shows us how hackers can delegate responsibilities among each other, especially when it comes to mass malware.
+Developing malicious payload, protecting it from antivirus tools («crypt»), and delivering it to end users—all this can be performed by completely unrelated hackers, and each element of this chain can be offered as a service.
+This approach lowers the cybercrime entry threshold for technically unskilled criminals: to conduct a mass attack, all they have to do is to provide a necessary amount of money to pay for all the services.
+
+	The packers we described are certainly not the only ones that exist on the market.
+However, they demonstrate the common features of such tools: as a result of their work, an executable file is obtained with obfuscated polymorphic code of the unpacker and a payload encrypted in some way or another.
+Mutations in code and reuse of the same crypters make static detection of payload almost impossible.
+However, since the payload is somehow decrypted to the memory and then starts its malicious activity, behavioral analysis using sandboxes (such as PT Sandbox) allows detecting malware and providing accurate verdicts even for packed files.
+In addition, it should be noted that packers do not affect the interaction of malware with C&C servers in any way.
+This makes it possible to determine the presence of malware in the network using traffic analysis tools such as PT Network Attack Discovery.
+
+		REMOTE [PTsecurity] TeamBot/RTM
+		 sid: 10004412;
+
+		BACKDOOR [PTsecurity] TeamBot/RTM
+		 sid: 10004415;
+
+		MALWARE [PTsecurity] RTM Banker CnC POST
+		 sid: 10000765;
+
+		MALWARE [PTsecurity] RTM.N (Redaman)
+		 sid: 10005556; 10005557;
+
+		MALWARE [PTsecurity] Spy.RTM.AF
+		 sid: 10005468;
+
+		MALWARE [PTsecurity] Trojan[Banker]/RTM
+		 sid: 10004855; 10004875;
+
+		MALWARE [PTsecurity] Win32/Spy.RTM.N (Redaman)
+		 sid: 10003414; 10004754; 10005555;
+
+		PAYLOAD [PTsecurity] RTM.Payload.xor
+		 sid: 10005585;

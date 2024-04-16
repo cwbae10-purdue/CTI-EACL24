@@ -1,0 +1,140 @@
+Your Handbook to Utilize the MITRE ATT&CK Framework
+Your Handbook to Utilize the MITRE ATT&CK Framework
+Your Handbook to Utilize the MITRE ATT&CK Framework
+Süleyman Özarslan, PhD | January 30, 2020
+Emotet was first identified in 2014 as a banking malware stealing sensitive and private information.
+Although Emotet has been used for years by attackers as a banking malware organized in botnet, we observe that recently it is being used as Infrastructure as a Service (IaaS) for delivering malware, including other banking Trojans.
+Malware analysts categorize Emotet into epochs depending on command and control (CnC) servers, distribution methods, payloads, and even assigned bots which change over time.
+In this technical analysis series, we analyzed an Emotet Epoch 2 sample.
+We'll reveal obfuscated malicious macro codes in this first part of the Emotet Technical Analysis series.
+All techniques used by attackers in this malware are mapped to tactics and techniques in the MITRE ATT&CK Framework.
+The most common entry vector of Emotet is spearphishing emails.
+The MITRE ATT&CK Framework classifies spearphishing techniques into Spearphishing Attachment (   MITRE ATT&CK T1193   ), Spearphishing Link (   MITRE ATT&CK T1192   ) and Spearphishing via Service (  MITRE ATT&CK T1194  ).
+In this Emotet strain, spearphishing emails include links to websites that deliver Microsoft Office Word documents to the user upon clicking the link ( User Execution,  MITRE ATT&CK T1024  ).
+Word documents are not directly attached to emails to avoid defenses that may inspect email attachments (   Spearphishing Link, MITRE ATT&CK T1192   ).
+They include malicious macros that download Emotet banking malware to the target systems.
+We'll analyze the following Word document step by step with you:
+This word document is distributed by the following links contained in emails:
+When a victim opens the document, Microsoft Word asks to enable/disable macros.
+It reveals that macros are embedded in the document ( Scripting,   MITRE ATT&CK T1064   ).
+The malicious document claims that the user must "Enable content" to open the document.
+However, enabling content launches the code in the macros.
+We start by analyzing VBA macros with   oledump.py   .
+oledump.py reveals dozens of macros, and some of them are empty.
+We also parse the document with   olevba   .
+When we parse the Word document with olevba , it also reveals dozens of macro streams, and some of them are empty.
+Olevba uncovers that there are some suspicious macro codes in the document, such as Hex and Base64 encoded strings, ChrW and ShowWindow functions.
+We used --decode and --deobf paramaters of olevba to decode and deobfuscate macro streams but they do not reveal because macro codes are heavily obfuscated ( Obfuscated Files or Information,   MITRE ATT&CK T1027   ).
+There are too many macro streams to analyze in the analyzed document, but olevba revealed the starting point: Document_open sub.
+Let' look at Awzttocpmk function:
+As seen in the codes, there are hundreds of loops, declarations, conditions, type conversions and variable assignments to obfuscate codes, and many of them are never used.
+Since, olevba could not deobfuscate the macro codes, we try   ViperMonkey   for deobfuscation.
+ViperMonkey doesn’t deobfuscate macro codes either, so it's time now for the manual analysis.
+When we clear macro codes by removing never used loops, declarations, conditions, type conversions and variables, we reveal the following code from hundreds of lines of code.
+Other than declarations and variable assignments, there is only one meaningful loop in this function:
+First, we need to find Fcbxktofsye in the Awzttocpmk() function :
+So, we need to find Dlgwrtobrxjmm in the function:
+When we put 6. in place of Dlgwrtobrxjmm in 5. , we get:
+Now, we need to find Azofmlab to find Fcbxktofsye .
+Azofmlab is defined in the macro codes:
+When we put 8. in place of Azofmlab in 7. , we get:
+So, we must find dv , T and fd variables.
+dv is defined in the macro codes:
+Now, we need to find the value of the ChrW(wdKeyS) function and Dtcqcidgf.Ekrdfjzpyjnsx to reveal dv .
+According to  wdKey enumeration  , wdKeyS is 83 .
+According to ASCII code, 83 specifies the S character, so ChrW(83) is equal to the S character.
+So, ChrW(wdKeyS) is equal to the S character, but adversaries used this function instead of a simple "S" in order to obfuscate their codes to decrease the detection rate.
+Let's find the second unknown variable of dv, which is Dtcqcidgf.Ekrdfjzpyjnsx .
+But, it does not exist in the macro codes .
+Because, adversaries hid Dtcqcidgf.Ekrdfjzpyjnsx in VBA forms in the document other than macro codes for obfuscation.
+It is obvious why automated tools cannot deobfuscate the macro code.
+olevba revealed the form variable Dtcqcidgf.Ekrdfjzpyjnsx :
+So, the value of the form variable Dtcqcidgf.Ekrdfjzpyjnsx is P .
+Let's put 12. and 13 .
+in their places in 9 .
+So, we can concatenate substrings in dv :
+Now, it is time to find T and fd t o reveal Fcbxktofsye .
+T is not initialized in codes.
+Microsoft Visual Basic Editors' Locals Window shows its value as Empty.
+fd is defined in the macro codes:
+Let's put 15. , 16. and 17. in their places in 10. :
+Now, first we must find the result of the Split function.
+We can find the result of the Split function by splitting the text with the delimiter =mmuusns= by simply removing all instances of the delimiter in the string:
+Let's put the result in its place in 15. :
+Now, we need to find the result of the Join function.
+So, the result of the Join function is ( Dlgwrtobrxjmm = Join(Azofmlab, "") )
+Now, we can reveal the Fcbxktofsye :
+Finally, we get a hint of what this code does:
+Therefore, attackers will run a process using WMI ( Windows Management Instrumentation,   MITRE ATT&CK T1047   ) instead of cmd ( Command-Line Interface,  MITRE ATT&CK T1059  ).
+Let's put 23. into 4. :
+Now, we must find er , Ysjchbkkg , Swdtudgkjzjs , Awzttocpmk and Dzzebvtpbu variables.
+er variable is not initialized, it is NULL.
+Ysjchbkkg is stored in another function.
+There are also never used loops, declarations, conditions, type conversions and variable assignments to obfuscate codes.
+When we clear useless codes that are included in the macro codes to cover malicious code, we reveal the following function:
+Fbxpzsewrc is also defined in the function:
+We must find Lbfipxywqppc and sss to reveal Ysjchbkkg .
+They are included in the Ysjchbkkg function:
+and 32. in 30. :
+Now, we need to find Jqzbdljbr , Dtcqcidgf.Iqjssfeeu , Dtcqcidgf.Zxioomrqvjz and CVar(Trim(Dtcqcidgf.Xrqtcysa.GroupName) .
+Jqzbdljbr exist in the function:
+We must find I and ChrW(wdKeyP) .
+According to  wdKey enumeration  :
+According to ASCII code, 80 specifies the P character.
+When we put 80 in place of wdKeyP in ChrW(wdKeyP) , we get:
+So, ChrW(wdKeyS) is equal to the P character, but adversaries used wdKeyP and ChrW functions together instead of a simple P for obfuscation.
+Let's put 35. and 37. in 34.
+Now, let's find Dtcqcidgf.Iqjssfeeu .
+It does not exist in the macro code, it is a form variable:
+Dtcqcidgf.Zxioomrqvjz is also a form variable:
+Now, let's find CVar(Trim(Dtcqcidgf.Xrqtcysa.GroupName) .
+First, we must find Dtcqcidgf.Xrqtcysa.Groupname .
+Dtcqcidgf.Xrqtcysa is also a form variable:
+Dtcqcidgf.Xrqtcysa.GroupName means that GroupName property of Dtcqcidgf.Xrqtcysa is a form variable.
+GroupName property of Dtcqcidgf.Xrqtcysa includes a long string:
+Dtcqcidgf.Xrqtcysa.GroupName starts with dozens of space characters.
+Adversaries added these space characters for obfuscation and used Trim function to get rid of them.
+In fact, CVar function is useless in this code.
+As you can guess, adversaries used this function for obfuscation.
+It's time to put 39. , 40. , 41. and 44. in 33. :
+Get rid of + characters:
+Split the text with =mmuusns= delimiter:
+There is a PowerShell script in the Ysjchbkkg variable.
+Powershell (   MITRE ATT&CK T1086    )  is commonly used by attackers to perform various actions, including downloading a file and execution of a code.
+The -en parameter in the PowerShell script is an alias of the -EncodedCommand parameter.
+Therefore, we must use base64 decoding to reveal the PowerShell command.
+We'll analyze the obfuscated PowerShell command in the second part of this technical analysis series.
+Now, we know the value of the Ysjchbkkg variable .
+Let's remember our main operation:
+Until now, we revealed Fcbxktofsye , er , and Ysjchbkkg variables .
+Now, we must find Swdtudgkjzjs , Awzttocpmk and Dzzebvtpbu variables.
+Awzttocpmk exists in the macro codes:
+Let's put 51. in place of Ybdakolbjc in 50 ., we get:
+Let's get Ixldqggmg from the macro codes:
+We need Dlgwrtobrxjmmi , ChrW(wdKeyS) , Dtcqcidgf.Hsinculclm.Tag and Rpkdwysvusev to find Ixldqggmg .
+We've already revealed the value of Dlgwrtobrxjmm in 22. :
+We've also revealed ChrW(wdKeyS) in 12. :
+We must look at data streams in forms instead of the macro codes.
+Dtcqcidgf.Hsinculclm is defined in the form variables in the document:
+According to its name, it seems that it is in the macro codes.
+But, it is a tag property of a form variable, Dtcqcidgf.Fshewmvxnlq .
+Let's put 22. , 12. , 54. and 57. in 53. :
+Get rid of "+" characters:
+Now, we now Ixldqggmg .
+Let's put 59. and 13. in 52. :
+In the code showwindow property of Awzttocpmk is defined as False ( Hidden Window,  MITRE ATT&CK T1143  ):
+Let's remember our main operation again.
+We've found Fcbxktofsye , er , Ysjchbkkg , Swdtudgkjzjs and Awzttocpmk until now .
+Now, we must find Dzzebvtpbu variable, but it is uninitialized.
+Let's put 23., 25. , 48. , 49. , 61. , and 63. in their places in 4 :
+In this Do While loop, Create method of the Win32_Process class is used.
+Therefore, the first variable is the command line to execute.
+It is a PowerShell command in this code.
+The second variable is CurrentDirectory.
+If this parameter is NULL as in this code, the new process will have the same path as the calling process.
+The third variable is ProcessStartupInformation, like winmgmtS:win32_ProcessStartuP in this example.
+The last variable is the global process identifier that can be used to identify a process.
+The purpose of this document, as the first part of the Emotet Technical Analysis Series is to demonstrate how to reveal heavily obfuscated Visual Basic macro codes in a recent Emotet malware document.
+Briefly, this obfuscated VBA code embedded in the Word document executes a PowerShell command using VMI.
+So far, adversaries used following techniques to obfuscate VBA codes in the analyzed document:
+ We will analyze and reveal behaviors of the PowerShell command in the second part of this Emotet Technical Analysis series.

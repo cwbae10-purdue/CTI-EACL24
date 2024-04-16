@@ -1,0 +1,59 @@
+But in this article we will not focus on the core itself but rather the loader whose job is to decrypt the payload and execute it.
+While the binary has two consecutive loaders, the first one will be glossed over because of low level of complexity:
+Original binary’s entry point, observed symbols were embedded in the binary
+The first thing we notice after loading the RC4-decrypted payload from the previous stage is that IDA hasn’t automatically recognized a single valid function.
+This section’s permissions are also looking quite suspicious, because section needs to be readable, executable and writable.
+Function that starts just after the chunks lengths’ last entry (begins at 0x40108C), is responsible for calculating the starting offset for each function (or binary chunk) and storing it into an array stored on stack.
+Function used for calculating addresses
+The functions’ objective is pretty straight-forward:
+The final array of pointers looks as follows (remember that since values are pushed onto stack, the pointers are reversed relatively to their position in the lengths array):
+The pointer to the array is stored in EBP register and passed between almost all functions in the future
+The previously mentioned code encryption is done using a standard repeating xor cipher:
+The xor key seems to be located around the base64-encoded strings:
+In this sample, the key is equal to FE9A184E408139843FA99C45943D
+All we really have to do is iterate over all functions, decrypt their body with xor and mark the functions.
+As seen in previous screenshots, all function calls are performed using a function wrapper that:
+In order to simplify our analysis we’ll patch the binary and replace the wrapper calls with direct function calls.
+Almost every wrapper call is exactly the same, which will be very helpful:
+XX is a single unsigned byte that determines the index of the wrapped function.
+YY YY YY YY is a 32-bit, relative, little-endian integer that marks the address of the wrapper function.
+Our plan is to patch the whole call blob to:
+where ZZ ZZ ZZ ZZ is the relative address of the wrapped function.
+To do that, we’ll use an idapython script:
+All imports are loaded into a static location in memory using a hash lookup:
+Function used to calculate strings hash
+We can find the correct API function table using different methods but we are going to focus on doing it manually by looking for the correct function name.
+Start off by rewriting the hash function to Python:
+We’ll also need a list of functions exported by windows DLLs.
+We’ve found that scraping http://www.win7dll.info/ actually works pretty well for that purpose.
+Now we need to iterate over all hashes and find a correct function name for each one:
+All that’s left now is to create an IDA struct that contains the function names and set the global array to the proper type:
+Now, it looks much better!
+All strings are encoded using base64 with a custom alphabet, it’s explained pretty well in several blog posts already 23
+The custom charset is a permutation of the default base64 charset, e.g.
+Function used to fetch a decrypted base64 string with a given index
+After de-wrapping the function calls, the assembly actually looks quite similar to the previous iteration (notice the nops that are result of our earlier patches):
+Which means we can reuse some of our previous code.
+But instead of patching the call instructions to mov instructions, we’re just going to add comments in assembly to annotate the original string:
+After applying all of the described anti-anti-analysis patches, we end up with a pretty decent-looking binary.
+The binary iterates over DLL names stored in strings and checks if any of them is present in the PEB InMemoryOrderModuleList linked list:
+A series of checks is performed using QueryServiceStatusEx in order to detect any anti-malware services currently running on the system.
+If a service is detected, the loader tries to disable it accordingly:
+The binaries embedded in the loader are encrypted using the same xor cipher method as the functions, however they are also compressed using MiniLZO 2.
+The methods of executing the payload differ for 32 and 64-bit binaries.
+While the former is pretty straight-forward, the latter integrated a more sophisticated code injection technique.
+Firstly, a new suspended process is created (in this sample with process name equal to “svchost”), then the execution transfers to a dynamically-generated shellcode that performs a switch from 32-bit compatibility mode to 64-bit using a trick called Heaven’s Gate5.
+Finally, the shellcode performs a call to the decrypted 64-bit helper shellcode which then finally jumps to the 64-bit core.
+The included shellcode deassembles to
+As of today, TrickBot is distributing following modules:
+The CERT Polska team operates within the structures of NASK (Research and Academic Computer Network) — 
+                    a research institute which conducts scientific studies, operates the national .pl domain registry
+                    and provides advanced IT services.
+Kolska 12, PL-01-045 Warsaw, Poland
+                        tel.
+: +48 22 380 82 74
+                        fax: +48 22 380 83 99
+                        ePUAP: /NASK-Instytut/SkrytkaESP
+
+                        E-mail: [email protected]
+                        Incidents: [email protected]

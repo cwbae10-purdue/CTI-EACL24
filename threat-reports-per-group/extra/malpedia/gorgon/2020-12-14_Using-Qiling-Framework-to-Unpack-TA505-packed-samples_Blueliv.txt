@@ -1,0 +1,143 @@
+Threat Actors make use of packers when distributing their malware as they remain an effective way to evade detection and to make them more difficult to analyze.
+Manual analysis can defeat these protections and help to develop tools that allow the unpacking of the malware.
+To develop these tools, it is necessary to know how the process of unpacking for those malware samples is done in order to replicate their functionality.
+This can be a costly task, and the modification of the unpacking algorithm by the Threat Actor would entail to study the malware and modify the tools again.
+At Blueliv, we track Threat Actors like TA505, who also make use of packers in their malware distribution campaigns.
+Regarding TA505, there are currently tools like TAFOF-Unpacker able to successfully unpack their samples replicating the unpacking algorithm process.
+In this blogpost, we are going to show how to unpack TA505 packed samples using the Qiling Framework emulator version 1.2, which will allow us to do so, without needing to study and replicate all the implementation details of the unpacking algorithm.
+Our goal is to dump the unpacked payload from TA505 packed samples using emulation.
+As we said before, this approach allows us to circumvent the study of every implementation detail of the unpacking algorithm.
+However, we still need to manually analyze the packer to find a way of getting the unpacked content and dump it.
+In the case of TA505 packer, we could differentiate 3 stages.
+This stage consists of executing useless instructions and loops in order to obfuscate and/or slow down the analysis.
+It also makes use of some anti-emulation techniques to avoid being studied by this kind of software.
+Anti-Emulation used in sample e4eb1a831a8cc7402c8e0a898effd3fb966a9ee1a22bce9ddc3e44e574fe8c5e
+Dummy function used in sample e4eb1a831a8cc7402c8e0a898effd3fb966a9ee1a22bce9ddc3e44e574fe8c5e
+Dummy function used in sample bb5054f0ec4e6980f65fb9329a0b5acec1ed936053c3ef0938b5fa02a9daf7ee
+Dummy function used in sample 4b0eafcb1ec03ff3faccd2c0f465f5ac5824145d00e08035f57067a40cd179d2
+We can see that between different samples, the dummy and useless functions vary.
+However, the anti-emulation technique remains the same in all of them, being present in the GetLastError() function.
+From the Official Windows API documentation:
+“Retrieves the calling thread’s last-error code value.
+The last-error code is maintained on a per-thread basis.
+Multiple threads do not overwrite each other’s last-error code.”
+This technique is used with different expected return values across different malware samples (using different API calls before the GetLastError() occurs), for example:
+Anti-Emulation used in sample ad320839e01df160c5feb0e89131521719a65ab11c952f33e03d802ecee3f51f
+Anti-Emulation used in sample e4eb1a831a8cc7402c8e0a898effd3fb966a9ee1a22bce9ddc3e44e574fe8c5e
+Anti-Emulation used in sample 4b0eafcb1ec03ff3faccd2c0f465f5ac5824145d00e08035f57067a40cd179d2
+Anti-Emulation used in sample bb5054f0ec4e6980f65fb9329a0b5acec1ed936053c3ef0938b5fa02a9daf7ee
+For instance, last figure shows the malware calls GetLastError() and the only instruction executed before this one that could have set an error value is the execution of the API call GetWindowsContextHelpId().
+From the Official Windows API Documentation:
+“Retrieves the Help context identifier, if any, associated with the specified window.”
+Given that the window handle used in this function is invalid, the sample expects this last call to set error value to 0x578 (ERROR_INVALID_WINDOW_HANDLE), (which is what would happen in a non-emulated environment), and then continues execution.
+We will have to code this behavior so that the emulation can detonate the actual sample, because the emulator is not able to predict the value corresponding to GetLastError() by itself, since it does not have the real running context of an operating system.
+Unpacks an encrypted shellcode in a newly allocated memory in the heap and transfers execution to it.
+This shellcode contains the actual Stub of the packer.
+This stage may also contain junk and useless code to difficult the malware analysis.
+This is the TA505 Packer Stub (piece of code containing the decryption routine), that will act as a loader for the final payload, which is written in heap memory and executed.
+It starts by storing some strings in the stack that will use to find the Windows APIs needed to unpack itself: VirtualAlloc, VirtualProtect, LoadLibraryA, VirtualFree and VirtualQuery.
+TA505 packers store strings in the stack to resolve Windows API functions.
+It relies on a self-modifying unpacking technique, trying to acquire a block of writeable, executable memory, unpacking (decrypting and writing) code to the newly allocated memory and finally, transferring execution to the unpacked code in the newly allocated memory.
+As it is shown in the last screenshot.
+The Stub calls VirtualFree() after having written the decrypted payload in the newly allocated memory.
+Our strategy should consider saving the allocated blocks of memory and dump them once VirtualFree() is executed (at this point we have seen that the malware is just about to start running the unpacked payload and it’s in the state which is going to be executed; it is safe to dump now).
+Before VirtualFree() happens, we can see the unpacked layer in the last allocated block of memory that we’ve named allocated2.
+We should be able, with emulation, to guide the execution until this point and then dump right away the contents of the last allocated code to get the next unpacked layer.
+This is what we are going to try with Qiling Framework v1.2.
+Executing the sample using Qiling Framework would allow it to be unpacked automatically, and we would only have to put hooks into specific Windows API functions to get the unpacked binary.
+Qiling Framework is an advanced open source binary emulation Framework, with binary instrumentation and API emulation being its main focus and priority.
+It is designed as a cross-platform binary instrumentation and binary emulation framework and has support for multi-architecture.
+Code interception and arbitrary code injection before or during a binary execution are one of its powerful features, as well as being able to patch a binary during execution.
+The advantage of using the Qiling Framework for this purpose is that changes made to the unpacking algorithm will not prevent the samples from being unpacked.
+This is because we are obviously not implementing the decryption algorithm itself, but emulating it instead.
+However, we also find some obstacles when using emulators, as packers can also make use of anti-emulation techniques.
+In this case we would need to understand how the packer detects the emulator in order to bypass the countermeasures.
+For what we have seen during the analysis of the packer.
+TA505 packer makes use of GetLastError() call to avoid unpacking if it is running in an emulated environment.
+To bypass this measure, we need to find out which API call is meant to set the expected error code in the packer, this will usually happen just before the actual call to GetLastError().
+Once found, we should add a hook to this API call and force the return of the expected error code.
+This way, when GetLastError() gets emulated, it will receive the value we want, and continue the execution.
+Most of the analyzed samples, make use of the call GetWindowContextHelpId() in an “obfuscated” way.
+They load the string “SetWindowContextHelpId” and replace the first letter with a “G” before making the call.
+Figure 13. bb5054f0ec4e6980f65fb9329a0b5acec1ed936053c3ef0938b5fa02a9daf7ee calling GetWindowContextHelpId as part of its anti-emulation technique
+Other samples may use different approaches, but all based on the GetLastError() technique.
+For example, the sample e4eb1a831a8cc7402c8e0a898effd3fb966a9ee1a22bce9ddc3e44e574fe8c5e makes use of the API call SetClassLongA().
+From the Official Windows API Documentation:
+“Replaces the specified 32-bit (long) value at the specified offset into the extra class memory or the WNDCLASSEX structure for the class to which the specified window belongs.”
+When being used like in these samples, the expected behavior (as it is using an invalid Window Handle) is to get an error 0x578 (ERROR_INVALID_WINDOW_HANDLE).
+Figure 14. e4eb1a831a8cc7402c8e0a898effd3fb966a9ee1a22bce9ddc3e44e574fe8c5e anti-emulation techniques before unpacking the Packer Stub
+Once identified those API calls, we can reimplement them with Qiling to make sure they set the proper error codes so that the next call to GetLastError() jumps to the correct branch of the code.
+Qiling Framework allows us to reimplement these API calls easily:
+We have to set API hooks before calling “ql.run()“.
+Qiling Framework emulator is constantly evolving.
+However, there might be some API calls still not present in the code.
+In those cases, we will have to reimplement them, although we could also just give to the caller what he expects in order to bypass the different anti-emulation techniques (not emulating the actual Windows call, but leaving what the sample needs, like the error code in this case, instead).
+This is the case of some API calls that need to be “emulated” so that the malware can continue with its execution.
+For instance, the following Figure shows a packed sample where the interesting “GetLastError()” anti-emulation technique is inside an if statement.
+We need to make sure that the sample takes the correct conditional path.
+To do so, we need to reimplement “ImageList_Add()” as by the time of writing this Blogpost, this is not emulated by default by Qiling.
+Figure 15. bb5054f0ec4e6980f65fb9329a0b5acec1ed936053c3ef0938b5fa02a9daf7ee anti-emulation techniques before unpacking Packer Stub
+The same happens in sample bb5054f0ec4e6980f65fb9329a0b5acec1ed936053c3ef0938b5fa02a9daf7ee with __wgetmainargs:
+The sample 74c5ae5e64d0a850eb0ebe3cbca4c6b92918a8365f2f78306643be9cffc32def also makes use of some API calls that need to be reimplemented to get the malware to execute the unpacking Stub.
+NOTE: During the development of this tool, we found out that the hooks for CoReleaseMarshalData and ImageListAdd where not working.
+Apparently, these functions are properly declared in Qiling Framework version 1.2, but when we try to run our tool we got a “Windows API implementation error“.
+This is because Qiling is missing some references in its const.py file.
+More precisely, it is missing the references for:
+A pull request to the Qiling project has already been accepted and commited to the development branch which solves this issue.
+VirtualQuery also seems to give problems when running those samples.
+The easiest way to make these samples continue with their execution is reimplementing this API call too so that it gives the sample what it wants.
+In the case of TA505 Packer, the unpacking Stub just checks if the return value of this call is a positive value.
+Some TA505 Packed samples make use of another anti-emulation technique.
+They execute long useless loops that makes emulation take forever (as these loops execute fast in non-emulated environments).
+Long loops with calls to Windows Api calls can also be used as an anti-sandbox technique.
+This can be seen in the following figure:
+Anti-Emulation technique used in e4eb1a831a8cc7402c8e0a898effd3fb966a9ee1a22bce9ddc3e44e574fe8c5e
+To bypass this with Qiling in an “automated” way, we could obviously manually patch the binary or use Qiling search pattern to add this functionality in our unpacking script.
+As we said previously, the unpacked malware will be written into a new allocated block of memory.
+It will use VirtuAlloc() and VirtualAllocEx() to allocate space for the unpacking Stub and the payload.
+We will need to keep track of these allocations in order to be able to dump them when VirtualFree() gets called.
+We could reimplement VirtualAlloc() and VirtualAllocEx() for the unpacking in this way:
+Now the last thing left to do is to dump the contents of the last allocated block once we reach the execution of VirtualFree():
+You can find our proof of concept in our repository.
+As has been seen throughout the article, incorporating Qiling Framework as one of your reverse engineering tools facilitates the tasks of malware analysis.
+In this case, it allows us to easily and quickly unpack samples packed with TA505Packer without needing to have extensive knowledge about its implementation details.
+From Blueliv we encourage other researchers to make use of Qiling Framework and we hope this project continues growing.
+For more details about how we reverse engineer and analyze malware, visit our targeted malware module page.
+This blog post was authored by Alberto Marín and Carlos Rubio, supported by the Blueliv Labs team
+ 
+Home » Blog » Using Qiling Framework to Unpack TA505 packed samples
+Necessary cookies are absolutely essential for the website to function properly.
+These cookies ensure basic functionalities and security features of the website, anonymously.
+CookieDurationDescription__cfduid1 monthThe cookie is used by cdn services like CloudFare to identify individual clients behind a shared IP address and apply security settings on a per-client basis.
+It does not correspond to any user ID in the web application and does not store any personally identifiable information.cookielawinfo-checbox-analytics11 monthsThis cookie is set by GDPR Cookie Consent plugin.
+The cookie is used to store the user consent for the cookies in the category "Other.cookielawinfo-checkbox-necessary11 monthsThis cookie is set by GDPR Cookie Consent plugin.
+The cookies is used to store the user consent for the cookies in the category "Necessary".cookielawinfo-checkbox-performance11 monthsThis cookie is set by GDPR Cookie Consent plugin.
+The cookie is used to store the user consent for the cookies in the category "Performance".viewed_cookie_policy11 monthsThe cookie is set by the GDPR Cookie Consent plugin and is used to store whether or not user has consented to the use of cookies.
+It does not store any personal data.
+Functional cookies help to perform certain functionalities like sharing the content of the website on social media platforms, collect feedbacks, and other third-party features.
+The purpose of the cookie is to enable LinkedIn functionalities on the page.langsessionThis cookie is used to store the language preferences of a user to serve up content in that stored language the next time user visit the website.lidc1 dayThis cookie is set by LinkedIn and used for routing.
+Performance cookies are used to understand and analyze the key performance indexes of the website which helps in delivering a better user experience for the visitors.
+CookieDurationDescription_gaexp1 month 6 days 14 hoursThis cookie is used to determine a user's inclusion in an experiment and the expiry of experiments a user has been included in.YSCsessionThis cookies is set by Youtube and is used to track the views of embedded videos.
+Analytical cookies are used to understand how visitors interact with the website.
+These cookies help provide information on metrics the number of visitors, bounce rate, traffic source, etc.
+CookieDurationDescription___utmvcThis cookie is used for the function of Google Analytics.
+The cookie store the visitor-level custom variable data._ga2 yearsThis cookie is installed by Google Analytics.
+The cookie is used to calculate visitor, session, campaign data and keep track of site usage for the site's analytics report.
+The cookies store information anonymously and assign a randomly generated number to identify unique visitors._gid1 dayThis cookie is installed by Google Analytics.
+The cookie is used to store information of how visitors use a website and helps in creating an analytics report of how the website is doing.
+The data collected including the number visitors, the source where they have come from, and the pages visted in an anonymous form._hjFirstSeen30 minutesThis is set by Hotjar to identify a new user’s first session.
+It stores a true/false value, indicating whether this was the first time Hotjar saw this user.
+It is used by Recording filters to identify new user sessions._hjid1 yearThis cookie is set by Hotjar.
+This cookie is set when the customer first lands on a page with the Hotjar script.
+It is used to persist the random user ID, unique to that site on the browser.
+This ensures that behavior in subsequent visits to the same site will be attributed to the same user ID.uvc1 year 1 monthThe cookie is set by addthis.com to determine the usage of Addthis.com service.
+Advertisement cookies are used to provide visitors with relevant ads and marketing campaigns.
+These cookies track visitors across websites and collect information to provide customized ads.
+CookieDurationDescriptionbscookie2 yearsThis cookie is a browser ID cookie set by Linked share Buttons and ad tags.IDE1 year 24 daysUsed by Google DoubleClick and stores information about how the user uses the website and any other advertisement before visiting the website.
+This is used to present users with ads that are relevant to them according to the user profile.loc1 year 1 monthThis cookie is set by Addthis.
+This is a geolocation cookie to understand where the users sharing the information are located.personalization_id2 yearsThis cookie is set by twitter.com.
+It is used integrate the sharing features of this social media.
+It also stores information about how the user uses the website for tracking and targeting.test_cookie15 minutesThis cookie is set by doubleclick.net.
+The purpose of the cookie is to determine if the user's browser supports cookies.VISITOR_INFO1_LIVE5 months 27 daysThis cookie is set by Youtube.
+Used to track the information of the embedded YouTube videos on a website.
+Other uncategorized cookies are those that are being analyzed and have not been classified into a category as yet.

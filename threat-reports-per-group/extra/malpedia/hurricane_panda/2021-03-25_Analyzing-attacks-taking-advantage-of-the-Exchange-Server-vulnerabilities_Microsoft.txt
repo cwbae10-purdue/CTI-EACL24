@@ -1,0 +1,162 @@
+Microsoft continues to monitor and investigate attacks exploiting the recent on-premises Exchange Server vulnerabilities.
+These attacks are now performed by multiple threat actors ranging from financially motivated cybercriminals to state-sponsored groups.
+To help customers who are not able to immediately install updates, Microsoft released a one-click tool that automatically mitigates one of the vulnerabilities and scans servers for known attacks.
+Microsoft also built this capability into Microsoft Defender Antivirus, expanding the reach of the mitigation.
+As of today, we have seen a significant decrease in the number of still-vulnerable servers – more than 92% of known worldwide Exchange IPs are now patched or mitigated.
+We continue to work with our customers and partners to mitigate the vulnerabilities.
+As organizations recover from this incident, we continue to publish guidance and share threat intelligence to help detect and evict threat actors from affected environments.
+Today, we are sharing intelligence about what some attackers did after exploiting the vulnerable servers, ranging from ransomware to data exfiltration and deployment of various second-stage payloads.
+We strongly urge organizations to identify and update vulnerable on-premises Exchange servers, and to follow mitigation and investigation guidance that we have collected and continue to update here: https://aka.ms/ExchangeVulns.
+The first known attacks leveraging the Exchange Server vulnerabilities were by the nation-state actor HAFNIUM, which we detailed in this blog.
+In the three weeks after the Exchange server vulnerabilities were disclosed and the security updates were released, Microsoft saw numerous other attackers adopting the exploit into their toolkits.
+Attackers are known to rapidly work to reverse engineer patches and develop exploits.
+In the case of a remote code execution (RCE) vulnerability, the rewards are high for attackers who can gain access before an organization patches, as patching a system does not necessarily remove the access of the attacker.
+The Exchange Server exploit chain
+In our investigation of the on-premises Exchange Server attacks , we saw systems being affected by multiple threats.
+Many of the compromised systems have not yet received a secondary action, such as human-operated ransomware attacks or data exfiltration, indicating attackers could be establishing and keeping their access for potential later actions.
+These actions might involve performing follow-on attacks via persistence on Exchange servers they have already compromised, or using credentials and data stolen during these attacks to compromise networks through other entry vectors.
+Attackers who included the exploit in their toolkits, whether through modifying public proof of concept exploits or their own research, capitalized on their window of opportunity to gain access to as many systems as they could.
+Some attackers were advanced enough to remove other attackers from the systems and use multiple persistence points to maintain access to a network.
+We have built protections against these threats into Microsoft security solutions.
+Refer to the Appendix for a list of indicators of compromise, detection details, and advanced hunting queries.
+We have also provided additional tools and investigation and remediation guidance here: https://aka.ms/exchange-customer-guidance.
+While performing a full investigation on systems is recommended, the following themes are common in many of the attacks.
+These are prevailing threat trends that Microsoft has been monitoring, and existing solutions and recommendations for prevention and mitigation apply:
+In the following sections, we share our analysis of known post-compromise activities associated with exploitation of the Exchange server vulnerabilities because it is helpful to understand these TTPs, in order to defend against other actors using similar tactics or tools.
+While levels of disruptive post-compromise activity like ransomware may be limited at the time of this writing, Microsoft will continue to track this space and share information with the community.
+It’s important to note that with some post-compromise techniques, attackers may gain highly privileged persistent access, but many of the impactful subsequent attacker activities can be mitigated by practicing the principle of least privilege and mitigating lateral movement.
+DoejoCrypt was the first ransomware to appear to take advantage of the vulnerabilities, starting to encrypt in limited numbers shortly after the patches were released.
+Ransomware attackers often use multiple tools and exploits to gain initial access, including purchasing access through a broker or “reseller” who sells access to systems they have already compromised.
+The DoejoCrypt attacks start with a variant of the Chopper web shell being deployed to the Exchange server post-exploitation.
+The web shell writes a batch file to C:\Windows\Temp\xx.bat.
+Given configurations that administrators typically use on Exchange servers, many of the compromised systems are likely to have had at least one service or scheduled task configured with a highly privileged account to perform actions like backups.
+The batch file saves the registry hives to a semi-unique location, C:\windows\temp\debugsms, assembles them into a CAB file for exfiltration, and then cleans up the folders from the system.
+The file also enables Windows Remote Management and sets up an HTTP listener, indicating the attacker might take advantage of the internet-facing nature of an Exchange Server and use this method for later access if other tools are removed.
+The xx.bat file has been run on many more systems than have been ransomed by the DoejoCrypt attacker, meaning that, while not all systems have moved to the ransom stage, the attacker has gained access to multiple credentials.
+On systems where the attacker moved to the ransom stage, we saw reconnaissance commands being run via the same web shell that dopped the xx.bat file (in this instance, a version of Chopper):
+After these commands are completed, the web shell drops a new payload to C:\Windows\Help which, like in many human-operated ransomware campaigns, leads to the attack framework Cobalt Strike.
+In observed instances, the downloaded payload is shellcode with the file name new443.exe or Direct_Load.exe.
+When run, this payload injects itself into notepad.exe and reaches out to a C2 to download Cobalt Strike shellcode.
+During the hands-on-keyboard stage of the attack, a new payload is downloaded to C:\Windows\Help with names like s1.exe and s2.exe.
+This payload is the DoejoCrypt ransomware, which uses a .CRYPT extension for the newly encrypted files and a very basic readme.txt ransom note.
+In some instances, the time between xx.bat being dropped and a ransomware payload running was under half an hour.
+While the DoejoCrypt payload is the most visible outcome of the attackers’ actions, the access to credentials they have gained could serve them for future campaigns if organizations do not reset credentials on compromised systems.
+Cryptocurrency miners were some of the first payloads we observed being dropped by attackers from the post-exploit web shells.
+In the first few days after the security updates were released, we observed multiple cryptocurrency miner campaigns, which had been previously targeting SharePoint servers, add Exchange Server exploitation to their repertoire.
+Most of these coin miners were variations on XMRig miners, and many arrived via a multi-featured implant with the capability to download new payloads or even move laterally.
+Lemon Duck, a known cryptocurrency botnet named for a variable in its code, dove into the Exchange exploit action, adopting different exploit styles and choosing to use a fileless/web shell-less option of direct PowerShell commands from w3wp (the IIS worker process) for some attacks.
+While still maintaining their normal email-based campaigns, the Lemon Duck operators compromised numerous Exchange servers and moved in the direction of being more of a malware loader than a simple miner.
+Using a form of the attack that allows direct execution of commands versus dropping a web shell, the Lemon Duck operators ran standard Invoke Expression commands to download a payload.
+Having used the same C2 and download servers for some time, the operators applied a varied degree of obfuscation to their commands on execution.
+Example executions of Lemon Duck payload downloads
+The Lemon Duck payload is an encoded and obfuscated PowerShell script.
+It first removes various security products from the system, then creates scheduled tasks and WMI Event subscription for persistence.
+One randomly named scheduled task connects to a C2 every hour to download a new payload, which includes various lateral movement and credential theft tools.
+The operators were seen to download RATs and information stealers, including Ramnit payloads.
+In some instances, the operators took advantage of having compromised mail servers to access mailboxes and send emails containing the Lemon Duck payload using various colorful email subjects.
+Email subjects of possibly malicious emails
+In one notable example, the Lemon Duck operators compromised a system that already had xx.bat and a web shell.
+After establishing persistence on the system in a non-web shell method, the Lemon Duck operators were observed cleaning up other attackers’ presence on the system and mitigating the CVE-2021-26855 (SSRF) vulnerability using a legitimate cleanup script that they hosted on their own malicious server.
+This action prevents further exploitation of the server and removes web shells, giving Lemon Duck exclusive access to the compromised server.
+This stresses the need to fully investigate systems that were exposed, even if they have been fully patched and mitigated, per traditional incident response process.
+While DoejoCrypt was a new ransomware payload, the access gained by attackers via the on-premises Exchange Server vulnerabilities will likely become part of the complex cybercriminal economy where additional ransomware operators and affiliates take advantage of it.
+The first existing ransomware family to capitalize on the vulnerabilities was Pydomer.
+This ransomware family was previously seen using vulnerabilities in attacks, notably taking advantage of Pulse Secure VPN vulnerabilities, for which Pulse Secure has released security patches, to steal credentials and perform ransomware attacks.
+In this campaign, the operators scanned and mass-compromised unpatched Exchange Servers to drop a web shell.
+They started later than some other attackers, with many compromises occurring between March 18 and March 20, a window when fewer unpatched systems were available.
+They then dropped a web shell, with a notable file name format: “Chack[Word][Country abbreviation]”:
+Example web shell names observed being used by the Pydomer attackers
+These web shells were observed on around 1,500 systems, not all of which moved to the ransomware stage.
+The attackers then used their web shell to dump a test.bat batch file that performed a similar function in the attack chain to the xx.bat of the DoejoCrypt operators and allowed them to perform a dump of the LSASS process.
+This access alone would be valuable to attackers for later attacks, similar to the credentials gained during their use of Pulse Secure VPN vulnerabilities.
+On systems where the attackers did move to second-stage ransomware operations, they utilized a Python script compiled to an executable and the Python cryptography libraries to encrypt files.
+The attackers then executed a PowerShell script via their web shell that acts as a downloader and distribution mechanism for the ransomware.
+PowerShell downloader and spreader used to get the Pydomer payload
+The script is run within the context of the web shell, which in most instances is Local System, so this lateral movement strategy is unlikely to work except in organizations that are running highly insecure and unrecommended configurations like having computer objects in highly privileged groups.
+The Pydomer ransomware is a Python script compiled to an executable and uses the Python cryptography libraries to encrypt files.
+The ransomware encrypts the files and appends a random extension, and then drops a ransom note named decrypt_file.TxT.
+Interestingly, the attackers seem to have deployed a non-encryption extortion strategy.
+Following well-known ransomware groups like Maze and Egregor which leaked data for pay, the Pydomer hackers dropped an alternative readme.txt onto systems without encrypting files.
+This option might have been semi-automated on their part or a side effect of a failure in their encryption process, as some of the systems they accessed were test systems that showed no data exfiltration.
+The note should be taken seriously if encountered, as the attackers had full access to systems and were likely able to exfiltrate data.
+If a server is not running in a least-privilege configuration, credential theft could provide a significant return on investment for an attacker beyond their initial access to email and data.
+Many organizations have backup agent software and scheduled tasks running on these systems with domain admin-level permissions.
+For these organizations, the attackers might be able to harvest highly privileged credentials without lateral movement, for example, using the COM services DLL as a living-off-the-land binary to perform a dump of the LSASS process:
+Use of COM services DLL to dump LSASS process
+The number of observed credential theft attacks, combined with high privilege of accounts often given to Exchange servers, means that these attacks could continue to impact organizations that don’t fully remediate after a compromise even after patches have been applied.
+While the observed ransomware attempts were small-scale or had errors, there is still the possibility of more skillful groups utilizing credentials gained in these attacks for later attacks.
+Attackers also used their access to perform extensive reconnaissance using built-in Exchange commandlets and dsquery to exfiltrate information about network configurations, user information, and email assets.
+While Lemon Duck operators might have had the boldest method for removing other attackers from the systems they compromised, they were not the only attacker to do so.
+Others were observed cleaning up .aspx and .bat files to remove other attackers, and even rebuilding the WMI database by deleting .mof files and restarting the service.
+As the window on unpatched machines closes, attackers showed increased interest in maintaining the access to the systems they exploited.
+By utilizing “malwareless” persistence mechanisms like enabling RDP, installing Shadow IT tools, and adding new local administrator accounts, the attackers are hoping to evade incident response efforts that might focus exclusively on web shells, AV scans, and patching.
+Attackers exploit the on-premises Exchange Server vulnerabilities in combination to bypass authentication and gain the ability to write files and run malicious code.
+The best and most complete remediation for these vulnerabilities is to update to a supported Cumulative Update and to install all security updates.
+Comprehensive mitigation guidance can be found here: https://aka.ms/ExchangeVulns.
+As seen in the post-exploitation attacks discussed in this blog, the paths that attackers can take after successfully exploiting the vulnerabilities are varied and wide-ranging.
+If you have determined or have reason to suspect that these threats are present on your network, here are immediate steps you can take:
+While our response tools check for and remove known web shells and attack tools, performing a full investigation of these systems is recommended.
+For comprehensive investigation and mitigation guidance and tools, see https://aka.ms/exchange-customer-guidance.
+Additionally, here are best practices for building credential hygiene and practicing the principle of least privilege:
+Microsoft Defender Antivirus detects exploitation behavior with these detections:
+Web shells are detected as:
+Ransomware payloads and associated files are detected as:
+Lemon Duck malware is detected as:
+Some of the credential theft techniques highlighted in this report are detected as:
+Endpoint detection and response (EDR)
+Alerts with the following titles in the security center can indicate threat activity on your network:
+Alerts with the following titles in the security center can indicate threat activity on your network specific to the DoejoCrypt and Pydomer ransomware campaign:
+Alerts with the following titles in the security center can indicate threat activity on your network specific to the Lemon Duck botnet:
+The following behavioral alerts might also indicate threat activity associated with this threat:
+To locate possible exploitation activities in Microsoft Defender for Endpoint, run the following queries.
+Processes run by the IIS worker process
+Look for processes executed by the IIS worker process
+// Broadly search for processes executed by the IIS worker process.
+Search for PowerShell spawned from the IIS worker process, observed most frequently in Lemon Duck with Base64 encoding to obfuscate C2 domains
+DeviceProcessEvents
+| where FileName =~ "powershell.exe"
+| where InitiatingProcessFileName =~ "w3wp.exe"
+| where InitiatingProcessCommandLine contains "MSExchange"
+| project ProcessCommandLine, InitiatingProcessCommandLine, DeviceId, Timestamp
+Search for Lemon Duck tampering with Microsoft Defender Antivirus
+DeviceProcessEvents
+| where InitiatingProcessCommandLine has_all ("Set-MpPreference", "DisableRealtimeMonitoring", "Add-MpPreference", "ExclusionProcess")
+| project ProcessCommandLine, InitiatingProcessCommandLine, DeviceId, Timestamp
+Search for batch scripts performing credential theft, as observed in DoejoCrypt infections
+DeviceProcessEvents
+| where InitiatingProcessFileName == "cmd.exe"
+| where InitiatingProcessCommandLine has ".bat" and InitiatingProcessCommandLine has @"C:\Windows\Temp"
+| where ProcessCommandLine has "reg save"
+| project ProcessCommandLine, InitiatingProcessCommandLine, DeviceId, Timestamp
+Look for evidence of batch script execution that leads to credential dumping
+Suspicious files dropped under an aspnet_client folder
+Look for dropped suspicious files like web shells and other components
+Checking for persistence on systems that have been suspected as compromised
+Search for creations of new local accounts
+DeviceProcessEvents
+| where FileName == "net.exe"
+| where ProcessCommandLine has_all ("user", "add")
+| project ProcessCommandLine, InitiatingProcessCommandLine, DeviceId, Timestamp
+Search for installation events that were used to download ScreenConnect for persistence
+Note that this query may be noisy and is not necessarily indicative of malicious activity alone.
+DeviceProcessEvents
+| where FileName =~ "msiexec.exe"
+| where ProcessCommandLine has @"C:\Windows\Temp\"
+| parse-where kind=regex flags=i ProcessCommandLine with @"C:\\Windows\\Temp\\" filename:string @".msi"
+| project filename, ProcessCommandLine, InitiatingProcessCommandLine, DeviceId, Timestamp
+Search for logon events related to services and scheduled tasks on devices that may be Exchange servers.
+The results of this query should be used to verify whether any of these users have privileged roles that might have enabled further persistence.
+Search for WDigest registry key modification, which allows for the LSASS process to store plaintext passwords.
+Search for the COM services DLL being executed by rundll32, which can be used to dump LSASS memory.
+DeviceProcessEvents
+| where InitiatingProcessCommandLine has_all ("rundll32.exe", "comsvcs.dll")
+| project FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName, DeviceId, Timestamp
+Search for Security Account Manager (SAM) or SECURITY databases being saved, from which credentials can later be extracted.
+DeviceProcessEvents
+| where FileName == "reg.exe"
+| where ProcessCommandLine has "save" and ProcessCommandLine has_any ("hklm\\security", "hklm\\sam")
+| project InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, InitiatingProcessParentFileName, DeviceId, Timestamp
+Selected indicators from attacks are included here, the threats may utilize files and network indicators not represented here.
+The following are file hashes for some of the web shells observed during attacks:
+Domains abused by Lemon Duck:
+Microsoft is a leader in cybersecurity, and we embrace our responsibility to make the world a safer place.

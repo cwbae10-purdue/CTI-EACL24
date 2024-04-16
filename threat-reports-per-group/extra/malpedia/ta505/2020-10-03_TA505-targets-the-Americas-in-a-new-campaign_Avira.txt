@@ -1,0 +1,60 @@
+In late September 2020, researchers at Avira Protection Labs identified a Powershell script originating from the TA505 APT group.
+This new campaign specifically targets the Americas.
+In this blog, Anatoly Kazantsev, a specialist threat researcher at Avira Protection Labs, takes a deep dive into the recently found TA505 APT samples and analyzes the infection cycle.
+Over the last few years, TA505 has been identified as the group guilty of spreading malware by carrying out massive malicious spam campaigns.
+They are the threat actors behind the Dridex banking trojan and Locky, Philadelphia and GlobeImposter ransomware families.
+Interestingly, TA505 continuously evolve their attacks looking to avoid detection.
+Slight alterations within their campaigns allows them to observe security vendors’ detection capabilities.
+We start our analysis of TA505’s new campaign using a sample with the SHA256 hash: 54acc99a1c3cd07cc6ece6f86795e5a19194957c11c634a5f0ea1fc52e3d08f3
+We observed that the first submission of the script dropper (5e212c0596f2713b44141fa6f3d563cecd5cfdabcdd5b64b3d573b28012b9bed) to VirusTotal was made from Canada.
+In 2019, we saw a similar campaign that was covered by other security companies such as, Positive technologies, Proofpoint, Trendmicro, Blueliv.
+Since then, the payload versions of the APT group has changed to avoid detection.
+In August 2020, we observed  cases submitted from Argentina.
+Below are the droppers that we observed in the previous campaign:
+At present, droppers are mostly submitted from the United States and Canada.
+A quick review of the dropper behavior:
+The main difference is the Powershell script content that is split up to get-points.ps1 and eula_part.*.txt.
+Earlier, the Powershell script contained all the payload data (we observed “imports.ps1” previously).
+uninst.exe is renamed wscript.exe with a stripped digital signature – a standard Microsoft Windows utility to deal with Visual Basic scripts:
+The original script is obfuscated and uses TripleDES in CBC mode to decrypt the next Powershell stage:
+After deobfuscation and decrypting, we can see the most exciting part – Base64 encoded strings which contain GZipped x64-binary payloads and configuration file:
+We will not dive deep into the script details in the article.
+Just describe the main steps that the script does:
+A quick overview of the overall process:
+First, get-points.ps1 prepares the Windows registry with rpds.reg:
+After that, the script sets the ServiceDLL parameter to mediasrv.png full path and launches the TermService and RDP services:
+It’s a good indicator if some service in your system has a ServiceDLL path tuned to PNG-picture.
+Mediasrv.png is not a picture.
+It’s an x64 service DLL packed with UPX.
+After exploring the DLL, we realized that this is an open-source RDP Wrapper Library.
+Its code is available on GitHub
+But there are some interesting changes at ServiceMain function – executable code which loads another DLL mediasvc.png:
+Strings were obfuscated with simple XOR operation.
+Using the IDAPython script, we deobfuscated them and placed them as commentaries in the IDA Pro listing.
+File wupsvc.jpg is just a configuration file for the RDP Wrapper Library:
+Thus, using RDP Wrapper Library and TermService allows malware authors to provide persistence and additional RDP features.
+rfxvmt.dll is a standard Windows “Microsoft RemoteFX VM transport” library and is needed to solve an issue with Windows 10 Home.
+rdpclip.exe is also a Microsoft Windows utility (unsigned in this case), allowing users to copy/paste files and data between server and client.
+Now it’s time to focus on the primary payload – a backdoor called ServHelper.
+Mediasvc.png is an x64 DLL written in Delphi and packed with UPX.
+DLL strings obfuscated using Vigenère cipher and were easily deobfuscated with IDAPython script:
+The backdoor has rich functionality, most of which has been described earlier by other security companies.
+For example, the backdoor allows SSH tunneling using OpenSSH-Win32:
+Command info gathers system information, including network connection speed.
+For this purpose, malware utilizes legitimate Powershell script from GitHub:
+Now, let’s take a look at the malware network communication.
+The malware uses HTTPS and obfuscates data to send in a POST request:
+sysid field contains obfuscated campaign date/ID, general system information, username, new RDP-user data, and random ID: sep27;Windows 10 (Version 10.0, Build 18362, 64-bit Edition);x64;ivan.ivanov;nouser;winacc:updwin;op1JUhTe;31337
+In the previously publicly described campaigns, malware authors didn’t use obfuscation for these fields.
+Therefore, we can conclude that the threat actors regularly update their product to evade detections.
+It’s worth noting an exciting part of the sysid field in campaign ID (sep27): earlier, we saw samples with aug18, aug5.
+We believe that the TA505 group is experimenting with different techniques and tools in various regions of the world.
+They are persistent, and in the future, we expect to see new campaigns.
+It’s quite clear from our analysis that malware authors have started using legitimate tools in their attacks, changing them from time to time.
+This makes such attacks challenging to handle.
+Hence, having the highest quality prevention and detection tools are essential to every company involved in cyber-security.
+Avira Protection Labs, actively hunt, gather threat intelligence, and monitor such new APT group campaigns to provide timely detection and protection.
+Integrating Avira’s anti-malware technologies and threat intelligence will help protect customers from such attacks.
+Learn how to build your own security solutions with our anti-malware SDKs and threat intelligence
+We encourage you to share your thoughts on your favorite social platform.
+© 2021  Avira Operations GmbH & Co. KG.

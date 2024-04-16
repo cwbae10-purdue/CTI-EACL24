@@ -1,0 +1,60 @@
+In one of our analysis of the TrickBot banking trojan, we found an interesting anti-sandbox that catches (almost) all user-mode (ring3) sandboxes, and we would like to share it with you.
+The sample does something like this:
+The sample starts by calling GetSystemTime – a Windows API call, which does its internal work, and returns a meaningful value to whoever called it; in this case, it fills the buffer noted above with the current system time.
+However, this result is discarded – the code looks for side-effects of that call.
+The side-effect that the code is looking for, is the value of the EFLAGS register.
+This register is made up from many flags, such as the CF (carry) flag, the ZF (zero) flag, etc., which are set when instructions related to mathematical operations or comparisons are executed, and carry information about the result of the operation.
+The Windows API call GetSystemTime is made up from a specific, defined set of instructions, and each and every one of them modifies the EFLAGS register in a certain way.
+That is, every time you call this API, it will set that register to a specific, constant value as a side-effect.
+However, when sandboxes attempt to modify the behavior of the call (e.g.
+in order to do its original work, but also log it afterward), they have to hook the function.
+Hooking it means that they’re changing its instructions to something else, in order to alter the execution flow.
+And when they alter the execution flow, they end up producing different side-effects.
+Thus, the final value of EFLAGS will not be the same as before the modification, because the function is now executing different instructions.
+This sample abuses those side-effect values as a checksum: it knows that, if a sandbox modifies the API call, it will also modify its side-effects, and that means that the final value of the EFLAGS register won’t be the expected one, and therefore will not be a valid checksum.
+In fact, the checksum is used as an offset to a function, meaning that if the code is run outside of a sandbox (and calculates the proper checksum), the offset will be right, and execution will continue.
+Otherwise, the offset will be mismatched, the sandbox detected, and the process will crash, preventing further monitoring.
+Concluding, the sample is using the result of the EFLAGS register as a correctness check.
+You can think of it as a checksum: given a defined set of values and instructions executed, you always get the same EFLAGS after execution.
+When it calls GetSystemTime, the function modifies EFLAGS to always have the same value; in this case, the result is 0x246.
+But if the function is hooked, the set of instructions is not the same anymore, resulting in a different value for EFLAGS, which invalidates the checksum, detecting the hook.
+In order to avoid this detection, every hook should preserve the EFLAGS register.
+However, our upcoming technology “Kernel Monitor” runs completely in kernel space and is not affected by any detection of this class, as there are no hooks that would inadvertently alter execution flow in subtle ways.
+(beta / not public yet)
+ 
+Home » Blog » Research » TrickBot banking trojan using EFLAGS as an anti-hook technique
+Necessary cookies are absolutely essential for the website to function properly.
+These cookies ensure basic functionalities and security features of the website, anonymously.
+CookieDurationDescription__cfduid1 monthThe cookie is used by cdn services like CloudFare to identify individual clients behind a shared IP address and apply security settings on a per-client basis.
+It does not correspond to any user ID in the web application and does not store any personally identifiable information.cookielawinfo-checbox-analytics11 monthsThis cookie is set by GDPR Cookie Consent plugin.
+The cookie is used to store the user consent for the cookies in the category "Other.cookielawinfo-checkbox-necessary11 monthsThis cookie is set by GDPR Cookie Consent plugin.
+The cookies is used to store the user consent for the cookies in the category "Necessary".cookielawinfo-checkbox-performance11 monthsThis cookie is set by GDPR Cookie Consent plugin.
+The cookie is used to store the user consent for the cookies in the category "Performance".viewed_cookie_policy11 monthsThe cookie is set by the GDPR Cookie Consent plugin and is used to store whether or not user has consented to the use of cookies.
+It does not store any personal data.
+Functional cookies help to perform certain functionalities like sharing the content of the website on social media platforms, collect feedbacks, and other third-party features.
+The purpose of the cookie is to enable LinkedIn functionalities on the page.langsessionThis cookie is used to store the language preferences of a user to serve up content in that stored language the next time user visit the website.lidc1 dayThis cookie is set by LinkedIn and used for routing.
+Performance cookies are used to understand and analyze the key performance indexes of the website which helps in delivering a better user experience for the visitors.
+CookieDurationDescription_gaexp1 month 6 days 14 hoursThis cookie is used to determine a user's inclusion in an experiment and the expiry of experiments a user has been included in.YSCsessionThis cookies is set by Youtube and is used to track the views of embedded videos.
+Analytical cookies are used to understand how visitors interact with the website.
+These cookies help provide information on metrics the number of visitors, bounce rate, traffic source, etc.
+CookieDurationDescription___utmvcThis cookie is used for the function of Google Analytics.
+The cookie store the visitor-level custom variable data._ga2 yearsThis cookie is installed by Google Analytics.
+The cookie is used to calculate visitor, session, campaign data and keep track of site usage for the site's analytics report.
+The cookies store information anonymously and assign a randomly generated number to identify unique visitors._gid1 dayThis cookie is installed by Google Analytics.
+The cookie is used to store information of how visitors use a website and helps in creating an analytics report of how the website is doing.
+The data collected including the number visitors, the source where they have come from, and the pages visted in an anonymous form._hjFirstSeen30 minutesThis is set by Hotjar to identify a new user’s first session.
+It stores a true/false value, indicating whether this was the first time Hotjar saw this user.
+It is used by Recording filters to identify new user sessions._hjid1 yearThis cookie is set by Hotjar.
+This cookie is set when the customer first lands on a page with the Hotjar script.
+It is used to persist the random user ID, unique to that site on the browser.
+This ensures that behavior in subsequent visits to the same site will be attributed to the same user ID.uvc1 year 1 monthThe cookie is set by addthis.com to determine the usage of Addthis.com service.
+Advertisement cookies are used to provide visitors with relevant ads and marketing campaigns.
+These cookies track visitors across websites and collect information to provide customized ads.
+CookieDurationDescriptionbscookie2 yearsThis cookie is a browser ID cookie set by Linked share Buttons and ad tags.IDE1 year 24 daysUsed by Google DoubleClick and stores information about how the user uses the website and any other advertisement before visiting the website.
+This is used to present users with ads that are relevant to them according to the user profile.loc1 year 1 monthThis cookie is set by Addthis.
+This is a geolocation cookie to understand where the users sharing the information are located.personalization_id2 yearsThis cookie is set by twitter.com.
+It is used integrate the sharing features of this social media.
+It also stores information about how the user uses the website for tracking and targeting.test_cookie15 minutesThis cookie is set by doubleclick.net.
+The purpose of the cookie is to determine if the user's browser supports cookies.VISITOR_INFO1_LIVE5 months 27 daysThis cookie is set by Youtube.
+Used to track the information of the embedded YouTube videos on a website.
+Other uncategorized cookies are those that are being analyzed and have not been classified into a category as yet.

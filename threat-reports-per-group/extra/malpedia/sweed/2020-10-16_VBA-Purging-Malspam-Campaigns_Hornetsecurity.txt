@@ -1,0 +1,91 @@
+ by Security Lab | Oct 16, 2020 | Threat Research
+VBA purging is a recent office macro detection evasion technique.
+It removes the VBA macro PerformanceCache from malicious documents.
+While the VBA macro source code is only stored in compressed form in Office documents, this PerformanceCache caches the decompressed VBA source code in uncompressed plain text form.
+Because many security scanning solutions rely on this uncompressed plain text VBA macro source code to be present in order to detect malicious VBA macro code, their detection can be evaded by VBA purging.
+This article details a recent spam campaign with malicious office attachments using VBA purging, how the detection evasion works and how Hornetsecurity protects against VBA purging.
+Evaluating the data of the observed campaign indicates that the campaign was not targeted towards a specific geographic region nor a specific industry sector.
+Recently, Hornetsecurity has observed malspam delivering Formbook1 and AgentTesla2 via malicious office attachments using VBA purging.
+VBA purging is a technique first described by Didier Stevens3.
+VBA macros are stored in module streams4 of CFBF5 files.
+A stream storing VBA code has two parts, the PerformanceCache and CompressedSourceCode:
+The CompressedSourceCode contains the VBA code in compressed form.
+While not specified in the official documentation, the PerformanceCache generally contains the VBA code in compiled form (P-code) and the uncompressed plain text VBA code.
+VBA purging deletes the PerformanceCache by setting its size to 0.
+Then the VBA code will only be present in compressed form.
+Because many detection tools rely on the uncompressed plain text VBA code copy in the PerformanceCache, their detection can be evaded.
+One detection tool affected is ClamAV a popular open source anti-virus scanner often used on email gateways.
+This is interesting for multiple reasons.
+First, Formbook and AgentTesla are very common malware that can be obtained and operated easily.
+For example, in 2017 Formbook could be rented for US$ 29 per week, US$ 59 per month, or US$ 99 for three months and US$ 299 for buying it6, while AgentTesla is spread so far that tutorial videos for it exist on YouTube.
+In case malicious VBA macros are used the code is usually not very advanced and technically far away from the skill level needed for VBA purging.
+However, since September 2020 Hornetsecurity has observed multiple Formbook and AgentTesla malspam campaigns using VBA purging.
+While the observed malspam is similar to a previous VBA purging campaign observed in the wild by Didier Stevens7 the hereafter reported malicious documents are not in the OOXML format and can, hence, not have been created by EPPlus.
+The hereafter reported documents have the OLE/CFB format.
+In September we identified malicious documents using similar VBA code as described in the VBA purging article by Didier Stevens7.
+The main similarity being the call to a Loader sub routine with an either Hex or Base64 encoded string containing the download URL:
+However, the main difference is that the herein observed malicious documents are not in the OOXML format as the documents outlined by Didier Stevens.
+In the following technical analysis we analyze one malspam activity we think originates from the same threat actor that Didier Stevens called Epic Manchego.
+The following time histogram shows the volume and attachment filenames of the observed activity for the last couple of days:
+Looking at the targeted recipients by country does not indicate a specific bias towards a specific geographic region:
+Looking at the targeted recipients by industry does not indicate a specific bias towards a specific industry:
+The emails are send from (we assume) compromised legitimate company email domains.
+Each wave of attachments is send from one email address.
+But also the companies behind the sending email domains have no clear bias towards a specific industry.
+We observed senders from the following industries:
+The core of the malicious documents is a PowerShell downloader that downloads a malware executable.
+While in the beginning, the threat actor continued to use the Loader sub routine:
+A deobfuscated version of the above VBA code is as follows:
+In later variants the actor also mangled the name of the Loader sub routine:
+But deobfuscated the VBA code is still virtually the same:
+Some of the Excel documents place the Base64 encoded strings into a cell of the spreadsheet and extract it from within the VBA code:
+To hide the cell content from a user opening the document the A cell’s width is set to 0 pixels and the font color is set to white:
+As outlined earlier, VBA purging is when the PerfomanceCache of a VBA macro document is deleted.
+You can use Didier Stevens’ oledump.py tool to analyze the size of the streams, including the size of the PerfomanceCache.
+In the following, we see highlighted in red that the PerfomanceCache size of the VBA macro module streams is 0, meaning the PerfomanceCache was purged:
+We currently do not know how these documents were created.
+The VBA purging documents outlined in the article by Didier Stevens7 were allegedly created with EPPlus.
+However, EPPlus can only create documents in the OOXML format.
+In one of the maldocs we found a reference to Aviary for Android 4.8.4, a photo editing app for Android.
+It could be possible that these documents were generated or converted by an Android app which performs VBA purging.
+Here it is important to note that VBA purging in itself is not malicious.
+It saves disk storage by deleting a cache, which can be recreated from the CompressedSourceCode data.
+So there likely exist office software that performs VBA purging as part of optimizing office document file sizes.
+Many email gateways use ClamAV as anti-virus scanner.
+When ClamAV scans an office document, it extracts the individual sub-files of the document.
+It does so for both modern OOXML documents (which are basically ZIP files) and OLE/CFB documents (which also feature a file system structure inside5).
+In this process it also extracts the module stream files we mentioned earlier.
+It then searches the extracted files using byte patterns, e.g., to detect a malicious Emotet document variant they use the following signature:
+For better understanding we convert the search patterns into a more readable YARA rule:
+In a VBA purged document there (highly likely) is no Attribute VB_Name string (nor any of the other strings) in plain text, because only the CompressedSourceCode using a proprietary compression is available.
+Compression algorithms work by storing repeating patterns in a data stream more efficiently, e.g., the following attributes at the start of VBA code all contain repeating patterns:
+So in compressed form Attribute would only be stored in plain text form once and all further occurrences of it are replaced with a shorter reference, so the previous VBA code snippet would turn into something like:
+Hence, if the document for which the above ClamAV rule matches would have its PerformanceCache removed ClamAV would not detect it anymore.
+This also affects other security tools relying on plain text VBA code in the PerformanceCache for their detection of malicious content.
+While VBA purging is not widely used, we predict that is only a matter of time before this technique catches on and is misused in more sophisticated attacks.
+This means ClamAV or similar working solutions can not provide adequate protection anymore.
+We used VirusTotal to estimate how much the static detection capabilities of current anti-virus solutions is affected by VBA purging.
+To this end, we used a document that after around 7 hours is detected by 21 of 61 listed anti-virus solutions:
+To check which anti-virus solution detects this document only by its hash, we appended a single X ASCII character byte to the file:
+After this change 7 of the initial 21 anti-virus solutions do not detect the document anymore:
+This indicates that these solutions do not detect the VBA purged document by its malicious VBA macro code, but only by its hash.
+A robust detection would not get tricked by appending a single byte, especially because the document structure was not changed at all.
+This drop is especially astonishing as the tested document stored the powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass ... string in plain text inside a cell of the spreadsheet.
+Meaning the string is stored in pain text inside the document:
+As we have seen VBA purging can evade detection by some security solutions.
+Many solutions seem to fallback to a hash-based detection because presumably their detection signatures rely on plain text VBA code in the PerformanceCache.
+Hornetsecurity’s Advanced Threat Protection includes sophisticated VBA macro analyzers that, unlike ClamAV or other solutions, extracts the VBA macro code from the CompressedSourceCode of office documents.
+This way Hornetsecurity’s multi-layer approach to email attachment scanning will continue working even against VBA purged documents.
+The brand new Cyberthreat Report tells you all about current cyberthreats and gives you access to exclusive numbers and statistics.
+
+Hornetsecurity Ltd.
+55 Baker Street
+London
+W1U7EU
+United Kingdom
+I agree to the processing of my data and the establishment of contact by Hornetsecurity in accordance with the data protection guidelines.
+We could not locate your form.
+We could not locate your form.
+We could not locate your form.
+We could not locate your form.
+We could not locate your form.

@@ -1,0 +1,101 @@
+ESET researchers uncover a supply-chain attack used in a cyberespionage operation targeting online‑gaming communities in Asia
+Following the publication of our research, BigNox have contacted us to say that their initial denial of the compromise was a misunderstanding on their part and that they have since taken these steps to improve security for their users:
+BigNox have also stated that they have pushed the latest files to the update server for NoxPlayer and that, upon startup, NoxPlayer will now run a check of the application files previously installed on the users’ machines.
+ESET assumes no responsibility for the accuracy of the information provided by BigNox.
+In January 2021, we discovered a new supply-chain attack compromising the update mechanism of NoxPlayer, an Android emulator for PCs and Macs, and part of BigNox’s product range with over 150 million users worldwide.
+This software is generally used by gamers in order to play mobile games from their PCs, making this incident somewhat unusual.
+Three different malware families were spotted being distributed from tailored malicious updates to selected victims, with no sign of leveraging any financial gain, but rather surveillance-related capabilities.
+We spotted similarities in loaders we have been monitoring in the past with some of the ones used in this operation, such as instances we discovered in a Myanmar presidential office website supply-chain compromise on 2018, and in early 2020 in an intrusion into a Hong Kong university.
+BigNox is a company based in Hong Kong, which provides various products, primarily an Android emulator for PCs and Macs called NoxPlayer.
+The company’s official website claims that it has over 150 million users in more than 150 countries speaking 20 different languages.
+However, it’s important to note that the BigNox follower base is predominantly in Asian countries.
+BigNox also wrote an extensive blogpost in 2019 on the use of VPNs in conjunction with NoxPlayer, showing the company’s concern for their users’ privacy.
+We have contacted BigNox about the intrusion, and they denied being affected.
+We have also offered our support to help them past the disclosure in case they decide to conduct an internal investigation.
+Based on ESET telemetry, we saw the first indicators of compromise in September 2020, and activity continued until we uncovered explicitly malicious activity on January 25th, 2021, at which point we reported the incident to BigNox.
+In comparison to the overall number of active NoxPlayer users, there is a very small number of victims.
+According to ESET telemetry, more than 100,000 of our users have Noxplayer installed on their machines.
+Among them, only 5 users received a malicious update, showing that Operation NightScout is a highly targeted operation.
+The victims are based in Taiwan, Hong Kong and Sri Lanka.
+We were unsuccessful finding correlations that would suggest any relationships among victims.
+However, based on the compromised software in question and the delivered malware exhibiting surveillance capabilities, we believe this may indicate the intent of collecting intelligence on targets somehow involved in the gaming community.
+In order to understand the dynamics of this supply-chain attack, it’s important to know what vector was used in order to deliver malware to NoxPlayer users.
+This vector was NoxPlayer’s update mechanism.
+On launch, if NoxPlayer detects a newer version of the software, it will prompt the user with a message box (Figure 2) to offer the option to install it.
+This is done by querying the update server via the BigNox HTTP API (api.bignox.com) in order to retrieve specific update information, as seen in  Figure 3.
+NoxPlayer client update API request
+The response to this query contains update-specific information such as the update binary URL, its size, MD5 hash and other additional related information as seen in Figure 4.
+Upon pressing the “Update now” button from Figure 1, the main NoxPlayer binary application Nox.exe will supply the update parameters received to another binary in its toolbox NoxPack.exe, which is in charge of downloading the update itself, as can be seen in Figure 5.
+NoxPlayer execution chain on update
+After this is done, the progress bar in the message box will reflect the state of the download (Figure 6), and when completed the update has been performed.
+NoxPlayer update ongoing via NoxPack.exe
+We have sufficient evidence to state that the BigNox infrastructure (res06.bignox.com) was compromised to host malware, and also to suggest that their HTTP API infrastructure (api.bignox.com) could have been compromised.
+In some cases, additional payloads were downloaded by the BigNox updater from attacker-controlled servers.
+This suggests that the URL field, provided in the reply from the BigNox API, was tampered with by the attackers.
+The intrusion flow observed is depicted in Figure 7.
+An overview of what’s shown in the sequence diagram above is the following:
+With this information we can highlight several things:
+It is also important to mention that malicious updates downloaded from the attacker-controlled infrastructure mimicked the path of legitimate updates:
+Furthermore, registered attacker-controlled domain names mimicked the BigNox CDN network domain name, that being cloudfront.net.
+These indicators suggest that attackers were trying to avoid detection so that they could remain under the radar and achieve long-term persistence.
+A total of three different malicious update variants were observed, each of which dropped different malware.
+These variants are the following:
+This variant is one of the preliminary updates pointing to compromised BigNox infrastructure.
+Our analysis is based on the sample with SHA-1 CA4276033A7CBDCCDE26105DEC911B215A1CE5CF.
+The malware delivered does not seem to have been documented before.
+It is not extremely complex, but it has enough capabilities to monitor its victims.
+The initial RAR SFX archive drops two DLLs into C:\Program Files\Internet Explorer\ and runs one of them, depending on architecture, via rundll32.exe.
+The names of these DLLs are the following:
+It also drops a text file named KB911911.LOG to disk, into which the original name of the SFX installer will be written.
+The DLL attempts to open and read this log file, and if not found will stop execution, therefore implementing an execution guardrail.
+The DLL will then check whether it has been loaded by any of the following processes; if it has, it will stop its own execution:
+The IP address of the machine will be checked to verify that it is neither 127.0.0.1 nor 0.0.0.0; if it is, it will be rechecked in an infinite loop until it changes.
+Otherwise, it will proceed to extract the UUID of the current machine via a WMI object query.
+This returned UUID is hashed using MD5 to serialize the current victim.
+Account name information will also be retrieved and saved.
+An encrypted configuration will be retrieved from the DLL’s resource.
+This configuration is encrypted using a two-byte XOR with 0x5000.
+The encrypted configuration is partially visible given the weakness of the key used:
+The format of this configuration is the following (roughly):
+After the configuration has been parsed, the backdoor will check several times for network monitoring processes before transferring execution to the C&C loop.
+Operation stops if the Operate flag is set or if either of the following processes is running:
+The backdoor can use either a raw IP address or a domain name to communicate with the C&C server.
+After successful connection to the C&C, the malware will be able to perform the following commands:
+Anatomy of malicious update variant 1
+This malware variant was also spotted being downloaded from legitimate BigNox infrastructure.
+Our analysis is based on the sample with SHA-1 E45A5D9B03CFBE7EB2E90181756FDF0DD690C00C.
+It contains several files comprising what is known as a trident bundle, in which a signed executable is used to load a malicious DLL, which will decrypt and load a shellcode, implementing a reflective loader for the final payload.
+The theme for this trident bundle was to disguise the malware as Sandboxie components.
+The names of the bundled components are the following:
+We have encountered other instances of this same text file, dropped by a very similar loader in a supply-chain compromise involving the Myanmar presidential office website in 2018, and in an intrusion into a Hong Kong university in 2020.
+The deployed final payload was a variant of Gh0st RAT with keylogger capabilities.
+Anatomy of malicious update variant 2
+This update variant was only spotted in activity subsequent to initial malicious updates, downloaded from attacker-controlled infrastructure.
+Our analysis is based on the sample with SHA-1 AA3D31A1A6FE6888E4B455DADDA4755A6D42BEEB.
+Similarly, as with the previous variant, this malicious update comes bundled in an MFC file, and extracts two components: a benign signed file and a dependency of it.
+On the most recently discovered victims, the initial downloaded binary was written in Delphi, while for previous victims the same attacker-controlled URL dropped a binary written in C++.
+These binaries are the initial preliminary loaders.
+Although the loaders were written in different programming languages, both versions deployed the same final payload, that being an instance of the PoisonIvy RAT.
+Anatomy of malicious update variant 3
+We have detected various supply-chain attacks in the last year, such as Operation SignSight or the compromise of Able Desktop among others.
+However, the supply-chain compromise involved in Operation NightScout is particularly interesting due to the targeted vertical, as we rarely encounter many cyberespionage operations targeting online gamers.
+Supply-chain attacks will continue to be a common compromise vector leveraged by cyber-espionage groups, and its complexity may impact the discovery and mitigation of these type of incidents.
+For any inquiries, or to make sample submissions related to the subject, contact us at: threatintel@eset.com.
+The author would like to give special credit to Matthieu Faou for his support and feedback during the investigation.
+Note: This table was built using version 8 of the MITRE ATT&CK framework.
+TacticIDNameDescription
+
+
+
+
+Initial AccessT1195.002Supply Chain Compromise: Compromise Software Supply ChainMalware gets delivered via NoxPlayer updates.
+ExecutionT1053.005Scheduled Task/Job: Scheduled TaskMalicious update variant 3 instances will be executed via Scheduled task.
+ExecutionT1569.002System Services: Service ExecutionMalicious update variant 2 instances will be executed via service execution.
+PersistenceT1053.005Scheduled Task/Job: Scheduled TaskMalicious update variant 2 instances will create a scheduled task to establish persistence.
+Defense EvasionT1140Deobfuscate/Decode Files or InformationMalicious update variant 2 and 3 will be contained in "trident" bundles for evasion purposes.
+T1574.002Hijack Execution Flow: DLL Side-LoadingMalicious updates shipped as "trident" bundles will perform DLL side loading.
+CollectionT1056.001Input Capture:KeyloggingSome of the final payloads such as PoisonIvy and Gh0st RAT have keylogging capabilities.
+Command and ControlT1090.001Proxy: Internal ProxyThe PoisonIvy final payload variant has capabilities to authenticate with proxies.
+T1095Non-Application Layer ProtocolAll malicious update instances communicate over raw TCP or UDP.
+T1573Encrypted ChannelBoth PosionIvy and Gh0st RAT use encrypted TCP communication to avoid detection.
+ExfiltrationT1041Exfiltration Over C2 ChannelExfiltration in all malicious updates instances is done over a Command and Control channel.

@@ -1,0 +1,49 @@
+Emotet appears to have reemerged more evasive than before, this time with a payload delivered from a loader that security tools aren’t equipped to handle.
+Emotet, the largest malware botnet today, started in 2014 and continues to be one of the most challenging threats in today’s landscape.
+This botnet causes huge damage by spreading ransomware and info stealers to its infected systems.
+Recently, a rise in the number of Emotet infections was observed in France, Japan, and New Zealand.
+The high number of infections shows the effectiveness of the Emotet malware at staying undetected.
+The previous wave of Emotet started in September 2019 and ended in February 2020.
+The activity was paused for 5 months, and then, on July 17th, the current wave started.
+The creators behind Emotet are aware that organizations are getting more successful at detecting previous versions as they increase their infection rates.
+Inevitably, the wave starts to drop as the industry gains a greater understanding and control of the threat.
+A point comes when the malware creators realize they need to go back to the lab.
+For a period of time, they go under the radar completely as they start working on the next wave, making it as potent and evasive as possible.
+The tactic seems to be working: After going dark for a few months, Emotet appears to have reemerged more evasive than before, this time with a payload delivered from a loader that security tools aren’t equipped to handle.
+In the previous article, we examined the Emotet loader.
+We revealed how it evades detection by inserting benign code that subverts security products by obfuscating its malicious functionality.
+This loader contains a hidden payload that is decrypted and then executed.
+This payload uses new evasion techniques that were not seen in the loader, and it has some unique indicators that will lead us to the git repository used by the developers to generate their malware.
+We collected reports published by cryptolaemus from July 17th, the beginning of the current wave, until September 3rd.
+Based on this information 444,000 unique Emotet loaders were generated, with the peak occurring at the end of August.
+In this blog post, the writer investigates the payload that was encrypted inside the loader, analyzes the next steps in the infection process, and discovers the techniques used to make this malware difficult to analyze.
+In the last step in the execution of the malware, a memory buffer was allocated, and the decrypted payload was copied there.
+The payload consists of a shellcode followed by a PE file, and an overlay containing the string “dave”.
+The shellcode performs reflective loading on the PE file by executing the following steps:
+This shellcode utilizes a malicious technique that loads the PE file in a way that makes it more difficult to detect using memory forensics.
+It replaces the DOS header with zeroes in order to remove strings such as “MZ” and “This program cannot be run in DOS mode”.
+These strings can be used to detect PE files that were injected into memory.
+Memory comparison: on the left is the PE file after it is loaded by the shellcode and on the right is how it should look.
+There were a few unusual things about this shellcode:
+Searching these indicators led to the git repository, which contains the source code for this shellcode.
+We found out that by default the shellcode searches for an export named “SayHello” in the file it loads and “dave” is a parameter that is sent to this function.
+The Emotet group didn’t change the default parameters in the script and that IOC led to the source code.
+Now that we know how the shellcode operates, we can move on to the PE file that was loaded, which is the final payload of the loader.
+Removing the shellcode and the overlay string from the data that was extracted from the loader resulted in this PE file:
+Compared to the loader, which was disguised as a benign file, this file has clear malicious indicators:
+Graph overview of the main function generated using IDA, showing the code obfuscation.
+Much like the shellcode previously discussed, it reads the PEB structure, but it also uses a unique hashing algorithm so standard hash dictionaries for WinAPI won’t help to convert the hashes the code uses back to strings.
+In order to make the code easier to understand we’ll have to create our own dictionary.
+When looking at the disassembly, the hashing algorithm looks complicated, but it contains a lot of mathematical operations that cancel each other out.
+Using IDA pseudo-code utility, we can convert it to a simple C code.
+This code was used to create a dictionary with hashes of many DLL files and API names.
+We wrote a script that uses IDAPython in order to add the name of the dll files and APIs next to the hashes in the code.
+The purpose of this malware is to send information to the C2 servers about the infected system and receive commands as well as other files to execute.
+The file contains a list of IP addresses that are iterated over until a response is received from one of the servers.
+The malware collects information such as the computer name and running processes, encrypts the data using AES, and sends it over HTTP.
+The server sends back malware such as ransomware and info stealers that are executed on the infected system.
+In this blog post, we analyzed the next steps in the execution of the Emotet malware.
+We discovered that the attackers used a publicly accessible shellcode generator, which contained unique indicators.
+Next, we looked at the final payload of the loader that was responsible for communicating with the C2 servers and downloading additional files.
+Although much effort was put into making the code hard to understand, we showed how to make it decipherable.
+By observing the entire infection process done by the Emotet malware, we can see how this botnet achieves going undetected for such long periods.

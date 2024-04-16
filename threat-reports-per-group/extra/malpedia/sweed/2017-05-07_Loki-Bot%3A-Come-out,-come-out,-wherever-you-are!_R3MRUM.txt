@@ -1,0 +1,86 @@
+I’m going to make my first post an easy one.
+I’m currently in the middle of writing up my GREM Gold paper, which focuses on the reverse engineering of a Loki-Bot v1.8 sample.
+This post is going to focus on how Loki-Bot creates its mutex and the folders, files, and registry keys that are created as a result.
+Loki Bot is a commodity malware sold on underground sites which is designed to steal private data from infected machines, and then submit that info to a command and control host via HTTP POST.
+This private data includes stored passwords, login credential information from Web browsers, and a variety of cryptocurrency wallets.
+Understanding what a Mutex is can be a bit difficult to understand for those with little-to-no programming background.
+I found it best described on the SANS DFIR Blog:
+“Programs use mutex (“mutual exclusion”) objects as a locking mechanism to serialize access to a resource on the system.” … “Furthermore, malware might use a mutex to avoid reinfecting the host.
+For instance, the specimen might attempt to open a handle to a mutex with a specific name.
+The specimen might exit if the mutex exists, because the host is already infected.”
+So, based on the mutex description, Loki-Bot uses a mutex to ensure that multiple versions of Loki-Bot cant be running at the same time.
+In order for this to happen, both versions of Loki-Bot need to have the same logic for naming the mutex.
+What we are going to talk about next is said logic.
+First and foremost, know that Loki-Bot employs function hashing to thwart analysis.
+This is what you are seeing from 0x404A63 to 0x404A6C.
+Two important arguments passed to the function labeled getDLLFunctionFromIDXAndHash are Arg1 (DLL Index) and Arg2 (Function Hash).
+In this instance, these values are set to 9 and ‘F4B4ACDC’.
+Without diving too deep into this, know that the DLL Index of 9 equates to ADVAPI32 and the hash ‘F4B4ACDC’ decodes to RegOpenKeyEx.
+At 0x404A81, we see the decoded function ADVAPI32.RegOpenKeyEx being called.
+This will open the registry path:
+But it doesn’t actually read the value contained within the key it needs.
+For this to happen, ADVAPI32’s RegQueryValueEx function needs to be called.
+After successful execution, the value stored in the memory address referenced in the pData argument (0x292388) now contains the value that was in the HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography\MachineGuid registry key.
+We can validate this by simply loading up RegEdit on the Windows host that is about to be compromised and navigating to the referenced registry key.
+The Machine GUID is supposed to be a value that is unique for each system.
+This means that your Machine GUID will be different from the Machine GUId depicted here; thus, your mutex will be different from mine.
+Once the Machine GUID is obtained from the registry, Loki-Bot obtains the MD5 hash of the Machine GUID by making calls to ADVAPI’s CryptAcquireContext, CryptCreateHash, CryptHashData, and CryptGetHashParam.
+After CryptGetHashParam executes, the MD5 hash of the Machine GUID is returned.
+The MD5 hash of our Machine GUID appears to be “9BD0BA527DFA20AB1F4A05B8D0D4E04B“.
+There are a number of different ways that we could validate this result but I find that it’s easiest using the linux command line.
+Finally, Loki-Bot trims the MD5 hash of the Machine GUID to 24-characters: “9BD0BA527DFA20AB1F4A05B8“.
+It then passes this trimmed value to Kernel32’s CreateMutexW function as the lpName attribute.
+If the function succeeds, it means that no other version of Loki-Bot is running on the system at that time and execution continues on.
+If it fails, it means another version of Loki-Bot is running, so Loki-Bot quietly exits.
+Now that we know the mutex, we can identify the folders and files that are related to Loki-Bot.
+As part of setting up persistence, Loki-Bot will create a hidden folder within your %APPDATA% path whose name set by the 8th thru 13th characters of the mutex.
+Once the hidden folder “%APPDATA%\27DFA2\” has been created, Loki-Bot will store several different types of files within it; all with the same filename but with different extensions.
+The filename used for the different files is also extracted from the mutex.
+With the filename known, we can then identify the following files:
+The path for the specific persistence registry key used is encrypted within the binary using Triple DES encryption, which is why static analysis wont yield much.
+Once decrypted, my sample returned the following registry path used for persistence:
+The registry key within this path is then derived from the Mutex exactly how our %APPDATA% subfolder was:
+The value assigned to this key is the executable that is stored within the %APPDATA% subfolder:
+That pretty much covers all artifacts related to Loki-Bot that could be present on a compromised system.
+First step is to identify your system’s Machine GUID.
+Once you do that, MD5 hash and then trim that value.
+The result will help you identify all the different folders, files, and registry keys associated with the malware.
+
+
+				View all posts by R3MRUM
+Hello, I think your site might be having browser compatibility issues.
+When I look at your blog in Chrome, it looks fine but when opening
+in Internet Explorer, it has some overlapping.
+I just wanted to give you a quick heads up!
+Other then that, amazing blog!
+Thanks for the heads up, bloggerdoor.ir.
+Unfortunately, because I’m using the free version of WordPress, I’m limited to the templates and formats of their choosing.
+Appreciation to my father who shared with me regarding this website, this weblog is in fact amazing.
+Fill in your details below or click an icon to log in:
+
+
+			You are commenting using your WordPress.com account.
+( Log Out / 
+				Change )
+
+
+			You are commenting using your Google account.
+( Log Out / 
+				Change )
+
+
+			You are commenting using your Twitter account.
+( Log Out / 
+				Change )
+
+
+			You are commenting using your Facebook account.
+( Log Out / 
+				Change )
+ Notify me of new comments via email.
+ Notify me of new posts via email.
+Malware Traffic Analysis
+Open Analysis Labs Tutorials
+Malware Tech Blog
+Malware Unicorn’s Blog
+Malware Unicorn’s RE101

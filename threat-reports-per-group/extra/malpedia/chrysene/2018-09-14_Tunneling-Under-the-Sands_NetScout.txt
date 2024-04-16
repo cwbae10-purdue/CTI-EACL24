@@ -1,0 +1,52 @@
+ASERT recently came across spear-phishing emails targeting the Office of the First Deputy Prime Minister of Bahrain.
+A similar campaign uncovered by Palo Alto’s Unit 42 found the activity distributing an updated variant of BONDUPDATER, a PowerShell-based Trojan, which they attribute to Iranian APT group OilRig (aka APT34).
+ASERT was able to uncover Command and Control (C2) traffic instructing the script to run commands, including the C2 responses from the attacker’s server.
+NOTE: Netscout APS enterprise security products detect and block all network IOCs noted in this report.
+During the course of ASERT's investigation into the alleged Oilrig activity, we managed to capture live C2 communications, and reverse engineer the communication protocols the malware uses.
+For further details on the malware itself and how it behaves, we recommend reading the blog that Unit42 security researchers published earlier in the week.
+The BONDUPDATER C2 communications utilize DNS queries for communication and data exfiltration.
+Specifically, BONDUPDATER uses DNS A records and DNS TXT records to relay the information.
+BONDUPDATER makes use of the TXT data field to pass commands to the client.
+DNS TXT records are traditionally used to provide additional information about the domain; however, it could be anything, provided it follows the standard.
+Here, the attacker abuses the functionality to deliver items like commands.
+The command format the attackers send in the TXT response field is: 5 characters > Data (Figure 1).
+The script splits the command into two parts delimited by the > character.
+For example, to run a simple command on the victim machine, the attacker would respond to three separate DNS TXT queries with the following responses:
+Normal DNS A records are used to return an IP address for the given domain or subdomain.
+BONDUPDATER abuses DNS A records for data exfiltration.
+We observed BONDUPDATER sending the output of a CLI command across multiple DNS A requests (Figure 2).
+The data was stuffed into one of the subdomains.
+Using this method, the attacker may pull down any file provided they remain undetected for a prolonged period of time to successfully transfer the required data.
+Data exfiltration, using this method, takes time and generates a large number of requests that could be noticed by network IDS/IPS.Figure 2.
+BONDUPDATER exfiltrates files by adding two more subdomains to the FQDN.
+The first of the two inserted subdomains contains one of three possible entries:
+The following strings represent the same data exfiltration header presented here in two forms:
+BONDUPDATER sends the data using the obfuscated form.
+The un-obfuscated form was added for clarity.
+“COCTab” indicates this subdomain is a data exfiltration header.
+The next 5 characters match the name received by the S000s command (above).
+The actors add these characters to map the data being received to the command they issued.
+The script obfuscates all the data of this subdomain except for the “COCTab” header.
+BONDUPDATER obfuscates the file content, sent to the attacker.
+  The obfuscation technique is covered in the next section.
+The final entry type, “COCTabCOCT”, denotes the end of the data segment:
+The actor obfuscates the data by splitting each byte into two nibbles.
+The first nibble goes into one list and the second nibble goes into the second list.
+Each list contains a max of 15 characters but may have less depending on the number of remaining bytes.
+The script joins the lists together end to end to create the subdomain (Figure 3).
+The script below reorganizes the nibbles into their respective bytes (Figure 4).
+Figure 4: Python2 snippet to reconstruct the data
+The above code snippet returns: Microsoft Windows [Version, which is part of the output when running the following command:
+The third level subdomain contains an identification marker as noted below:
+The value equals the command identifier specified by the S000s command (above).
+Similar to a campaign ID/name, it is likely the attackers use this marker to categorize and sort C2 communications.
+This subdomain also uses the same algorithm defined in Figure 3.
+APT actors continually revamp and develop new capabilities to add to their portfolio and BONDUPDATER is no exception.
+The custom DNS tunneling and obfuscation technique allows the attacker to circumvent some defense measures.
+From a defender’s perspective, ASERT recommends that all DNS traffic be monitored for abnormal behavior such as abnormally long domain names.
+At a minimum, inspect DNS A records for “COCTab” which could be a sign of this specific infection.
+Practice good email hygiene and disable scripts from running in Office documents where possible.
+Enable PowerShell logging to monitor for suspicious behavior.
+Research into this group and specifically BONDUPDATER, reveals that the actor is continuously improving their toolset to maximize their chances of success.
+Thus, layered controls are essential for detecting the threats of tomorrow.
+Sign up now to receive the latest notifications and updates from NETSCOUT's ASERT.

@@ -1,0 +1,27 @@
+Sep 10, 2020·4 min read
+While the original author of NanoCore was arrested back in 2017 and plead guilty, pirated copies of his creation keep floating around the internet making it available to even the most amateurish “threat actors”.
+As stated in my other article about AgentTesla, the main focus for an analyst should be to squeeze out the IOCs (Indicators of compromise) as fast as possible to be able to move on to more interesting threats.
+That’s why I created a decryptor for NanoCore which does not only dump the config but also all used plugins.
+NanoCore comes with a comfortable to use Server/Builder which doesn’t need any technical experience at all:
+In cases of those builders, most of the time the “client” which gets distributed to victims remains the same, just the configuration gets embedded in one way or another so this is the first step in our process: Finding out how the plugins and config are getting embedded in the client.
+For this reason, I built my own client and used de4dot to deobfuscate the created file:
+Afterwards you can open up the sample in dnSpy and begin reversing the sample as you normally would.
+During this process I found an interesting function:
+So what does this mean?
+Well, it’s a strong indicator that the client is accessing its native resource(s) which could be the perfect place to embed a dynamic configuration.
+After anaylizing where those functions are used I stumbled across this function:
+What this function does, is to find a resource by its number and afterwards loading its content into a byte array.
+Let’s have a look at this resource with Resource Hacker, maybe we can find some clear text strings for a quick win:
+Could it be that the resource is encrypted?
+To see this we follow the rabbit hole and see where our function to load the resource is referenced:
+If we open up this function we can see some interesting things:
+Let’s examine the interesting parts:
+First, it’s getting the Guid of itsself and passing this guid together with 4 byte integer to some sort of decryption method:
+The returning byte array is used to initialize a DES encryptor & decryptor using the byte array as Key and IV:
+This decryptor is then used to decrypt the config and plugins.
+Let’s summarize: First, it’s getting its guid and uses it to get the key itsself which was used to encrypt the resource file.
+The fact, that the Guid is created by the server randomly for every new client which is build lead me to the initial conclusion that you have to extract the Guid from the sample to dynamically dump the config — Well, I was wrong.
+The guid changes but the key remains the same so you could skip this step but I left it in my tool since this may change from version to version and I would like to keep it dynamically.
+After having realized how those steps are working together I was able to come up with a decryptor which you can find in my GitHub repo called NanoDump.
+As you can see, I replicated the neccessary steps to reach the goal to decrypt and dump the details of NanoCore.
+If you have any questions, feel free to drop me a message on Twitter or open a GitHub issue!

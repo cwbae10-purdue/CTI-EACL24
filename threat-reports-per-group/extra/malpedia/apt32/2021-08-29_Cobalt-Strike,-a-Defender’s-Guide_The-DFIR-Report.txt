@@ -1,0 +1,155 @@
+Real Intrusions by Real Attackers, The Truth Behind the Intrusion
+In our research, we expose adversarial Tactics, Techniques and Procedures (TTPs) as well as the tools they use to execute their mission objectives.
+In most of our cases, we see the threat actors utilizing Cobalt Strike.
+Therefore, defenders should know how to detect Cobalt Strike in various stages of its execution.
+The primary purpose of this post is to expose the most common techniques that we see from the intrusions that we track and provide detections.
+Having said that, not all of Cobalt Strike’s features will be discussed.
+As you have noticed from our reporting so far, Cobalt Strike is used as a post-exploitation tool with various malware droppers responsible for the initial infection stage.
+Some of the most common droppers we see are IcedID (a.k.a.
+QakBot), Ursnif, Hancitor, Bazar and TrickBot.
+Cobalt Strike is chosen for the second stage of the attack as it offers enhanced post-exploitation capabilities.
+Threat actors turn to Cobalt Strike for its ease of use and extensibility.
+Thanks to @Kostastsale for helping put this guide together!
+Cobalt Strike has many features, and it is under constant development by a team of developers at Core Security by Help Systems.
+Raphael Mudge was the primary maintainer for many years before the acquisition from Core Security.
+Raphael has an extensive playlist on youtube that demonstrates the many features of Cobalt Strike and step-by-step guides on how to use its full potential.
+His videos are handy to watch if you want to get a glimpse of all the features that Cobalt Strike has to offer in various phases of the intrusion.
+Below are some of the capabilities that we see being used by operators.
+This is not an exhaustive list of commands available, but it contains most of the built-in features that we encounter in most cases.
+In the table below, the “Documented Features” correspond to the Cobalt Strike execution commands via the interactive shell as per official documentation:
+dllinject <pid> (for reflective dll injection)
+dllload <pid> (for loading an on-disk DLL to memory)
+spawnto <arch> <full-exe-path> (for process hollowing)
+getsystem (SYSTEM account impersonation using named pipes)
+elevate svc-exe [listener] (creates a services that runs a payload as SYSTEM)
+chromedump (Recover Google Chrome passwords from current user)
+portscan [targets] [ports] [discovery method]
+net <commands> (commands to find targets on the domain)
+jump psexec (Run service EXE on remote host)
+jump psexec_psh (Run a PowerShell one-liner on remote host via a service)
+jump winrm (Run a PowerShell script via WinRM on remote host)
+remote-exec <any of the above> (Run a single command using the above methods on remote host)
+Changing infrastructure will always be inconvenient for the threat actors, but it is not a difficult task.
+Additionally, Cobalt Strike is able to make use of “redirectors.” Therefore, some of these servers could be a redirector instead of the actual Cobalt Strike C2 server.
+Redirectors are hosts that do what the name implies, redirect traffic to the real C2 server.
+Threat actors can hide their infrastructure behind an army of redirectors and conceal the actual C2 server.
+This makes the malicious infrastructure harder for the defenders to discover and block.Image taken from the official cobalt strike documentation:
+Our Threat Feed service tracks hundreds of Cobalt Strike servers and other C2 infrastructure.
+More information on this service and others can be found here.
+Cobalt Strike has adopted Malleable profiles and allows the threat actors to customize almost every aspect of the C2 framework.
+This makes life harder for defenders as the footprint can change with each profile modification.
+The threat actors have the ability to change anything from the network communication (like user agent, headers, default URIs) to individual post-exploitation functions such as process injection and payload obfuscation capabilities.
+Across many of our investigations the profiles used differ, but you can see that actors do often reuse or pattern emege among intrusion like in the following 3 cases:
+All the above intrusions made use of the same profile that mimics a legitimate jquery request.
+The self-signed certificates for intrusions 2 and 3 also contained the same fake attributes trying to pose as regular jquery traffic.Common Cobalt Strike config:
+Examples of malleable C2 profiles can be found on the official GitHub repository of Raphael Mudge.
+There are a number of GitHub repositories that allow for generation of randomized malleable profiles.
+These randomized profiles could be either based on completely random values or values based on an existing collection of existing malleable profiles.
+Two of the most notable repos are:
+A couple of very recent examples where threat actors used customized malleable profiles were in the Solarwinds attack as well as in latest campaigns from Nobelium as attributed by Microsoft.
+In the case of the Solarwinds attack, the threat actors used several customized Cobalt Strike beacons to execute the second-stage payload on their victims.
+According to Microsoft, “No two Beacon instances shared the same C2 domain name, Watermark, or other aforementioned configuration values.
+Other than certain internal fields, most Beacon configuration fields are customizable via a Malleable C2 profile.” – Deep dive into the Solorigate second-stage activation: From SUNBURST to TEARDROP and Raindrop.
+A lot of the Cobalt Strike post-exploitation tools are implemented as windows DLLs.
+This means that every time a threat actor runs these built-in tools, Cobalt Strike spawns a temporary process and uses rundll32.exe to inject the malicious code into it and communicates the results back to the beacon using named pipes.
+Defenders should pay close attention to command line events that rundll32 is executing without any arguments.Example execution:
+Named pipes are used to send the output of the post-exploitation tools to the beacon.
+Cobalt Strike is using default unique pipe names, which defenders can use for detection.
+However, Cobalt Strike allows the operators to change the name of the pipes to any name of their choosing by configuring the malleable C2 profile accordingly.
+Even though this is very easy to create, it is an inconvenience for the average attacker, and we do not see it being done often.
+For more information Cobalt Strike has an extensive documentation on named pipes here.The default Cobalt Strike pipes are (the “*” symbolize the prefix/suffix):
+Sysmon event 17 and 18 are able to log named pipes.
+Note that Sysmon should be explicitly configured to log named pipes.
+F-Secure Labs created a great write up for detecting Cobalt Strike through named pipes: Detecting Cobalt Strike Default Modules via Named Pipe Analysis.
+Additionally, we commonly see three methods regularly used by threat actors to download and execute the Cobalt Strike beacon.
+Encrypted PowerShell command with embedded Cobalt Strike SMB beacons from the report: From word to lateral movement in 1 hour.
+The PowerShell is base64 encoded.
+Decoding the PowerShell command, we are presented with the shellcode that will be pushed into memory.
+For a detailed analysis of this PowerShell stager, you can checkout the helpful blog post from @Paulsec4 here.
+In the example below, you can see the TrickBot process downloading to disk, and then loading the beacon into memory.
+The event IDs in this case for Sysmon logs are:
+And for windows Security logs:
+This case is a little bit more difficult to capture, thankfully, we have plenty of examples from our reporting to demonstrate the execution flow.
+Below is an example from the case Sodinokibi (aka REvil) Ransomware.IcedID reached out to two Cobalt Strike servers to download and execute the beacons in memory:
+In every intrusion, we see process injection taking place across the environment.
+It is mainly used to inject malicious code into a remote process and inject it into lsass.exe to extract credentials from memory.
+By injecting the malicious payload into a remote process, the threat actors are spawning a new session in the user context that the injected process belongs to.
+There are many ways in which process injection can be used.
+You can check out a helpful post by Boschko that goes through all the various methods that Cobalt Strike uses.
+Detect the Cobalt Strike default process injection with Sysmon by looking for the below EIDs in consecutive order:
+Example process injection on remote process (RuntimeBroker.exe):
+There are other ways to detect this activity.
+In other methods of process injection, such as process hollowing, EID 8 will not be present.
+Unfortunately, it is very difficult to detect this process injection activity via security windows logs without Sysmon to monitor for the event IDs above.
+An example from the Sodinokibi report, multiple process injections across the environment using Cobalt Strike Beacons (Sysmon EID 8):
+In every Cobalt Strike occasion that we report, we see threat actors executing reconnaissance commands with the help of the “shell” command.
+The commands are based on native windows utilities such as nltest.exe, whoami.exe, and net.exe to help with discovery.
+Red Canary has a detailed article which goes through the reasons that adversaries use native windows tools for domain trust discovery, that article can be found here.
+Below are some recent examples from the Conti infection; however, these commands remain consistent with other intrusions we track.Conti operators executing reconnaissance commands through Cobalt Strike:
+The most used tools for discovery purposes that threat actors are dropping with the help of Cobalt Strike are AdFind and BloodHound.
+Adfind is by far the most used among those two.
+It is also worth mentioning that PowerShell is also used for enumerating the network looking for interesting targets.
+When it comes to PowerShell, unmodified PowerSploit and PowerView modules are a very common method threat actors are using to collect information.
+The most common technique that threat actors use to obtain SYSTEM level privileges is the GetSystem method via named-pipe impersonation.
+Example execution on a target system as observed in the TrickBot Still Alive and Well  report:
+There are also other methods for elevating privileges with Cobalt Strike, such as using the “elevate” command.
+The elevate command uses two options to escalate privileges.
+The first one is the svc-exe.
+It attempts to drop an executable under “c:\windows” and creates a service to run the payload as SYSTEM.
+The second one is the uac-token-duplication method, which attempts to spawn a new elevated process under the context of a non-privileged user with a stolen token of an existed elevated process.
+However, as mentioned above, the most used method is the name pipe impersonation escalation via “getsystem” command.
+A detailed explanation can be found at the bottom of this Cobalt Strike official documentation page.
+As you can see below, Sysmon generates a lot more logs related to the successful privilege escalation using the “elevate svc-exe” option.
+In this case, spoolsv.exe is the executable that was dropped by Cobalt Strike to run a payload.Sysmon Event IDs:
+After getting access to the target using Cobalt Strike, one of the first tasks that operators take is to collect credentials and hashes from LSASS.
+There are a couple of ways to achieve this with Cobalt Strike.
+The first one uses the “hashdump” command to dump password hashes; the second one uses the command “logonpasswords” to dump plaintext credentials and NTLM hashes with Mimikatz.
+Here’s an example of accessing LSASS to steal credentials from memory using “hashdump” command in Cobalt Strike:
+Sysmon EIDs 1,8,10,17:(Event ID 8 will not always be present depending on the technique used.)
+As you can see below, the only Event IDs that we manage to capture using this technique are process creation and process termination events.
+We have also seen Lazagne being used on two occasions to extract credentials from various applications on the target system.
+Cobalt Strike is using GET and POST requests to communicate with the C2 server.
+The threat actors can choose between HTTP, HTTPS and DNS network communication.
+When it comes to C2, we typically see HTTP and HTTPS beacons.
+By default, Cobalt Strike will use GET requests to retrieve information and POST requests to send information back to the server.
+As explained above, all the default configurations can change with the use of malleable profiles.
+Even though we don’t see this very often, the beacon could also be configured to send back information with GET requests in small chunks.
+If you want a deep dive into detecting Cobalt Strike CnC, this article from UnderDefense is a great resource.The metadata is encrypted with a public key that is injected into the beacon.“Example of a get request from our latest ransomware report on Conti“
+“Results of executed commands are sent to the server using POST requests.”
+Once Cobalt Strike beacons are established, usually minutes later, we see operators moving laterally on servers of interest inside the network.
+Even though they are generally fast at picking their targets, we infer that their decisions are based on the results from the discovery phase.
+According to our reporting, the most frequent techniques that attackers use for pivoting are:
+Cobalt Strike can facilitate all the above techniques and even RDP using SOCKS proxy.
+According to our telemetry, this method is used the most by threat actors.
+We see them uploading their executable to their desired host with the “upload” Cobalt Strike command and execute it using the “remote-exec” command as documented in the capabilities section above but it can use psexec, winrm or wmi to execute a command and/or a beacon.
+This is what we see when the beacon is uploaded using the upload command.
+The following EIDs are created when executing remote-exec:
+4697: A service was installed in the system
+Cobalt Strike can use Mimikatz to generate and impersonate a token that can later be used to accomplish tasks in the context of that chosen user resource.
+The Cobalt Strike beacon can also use this token to interact with network resources and run remote commands.
+As you can see from the below execution example, executing Pass The Hash via Cobalt Strike will run cmd.exe to pass the token back to the beacon process via a named pipe :
+We also see that the beacon interacts with LSASS (Sysmon EID 10).
+There are many detection opportunities that defenders can take advantage of with the proper endpoint visibility.
+Pass the hash can also be detected by looking for:
+You can read more about detecting Pass The Hash here by Stealthbits and here by Hausec.
+Volatility plugin for detecting Cobalt Strike Beacon and extracting its config
+Didier Stevens – Python script to decode and dump the config of Cobalt Strike beacon
+Detection opportunities by Tony Lambert and Red Canary
+Meterpreter or Cobalt Strike Getsystem Service Installation
+Meterpreter or Cobalt Strike Getsystem Service Start
+Suspicious Encoded PowerShell Command Line
+Successful Overpass the Hash Attempt
+Process Creation Cobalt Strike load by rundll32
+Sysmon Cobalt Strike Service Installs
+Malpedia Cobalt Strike information and yara rule by Felix Bilstein
+Rules from Elastic, Volexity, JPCERT
+Rules from Marc Rivero with the McAfee ATR Team
+Enter your email address to subscribe to this blog and receive notifications of new posts by email.
+Intro The Ryuk threat actors went from a phishing email to domain wide ransomware in 5 hours.
+They escalated privileges using Zerologon (CVE-2020-1472), less than 2 hours after the initial … Read More
+Intro The Ryuk group went from an email to domain wide ransomware in 29 hours and asked for over $6 million to unlock our systems.
+They used tools such as … Read More
+The threat actor logged in through RDP, attempted to run a Cobalt Strike Beacon, and then dumped memory using ProcDump and Mimikatz.
+Next, they RDPed into a Domain Controller, minutes … Read More
+Here’s another example of threat actors brute forcing RDP to install ransomware, this time the brute forced system was not using the default RDP port.
+The threat actors installed ransomware … Read More

@@ -1,0 +1,189 @@
+This new ransomware was discovered by Michael Gillespie on 8 February 2019 and it is still improving over time.
+This blog will explain the technical details and share information about how this new ransomware family is working.
+There are some variants of the Clop ransomware but in this report, we will focus on the main version and highlight part of those variations.
+The main goal of Clop is to encrypt all files in an enterprise and request a payment to receive a decryptor to decrypt all the affected files.
+To achieve this, we observed some new techniques being used by the author that we have not seen before.
+Clearly over the last few months we have seen more innovative techniques appearing in ransomware.
+The Clop ransomware is usually packed to hide its inner workings.
+The sample we analyzed was also signed with the following certificate in the first version (now revoked):
+Packer signed to avoid av programs and mislead the user
+Signing a malicious binary, in this case ransomware, may trick security solutions to trust the binary and let it pass.
+Although this initial certificate was revoked in a few days, another version appeared soon after with another certificate:
+New certificate in new version
+This sample was discovered by MalwareHunterTeam (https://twitter.com/malwrhunterteam) on the 26 February, 2019.
+We discovered the following Clop ransomware samples which were signed with a certificate:
+This malware is prepared to avoid running under certain conditions, for example in the first version it requests to be installed as a service; if that will not succeed, it will terminate itself.
+The malware’s first action is to compare the keyboard of the victim computer using the function “GetKeyboardLayout”  against the hardcoded values.
+This function returns the user keyboard input layout at the moment the malware calls the function.
+The malware checks that the layout is bigger than the value 0x0437 (Georgian), makes some calculations with the Russian language (0x0419) and with the Azerbaijan language (0x082C).
+This function will return 1 or 0, 1 if it belongs to Russia or another CIS country, or 0 in every other case.
+If the function returns 0, it will go to the normal flow of the malware, otherwise it will get the device context of the entire screen with the function “GetDC”.
+Another condition will come from the function “GetTextCharset” that returns the font used in the system if it does not have the value 0xCC (RUSSIAN_CHARSET).
+If it is the charset used, the malware will delete itself from the disk and terminate itself with “TerminateProcess” but if it is not this charset, it will continue in the normal flow This double check circumvents users with a multisystem language, i.e.
+they have the Russian language installed but not active in the machine to avoid this type of malware.
+Check the text charset and compare with Russian charset
+The code that is supposed to delete the ransomware from the disk contains an error.
+It will call directly to the prompt of the system without waiting for the malware to finish.
+This means that the execution of the command will be correct but, as the malware is still running, it will not delete it from the disk.
+This happens because the author did not use a “timeout” command.
+Deletion of the malware itself
+The next action of the malware is to create a new thread that will start all processes.
+With the handle of this thread, it will wait for an infinite amount of time to finish with the “WaitForSingleObject” function and later return to the winMain function and exit.
+This thread’s first action is to create a file called “Favorite” in the same folder as the malware.
+Later, it will check the last error with “GetLastError” and, if the last error was 0,  it will wait with the function “Sleep” for 5 seconds.
+Later the thread will make a dummy call to the function “EraseTape” with a handle of 0, perhaps to disturb the emulators because the handle is put at 0 in a hardcoded opcode, and later a call to the function “DefineDosDeviceA” with an invalid name that returns another error.
+These operations will make a loop for 666000 times.
+Loop to disturb the analysis
+The next action is to search for some processes with these names:
+If some of these processes are discovered, the malware will wait 5 seconds using “Sleep” and later another 5 seconds.
+After those “sleep”, the malware will continue with their normal flow.
+If these processes are not detected, it will access to their own resources and extract it with the name “OFFNESTOP1”.
+That resource is encrypted but has inside a “.bat” file.
+Access to the first resource crypted
+The decryption is a simple XOR operation with bytes from this string:
+The next action is to write this batch file in the same folder where the malware stays with the function “CreateFileA”.
+The file created has the name “clearsystems-11-11.bat”.
+Later will launch it with “ShellExecuteA”, wait for 5 seconds to finish and delete the file with the function “DeleteFileA”.
+It is clear that the authors are not experienced programmers because they are using a .bat file for the next actions:
+All these actions could have been performed in the malware code itself, without the need of an external file that can be detected and removed.
+The BAT file to disable the shadow volumes and more security
+The next action is to create a mutex with the name hardcoded “Fany—Fany—6-6-6” and later make a call to the function “WaitForSingleObject” and check the result with 0.
+If the value is 0 it means that the mutex was created for this instance of the malware but if it gets another value, it means that the mutex was made from another instance or vaccine and, in this case, it will finish the execution of the malware.
+After this, it will make 2 threads, one of them to search for processes and the another one to crypt files in the network shares that it has access to.
+The first thread enumerates all processes of the system and creates the name of the process in upper case and calculates a hash with the name and compares it with a big list of hashes.
+This hash algorithm is a custom algorithm.
+It is typical in malware that tries to hide what processes they are looking for.
+If it finds one of them it will terminate it with “TerminateProcess” function after opening with the rights to make this action with “OpenProcess” function.
+The malware contains 61 hard-coded hashes of programs such as “STEAM.EXE”, database programs, office programs and others.
+Below, the first 38 hashes with the associated process names.
+These 38 processes are the most usual processes to close as we have observed with other ransomwares families such as GandCrab, Cerber, etc.
+This thread runs in an infinite loop with a wait using the function “Sleep” per iteration of 30 minutes.
+Thread to kill critical processes to unlock files
+The second thread created has the task of enumerating all network shares and crypts files in them if the malware has access to them.
+For executing this task, it uses the typical API functions of the module “MPR.DLL”:
+This thread starts creating a reserve of memory with “GlobalAlloc” function to keep the information of the “MPR” functions.
+For each network share that the malware discovers, it will prepare to enumerate more shares and crypt files.
+For each folder discovered, it will enter it and search for more subfolders and files.
+The first step is to check the name of the folder/file found against a hardcoded list of hashes with the same algorithm used to detect the processes to close.
+Below are the results of 12 of the 27 hashes with the correct names:
+If it passes, it will check that the file is not a folder, and in this case compare the name with a list of hardcoded names and extensions that are in plain text rather than in hash format:
+This check is done with a custom function that checks character per character against all the list.
+It is the reason for having the same names in both upper and lower case, instead of using the function “lstrcmpiA,” for example, to avoid some hook in this function preventing the file from being affected.
+The check of the extension at the same time is to make the process of crypto quicker.
+Of course, the malware checks that the file does not have the name of the ransom note and the extension that it will put in the crypted file.
+Those blacklisted extensions will help the system avoid crashing during the encryption compared with other ransomware families.
+Check of file names and extensions
+This behavior is normal in ransomware but the previous check against hardcoded hashes based on the file/folder name is weird because later, as we can see in the above picture, the next check is against plain text strings.
+If it passes this check, the malware will make a new thread with a struct prepared with a hardcoded key block, the name of the file, and the path where the file exists.
+In this thread the first action is to remove the error mode with “SetErrorMode” to 1 to avoid an error dialog being shown to the user if it crashes.
+Later, it will prepare the path to the file from the struct passed as argument to the thread and change the attributes of the file to ARCHIVE with the function “SetFileAttributesW”, however the malware does not check if it can make this action with success or not.
+The malware can use 2 different public RSA keys: one exported using the crypto api in a public blob or using the embedded in base64 in the malware.
+The malware will only use the second one if it cannot create the crypto context or has some problem with the crypto api functions.
+Another difference with other ransomware families is that Clop will only cipher the disk that is a physical attached/embedded disk (type 3, FIXED or removable (type 2)).
+The malware ignores the REMOTE type (4)).
+Anyways, the shares can be affected using the “MPR.DLL” functions without any problem.
+Filemark in the crypted file and key used ciphered
+After encrypting, the file will try to open in the same folder the ransom note and, if it exists, it will continue without overwriting it to save time, but if the ransom note does not exist it will access one resource in the malware called “OFFNESTOP”.
+This resource is crypted with the same XOR operation as the first resource: the .bat file, after decrypting, will write the ransom note in the folder of the file.
+Creation of the ransom note from a crypted resource
+Here is a sample of the ransom note of the first version of this malware:
+Example of ransom note of the first version of the malware
+After this, Clop will continue with the next file with the same process however, the check of the name based with the hash is avoided now.
+The second version found by the end of February has some changes if it is compared with the first one.
+The hash of this version is: “ed7db8c2256b2d5f36b3d9c349a6ed0b”.
+The first change is some changes in the strings in plain text of the code to make the execution in the “EraseTape” call and “FindAtomW” call more slowly.
+Now the names are for the tape: “” and the atom “”.
+The second change is the name of the resources crypted in the binary, the first resource that is a second batch file to delete the shadow volumes and remove the protections in the boot of the machine as the previous one has another name: “RC_HTML1”.
+New resource name for the batch file
+However, the algorithm to decrypt this resource is the same, except that they changed the big string that acts as a key for the bytes.
+Now the string is: “JLKHFVIjewhyur3ikjfldskfkl23j3iuhdnfklqhrjjio2ljkeosfjh7823763647823hrfuweg56t7r6t73824y78Clop”.
+It is important to remember that this string remains in plain text in the binary but, as it has changed, it cannot be used for a Yara rule.
+The same counts for the name of the resources and also for the hash of the resource because the bat changes per line in some cases and in another as it will have more code to stop services of products of security and databases.
+The contents of the new BAT file are:
+vssadmin Delete Shadows /all /quiet
+vssadmin resize shadowstorage /for=c: /on=c: /maxsize=401MB
+vssadmin resize shadowstorage /for=c: /on=c: /maxsize=unbounded
+vssadmin resize shadowstorage /for=d: /on=d: /maxsize=401MB
+vssadmin resize shadowstorage /for=d: /on=d: /maxsize=unbounded
+vssadmin resize shadowstorage /for=e: /on=e: /maxsize=401MB
+vssadmin resize shadowstorage /for=e: /on=e: /maxsize=unbounded
+vssadmin resize shadowstorage /for=f: /on=f: /maxsize=401MB
+vssadmin resize shadowstorage /for=f: /on=f: /maxsize=unbounded
+vssadmin resize shadowstorage /for=g: /on=g: /maxsize=401MB
+vssadmin resize shadowstorage /for=g: /on=g: /maxsize=unbounded
+vssadmin resize shadowstorage /for=h: /on=h: /maxsize=401MB
+vssadmin resize shadowstorage /for=h: /on=h: /maxsize=unbounded
+bcdedit /set {default} recoveryenabled No
+bcdedit /set {default} bootstatuspolicy ignoreallfailures
+vssadmin Delete Shadows /all /quiet
+net stop “Sophos Device Control Service” /y
+net stop “Zoolz 2 Service” /y
+net stop “Sophos AutoUpdate Service” /y
+net stop “Sophos System Protection Service” /y
+net stop “Symantec System Recovery” /y
+net stop “Sophos Health Service” /y
+net stop “Sophos Message Router” /y
+net stop “Sophos Clean Service” /y
+net stop “Sophos Web Control Service” /y
+net stop “Veeam Backup Catalog Data Service” /
+net stop “Sophos MCS Client” /y
+net stop “SQLsafe Backup Service” /y
+net stop “Sophos Safestore Service” /y
+net stop “Sophos File Scanner Service” /y
+net stop “Sophos Agent” /y
+net stop “Enterprise Client Service” /y
+net stop “SQL Backups” /y
+net stop “Sophos MCS Agent” /y
+net stop “Acronis VSS Provider” /y
+net stop “SQLsafe Filter Service” /y
+The next change is the mutex name.
+In this version it is “HappyLife^_-“, so, can it be complex to make a vaccine based on the mutex name because it can be changed easily in each new sample.
+The next change is the hardcoded public key of the malware that is different to the previous version.
+Another change is the file created; the first version creates the file with the name “Favourite” but this version creates this file with the name “Comone”.
+However, the algorithm of crypto of the files and the mark in the file crypted is the same.
+Another difference is in the ransom note that is now clearer with some changes in the text and now has 3 emails instead of one to contact the ransomware developers.
+FIGURE 15.Example of the new ransom note
+Clop is a ransomware family that its authors or affiliates can change in a quick way to make it more complex to track the samples.
+The code largely remains the same but changing the strings can make it more difficult to detect and/or classify it correctly.
+Now we will talk about the changes of some samples to see how prolific the ransomware Clop is.
+Sample 0403db9fcb37bd8ceec0afd6c3754314 has a compile date of 12 February, 2019 and has the following changes if compared with other samples:
+Another version of the batch file
+The 3ea56f82b66b26dc66ee5382d2b6f05d sample has the following points of difference:
+Sample 846f93fcb65c9e01d99b867fea384edc , has these differences:
+As the reader can understand, Clop changes very quickly in strings and name of resources to make it more complex to detect the malware.
+We also observed that the .BAT files were not present in earlier Clop ransomware versions.
+Based on the versions of Clop we discovered we detected telemetry hits in the following countries:
+The function to check a file or a folder name using the custom hash algorithm can be a problem for the malware execution due if one of them is found in execution, the malware will avoid it.
+If this happens with a folder, all the files inside that folder will be skipped as well.
+As the algorithm and the hash is based on 32bits and only in upper case characters, it is very easy to create a collision as we know the target hashes and the algorithm
+It cannot be used as vaccine on itself, but it can be useful to protect against the malware if the most critical files are inside of a collision folder name.
+In the screenshot “BOOT” is a correct name for the hash, but the others are collisions.
+This malware has a lot of changes per version that avoid making a normal vaccine using mutex, etc.
+That not all ransomware is created equally, especially goes for Clop.
+Earlier in this blog we have highlighted some interesting choices the developers made when it came to detecting language settings, processes and the use of batch files to delete the shadow volume copies.
+We found in the analysis some unique functions compared with other ransomware families.
+However, Clop does embrace some of the procedures we have seen with other ransomware families by not listing the ransom amount or mentioning a bitcoin address.
+Victims must communicate via email instead of with a central command and control server hosting decryption keys.
+In the newer versions of Clop, victims are required to state their company name and site in the email communications.
+We are not absolutely sure why this is, but it might be an effort to improve victim tracking.
+Looking at the Clop ransom note, it shares TTPs with other ransomware families; e.g.
+it mimics the Ryuk ransomware and contains similarities with BitPaymer, however the code and functions are quite different between them.
+Customers of McAfee gateway and endpoint products are protected against this version.
+McAfee ENS customers can create expert rules to prevent batch command execution by the ransomware.
+A few examples are given below for reference.
+The following expert rule can be used to prevent the malware from deleting the shadow volumes with vssadmin (“vssadmin Delete Shadows /all /quiet”).
+When the expert rule is applied at the endpoint, deletion of shadow volume fails with the following error message:
+The malware also tries to stop McAfee services using command “net stop McShield /y”.
+The following expert rule can be used to prevent the malware from stopping McAfee Services:
+When the expert rule is applied at the endpoint, the attempt to stop McAfee service using net command fails with the following error message:
+The samples use the following MITRE ATT&CK™ techniques:
+Clop ransomware shows some characteristics that enterprises are its intended targets instead of end consumers.
+The authors displayed some creative technical solutions, to detect the victim’s language settings and installed programs.
+On the other hand, we also noticed some weird decisions when it came to coding certain functionalities in the ransomware.
+Unfortunately, it is not the first time that criminals will make money with badly programmed malware.
+Clop is constantly evolving and even though we do not know what new changes will be implemented in the future, McAfee ATR will keep a close watch.
+Alexandre Mundo, Senior Malware Analyst is part of Mcafee's Advanced Threat Research team.
+He reverses the new threads in advanced attacks and make research of them in a daily basis.
+He is focused in APT and new, and old but very active, ransomware attacks and malware.
+He performs malware and forensic analysis and teach junior ...
+Categories: McAfee LabsTags: Advanced Threat Research

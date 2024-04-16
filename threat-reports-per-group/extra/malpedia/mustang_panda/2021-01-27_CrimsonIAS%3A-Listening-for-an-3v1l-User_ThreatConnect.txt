@@ -1,0 +1,119 @@
+We offer flexibility to our customers with a full set of deployment and purchasing options.
+We offer flexibility to our customers with a full set of deployment and purchasing options.
+CrimsonIAS: Listening for an 3v1l User
+CrimsonIAS is a Delphi-written backdoor dating back to at least 2017 that enables operators to run command line tools, exfiltrate files, and upload files to the infected machine.
+CrimsonIAS is notable as it listens for incoming connections only; making it different from typical Windows backdoors that beacons out.
+The characteristics found in CrimsonIAS’s execution flow suggest a connection to Mustang Panda (aka BRONZE PRESIDENT, RedDelta) PlugX samples.
+Based on those non-unique characteristics, ThreatConnect assesses with low confidence that CrimsonIAS is an additional tool in Mustang Panda’s repertoire.
+Industry reporting assesses with varying levels of confidence that Mustang Panda is a Chinese espionage actor that has conducted operations in Mongolia, Vietnam, and Hong Kong among other locations.
+According to fellow researchers, Mustang Panda targets non-government organizations (NGOs), law enforcement organizations, and political entities.
+ThreatConnect identified CrimsonIAS while hunting for XOR encrypted PlugX binaries.
+The CrimsonIAS backdoor is encrypted similarly to recent MustangPanda PlugX samples, which piqued our interest.
+The developers behind CrimsonIAS wrote this backdoor using Delphi.
+They also added some features that changed the normal execution flow starting with shell code embedded in the MZ header.
+Windows executables are not designed to execute code from the MZ header; they have a dedicated section (outside of the MZ header) for executable code.
+The actor is able to work around this design choice to start execution in the MZ header based on how we suspect the binary is loaded.
+This shell code calls a reflective loader function which resolves additional library functions needed before jumping to the malware’s actual entrypoint.
+The binary was also XOR encrypted with a 10 byte XOR key prepended to the binary (T1140: Deobfuscate/Decode Files or Information).
+All of these are also seen in Mustang Panda’s PlugX samples.
+This backdoor spins up a listener and awaits the operator’s commands to run command line tools, exfiltrate files, and upload files to the infected machine.
+Prior to spinning up the network listener, CrimsonIAS launches netsh.exe to open a port on the local machine (T1562.004: Impair Defenses: Disable or Modify System Firewall).
+This sample opens port 80.
+When receiving network traffic, the listener’s handler first checks for the presence of the marker 0x33669966 (T1205: Traffic Signaling).
+If it matches, then the handler proceeds to parse the first 24 bytes.
+The first 24 bytes make up the command header; however, only the first three DWORDs appear to be used.
+The command buffer starts at offset 24 (0x18) and its content differs based upon the command code specified.
+The three command codes are:
+A null preserving XOR encryption algorithm is used to hide the buffer’s contents (T1573.001: Encrypted Channel: Symmetric Cryptography).
+All of the samples found use the same single byte XOR key 0x85.
+After reversing the backdoor’s network byte parser, we recreated parts of the command and control (C2) server to elicit responses from it.
+Here the backdoor responds to our command telling it to execute “net user evil 3v1l /add”.
+Notice both the sent and received responses start with 0x33669966 (0x66996633 on the network); enabling fingerprinting of the network traffic.
+The response buffer reads: “The command completed successfully.”
+We assess with low confidence that CrimsonIAS is associated with Mustang Panda.
+The similarities with how the binary was packaged along with how it’s launched are the basis for this connection.
+Inspecting Mustang Panda PlugX samples identified last year, we observed these three pertinent characteristics:
+1 – Encrypted with a 10 byte XOR key prepended to the encrypted binary
+Figure 7 and 8 show a prepended XOR key separated by a null byte from the encrypted payload.
+Over the past 8 months we’ve been monitoring this technique and, outside of this one CrimsonIAS sample, all the other uploaded samples have been the PlugX associated with Mustang Panda.
+We acknowledge during the last two months of 2020 that two samples deviated from the 10 byte XOR key length; however, the overwhelming majority used a 10 byte prepended XOR key.
+2 – Matching shell code at the start of the MZ header (minus the offset value)
+Shell code in the MZ header is not exclusive to Mustang Panda, as tools like Cobalt Strike make use of this; however this set of bytes (shown in figures 9 and 10) we’ve only seen in files related to Mustang Panda over the past few months.
+3 – Exported Loader function
+Both samples also make use of a reflective loader technique which they export under the name Loader.
+Searching VTI for this exported function leads to a fair number of results not tied to Mustang Panda samples; so the presence of this export is not unique enough.
+Finally, we successfully launched CrimsonIAS by taking a Mustang Panda PlugX archive (complete with the DLL sideloading executable and the sideloaded DLL) and swapping out the encrypted PlugX DLL with the encrypted CrimsonIAS DLL (T1574.002: Hijack Execution Flow: DLL Side-Loading).
+Grouping these characteristics together is the basis for the CrimsonIAS connection with Mustang Panda.
+The reasoning behind the low confidence is the fact that the first two techniques should be trivial to implement/copy and that the third is not unique to Mustang Panda; increasing the likelihood it could be a copycat, false flag, or inadvertent consistency.
+Additional information on organizations targeted, affected regions, the complete payload, inbound communications, or any associated incidents would potentially help us reassess our confidence in CrimsonIAS’ association to Mustang Panda.
+VirusTotal shows that the first sample was uploaded back in 2018.
+The earliest compile time found suggests this backdoor has been around since at least 2017.
+The three samples with the compile time 2018-05-25 03:19:15 are the same sample with just the listen on port number changed; probably after compilation.
+Overall CrimsonIAS’s primary functionality remains consistent over the years.
+The primary difference lies in how the malicious code is executed.
+The earlier samples relied on calling the exported function CPlApplet that would register and launch a Windows service that then executes the backdoor functionality (T1569.002: System Services: Service Execution).
+The file 63e144fbe0377e0c365c126d2c03ee5da215db275c5376e78187f0611234c9b0 is an exception as the exported function CPIApplet does not create a service but it immediately starts up the backdoor.
+The latest sample moved away from this technique and it now makes use of a reflective loader technique that is seen across different malware families.
+This change along with the prepended XOR key and the shellcode provide hints to who might be behind this backdoor.
+ThreatConnect believes that Mustang Panda will continue to be active and adapt their toolset as needed to meet their objectives against largely near-abroad targets.
+The backdoor, CrimsonIAS, passively awaits commands, implying that the actor has some means of proxying/accessing the target’s network or, more likely, that the machine targeted is exposed to the public Internet.
+We encourage entities who think they might have been targeted by Mustang Panda to check for the presence of programs listening for external inbound connections and inspect further if something is found.
+Verify carefully as the presence of programs listening for inbound connections does not necessarily mean that the machine is compromised.
+We generally abstain from adding a new name for malware and threats where other industry reporting has already done so.
+Two exceptions where we may use our own naming convention:
+The latter is the case here.
+Our naming convention is intended to help describe the assessed origin of the threat or malware, along with another identifier that is specific to the entity.
+In this case, we are using Crimson to refer to the malware’s assessed Chinese origin, and IAS to refer to the Internet Authentication Service (IAS) binary string previously described.
+Suite 550
+Arlington, VA 22203
+Directions
+Toll Free: +1.800.965.2708
+Local: +1.703.229.4240
+Fax: +1.703.229.4489
+By Industry
+By Role
+By Need
+How to Buy
+About
+Leadership
+Methodology
+Research Team
+Careers
+Learn More
+Knowledge Base
+Github Repository
+15 Bishopsgate
+London, EC2N 3AR
+United Kingdom
+Tel: +44 208 138 8482
+Bloc F, Etaj 1
+The Office
+Bulevardul 21 Decembrie 1989
+400124
+Cluj Napoca
+Romania
+©2012- 2021 ThreatConnect, Inc. All Rights Reserved
+Privacy Policy | Sitemap | Terms of Service
+To give you the easiest possible experience, this site uses cookies.
+Find out more about our Privacy Policy and Cookie Policy.
+By continuing to use this site, you are giving us your consent to do this.
+We may request cookies to be set on your device.
+We use cookies to let us know when you visit our websites, how you interact with us, to enrich your user experience, and to customize your relationship with our website.
+Click on the different category headings to find out more.
+You can also change some of your preferences.
+Note that blocking some types of cookies may impact your experience on our websites and the services we are able to offer.
+These cookies are strictly necessary to provide you with services available through our website and to use some of its features.
+Because these cookies are strictly necessary to deliver the website, refuseing them will have impact how our site functions.
+You always can block or delete cookies by changing your browser settings and force blocking all cookies on this website.
+But this will always prompt you to accept/refuse cookies when revisiting our site.
+We fully respect if you want to refuse cookies but to avoid asking you again and again kindly allow us to store a cookie for that.
+You are free to opt out any time or opt in for other cookies to get a better experience.
+If you refuse cookies we will remove all set cookies in our domain.
+We provide you with a list of stored cookies on your computer in our domain so you can check what we stored.
+Due to security reasons we are not able to show or modify cookies from other domains.
+You can check these in your browser security settings.
+We also use different external services like Google Webfonts, Google Maps, and external Video providers.
+Since these providers may collect personal data like your IP address we allow you to block them here.
+Please be aware that this might heavily reduce the functionality and appearance of our site.
+Changes will take effect once you reload the page.
+Vimeo and Youtube video embeds:

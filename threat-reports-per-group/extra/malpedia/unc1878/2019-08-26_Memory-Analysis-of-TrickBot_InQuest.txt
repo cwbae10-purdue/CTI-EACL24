@@ -1,0 +1,113 @@
+Our integrated email security SaaS model provides protection against malware, phishing, and ransomware including targeted attack protection, imposter emails, business email compromise, spam and more.
+Cloud-delivered, Web Security Platform that provides inline security and policy enforcement at scale even in the most complex multi-tenant environments.
+Conduct proactive Threat Hunting Operations in the Cloud through the use of automated, ad-hoc or scheduled retrospective analysis using our RetroHunt Engine.
+Cloud-delivered, high-throughput APIs that support direct data ingestion to the Deep File Inspection pipeline and provide threat analytics at scale.
+Transformative SaaS security enabling your digital transition to a highly-scalable and multi-tenant cloud-native architecture.
+Monitoring of network traffic at throughput speeds up to 40Gb per second coupled with session and flow analysis leveraging behavioral and advanced analytical techniques, such as machine learning, to identify and respond to anomalous or suspicious behavior.
+Through continuous monitoring and visibility of your data-in-motion, the DFI platform leverages the MITRE ATT&CK framework to identify and protect against adversary tactics and techniques in real-time.
+Identify command and control (C2) activity associated with sophisticated threat actor activity by performing behavioral analytics and leveraging unique Indicators of Compromise acquired and curated by our InQuest Labs researchers
+Our Data Loss Discovery Engine leverages machine vision through the use of Optical Character Recognition (OCR) and image perception hashing to inspect traffic, files and objects in-motion as well as at-rest to identify sensitive information such as PII and PHI being exposed.
+Secure your enterprise by delivering proactive threat prevention to your client networks while protecting your users and safeguarding your data.
+In this blog, we take a subtle dive into memory analysis using Volatility and the memory analysis methodology.
+For those unfamiliar with the tool, The Volatility Framework is a completely open collection of tools, implemented in Python for the extraction of digital artifacts from volatile memory (RAM) samples.
+The extraction techniques are performed completely independent of the system under investigation but offer visibility into the runtime state of the system.
+The framework is intended to introduce people to the techniques and complexities associated with extracting digital artifacts from volatile memory samples and provide a platform for further work into this exciting area of research.
+While we are unaware of the original creator, the Memory Analysis Framework for incident response is often credited to Chad Tilbury and Rob Lee and can be accomplished in these 6 steps.
+The original direction we had in my mind was to utilize “Fileless Malware” to highlight the differences in visibility compared to traditional malware.
+While perusing the Twitter for my personal inspiration, there was numerous mentions of this new blog by Trend Micro discussing a recent campaign spamming with a macro laden word doc with obfuscated JavaScript.
+This macro delivered a new variant of TrickBot to the victim.
+Developed in 2016, TrickBot is one of the more recent banking Trojans, with many of its original features inspired by Dyreza (another banking Trojan).
+Besides targeting a wide array of international banks via its webinjects, TrickBot can steal from Bitcoin wallets, and harvest emails or credentials using the Mimikatz.
+Coincidentally, InQuest has just released a new analysis suite for the researcher and hobbyist.
+We are very excited about releasing this analysis suite to the community and hope it will provide some assistance to others.
+I want to take a moment to highlight some of the analysis provided by the Deep File Inspection (DFI-LITE) capability within InQuest Labs
+Definitely check out InQuest Labs and let us know what you think!
+Overview:
+Let’s start by reviewing one of the dropper Word documents that we will use later.
+MD5: 310731c5fce818f867bb0a32a1bec8be
+The overview is rather self explanatory.The red “MALICIOUS” tag provides an immediate assertation of the safeness of the document.
+Of interest is the “First Seen” date as which was earlier than the Trend Micro blog posted on August 5, 2019.
+Heuristics:
+DFI provided some interesting heuristic actions exhibited by the file that was analyzed.
+Layers:
+InQuest has developed a post-processing layer that parses common file types and identifies locations where other files or code can be embedded within the file that was originally captured.
+For a given file, there is an average of 4X size increase to be analyzed.
+Metadata:
+DFI provides the metadata associated with the sample being analyzed.
+Semantic Context:
+While the semantic content of this document is heavily obfuscated, it provides easy access for reversing and provides many quick wins for the personnel performing continuous security monitoring at your organization.
+Optical Character Recognition (OCR):
+InQuest Deep File Inspection (DFI) utilizes machine vision and optical character recognition (OCR) to identify the social engineering component of a variety of malware lures.
+ w Document created in earlier version of
+MS Office Word
+To view this content, please click |ab|Enable Editing|bb| from the yellow bar and then click
+|ab|Enable Content|bb|.
+Embedded Logic:
+DFI also provided the embedded Logic from within the document.
+Shown here is the macro content.
+Attribute VB_Name = "NewMacros"
+'Cadmium is a chemical element with the symbol Cd and atomic number 48.
+'This soft, silvery-white metal is chemically similar to the two other stable metals in group 12, zinc and mercury.
+'Like zinc, it demonstrates oxidation state +2 in most of its compounds, and like mercury,
+'it has a lower melting point than the transition metals in groups 3 through 11.
+'Cadmium and its congeners in group 12 are often not considered transition metals,
+'in that they do not have partly filled d or f electron shells in the elemental or common oxidation states.
+'The average concentration of cadmium in Earths crust is between 0.1 and 0.5 parts per million (ppm).
+'It was discovered in 1817 simultaneously by Stromeyer and Hermann, both in Germany, as an impurity in zinc carbonate.
+Due to all of the anti-reversing techniques included within the TrickBot droppers, analyzed machine was infected with TrickBot executable that the dropper subsequently installed.
+You can acquire a copy of the malware 0242ebb681eb1b3dbaa751320dea56e31c5e52c8324a7de125a8144cc5270698 if you would like.
+Feel free to download this memory image to follow along or expand on the investigation:
+We need to start by identifying the system profile.
+In order to do this, we can start by using the imageinfo plugin.
+While it provided a few different suggested profiles, it did not nail what we needed.
+We can narrow the profile down utilizing the kdbgscan plugin by searching for and dumping potential KDBG values.
+Here we were able to identify the profile that we want to use for the rest of the analysis, profile=Win10x64_17763.
+Rather than specifying the image location and profile for every command, we can utilze export to save the environment variables.
+Identify Rogue Processes
+We will start by looking through some of the standard plugins that relate to each section of the memory analysis process.
+pslist – provides a high-level view of running processes.
+There are some oddly named processes in this output as well as an abundance of terminal processes.
+psscan – scan memory for EPROCESS blocks.
+pstree – display parent-process relationship
+The process tree displays some of these interesting processes and shows the PIDs of their parent process.
+Analyze Process DLLS and handles
+dlllist – List of loaded dlls by process.
+Here is a sample of the output from some of the suspect processes.
+Note the PEB is unable to be read for these processes, but works fine for others.
+getsids – Print process security identifiers
+Looks like both of these suspicious processes were run with administrative privileges.
+Review Network Artifacts
+netscan – Scan for TCP connections and sockets
+This plugin will highlight the network connections that were made.
+An excellent pivot point for additional analysis and IOCs to be added into security monitoring.
+vol.py netscan | grep -E "LISTEN|ESTABLISHED|CLOSE|)"
+Look for Evidence of code injection
+Malfind – Find hidden and injected code.
+While looking through all of the processes, there is little indication of injected code.
+Often apparent from the presence of MZ header
+vol.py malfind -dump_dir /trickbot
+Check for signs of a rootkit
+Psxview - Find hidden processes using cross-view analysis.
+Here is an assortment of suspicious processes that we identified earlier
+vol.py psxview
+modscan -Scan memory for loaded, unloaded, and unlinked drivers.
+I didn’t notice any suspicious drivers from the output.
+There are a handful of other plugins that can be used to look for rootkits on the system.
+Some of them are:apihooks, ssdt, driverirp, and idt.
+After some additional analysis, there appears to be no rootkit present on this system.
+Dump suspicious processes and drivers
+procdump –Dump process to executable sample.
+Interesting results when trying to dump any of the suspicious processes.
+vol.py procdump -p 10208 --dump-dir=./
+cmdscan –Scan for COMMAND_HISTORY buffers.
+There are no results from the command history.
+Extremely interesting considering the quantity of cmd.exe and powershell.exe instances.
+consoles –Scan for CONSOLE_INFORMATION output.
+Also, no results from the consoles output.
+In this brief writeup, we looked at the memory analysis framework and attempted to utilize it to examine a system compromised with TrickBot.
+The anti-reversing techniques of the delivery mechanism and anti-forensicating tricks used within the executable proved to inhibit some of the analysis.
+While many more artifacts can be explored through memory analysis, this was a high-level attempt to understand the flow of analysis using the tool.
+Please feel free to continue on the investigation.
+Joe Sandbox also provides a detailed analysis report on this instance.
+We are beyond excited to announce InQuest Labs and know that it will be a valuable open-source resource for the community.
+Give it a gander when you have some free time.

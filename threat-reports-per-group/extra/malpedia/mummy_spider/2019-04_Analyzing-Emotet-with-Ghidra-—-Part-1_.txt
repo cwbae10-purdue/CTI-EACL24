@@ -1,0 +1,57 @@
+Apr 19, 2019·6 min read
+This post I’ll show how I used Ghidra in analyzing a recent sample of Emotet.
+If you have read this, here is Part 2.
+The analysis is done on the unpacked binary file.
+In this post I’m skipping how I unpacked the file, since what I primarily want to show is how I used Ghidra’s python scripting manager to decrypt strings and API calls.
+Ghidra is about creating projects.
+Following the on-screen instructions, I created a project named “Emotet”.
+To add files to analyze into the project, simple type I or go to File -> Import File.
+Ghidra displays properties regarding the file that gets imported.
+Double click on the file name and it opens it up in CodeBrowser which is a tool that disassembles the file.
+Under the Symbol Tree (usually on the left or you can go to Window -> Symbol Tree), I filtered for “entry” to get to the binary’s entry point.
+Under Listing we see the compiled code and on the right is its decompiled code.
+Since I’ve already analyzed these binaries, some of the sub routine calls and offsets in these images will have been renamed by me.
+To rename an offset, right-click an offset value and select Edit Label (or type L).
+Emotet encrypts its strings and stores its API call names as hashes.
+So statically viewing this file, is a pain to read.
+Without going into much detail about Emotet’s payload (that would require another blog entry), I will show how to make this binary a bit more easy to follow.
+It does require to initially go through each function and figure out the math (possibly using Olldbg, Wingdb or whichever debugger so to make it a little less painful).
+In this case I wanted to figure 2 methods used by Emotet.
+The first function is a simple xor routine that it uses to decrypt strings.
+It looked deceiving complex (because of the use of shift operators in the function), only till after running one iteration in Ollydbg that I realized what was happening… .
+The second function finds which API name matches which hash (I will cover this in Part 2).
+This I felt was a bit more clever, but still easy to understand after running in Ollydbg.
+Then using Ghidra’s Script Manager, I’ll show how I implemented the python scripts to decrypt the strings and resolve the API calls used in the binary.
+In the binary, I’ve noticed a lot of references to the function call at 0x00401b70.
+This call decrypts for the strings.
+I renamed it to decode_strings.
+To find references made to the function, right click the function and select References -> Show References to.
+The function decode_strings takes in 2 arguments that are stored in ECX and EDX (Image 5).
+ECX is the offset of the encrypted string.
+EDX is the xor key.
+The decrypted string gets stored in memory allocated in the heap and the address gets passed to EAX.
+(Side Track: I have added the string “ecx = offset \n edx = key” as a repeatable comment to the function.
+Right click the address and select Comments -> Set Repeatable Comment or type ;)
+The first dword at the offset xor’ed with the key returned the length of the string.
+The next subsequent set of dwords were xor’ed up until the string’s length.
+Now for the more exiting part, automating this with a python script in Ghidra.
+In the top toolbar section of Ghidra, we see this icon in image 6.
+It takes us to the Script Manager.
+Else you can select Window -> Script Manager.
+The Script Manager displays a list of scripts written in either Java or Python.
+They come with the installation.
+The script manager also has some python script examples.
+So, I filtered for .py scripts to help me understand how to proceed in writing a python script.
+The Python Interpreter interacts with Ghidra’s Java API through Jython.
+The documentation on the Java APIs provided can be found in a zipped file in the docs directory of your Ghidra installation.
+To create a new python script, select this icon — image 8.
+Select Python and enter a name you’d like to give to your script.
+Additionally, going through the help docs (under Help -> Contents) and reading under Script Development, there is a description of the metadata tags that gets generated when creating a new script.
+I’ve uploaded the script into my github repo and you can follow it here — https://github.com/0xd0cf11e/ghidra/blob/master/ghidra_emotet_decode_strings.py
+The idea behind the script is to display the strings that get decrypted as comments next to the instruction where its offset is moved to ECX (Image 9).
+And as well to patch the bytes in the binary (Image 10).
+First step, I wanted to find all the code references made to the decode_strings function.
+Iterating through each reference, the next step was locating for the opcode instructions MOV ECX and MOV EDX.
+The instructions weren’t always immediately before the call to the function.
+So I iterated through a max of 100 instructions to search for the opcodes.
+After that I was all set to carry out the xor routine and patch the bytes and comment at the instruction offset where MOV ECX was carried out.

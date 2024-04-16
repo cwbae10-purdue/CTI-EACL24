@@ -1,0 +1,124 @@
+Recently, an interesting malicious sample was uploaded to a multi-scanner service.
+This immediately triggered our interest because it appears to represent a previously unknown piece of a larger puzzle.
+That puzzle is “Turla”, one of the most complex APTs in the world.
+We have written previously about the Turla APT with posts about their Epic Turla operations  and Agent.btz inspiration.
+So far, every single Turla sample we’ve encountered was designed for the Microsoft Windows family, 32 and 64 bit operating systems.
+The newly discovered Turla sample is unusual in the fact that it’s the first Turla sample targeting the Linux operating system that we have discovered.
+This newly found Turla component supports Linux for broader system support at victim sites.
+The attack tool takes us further into the set alongside the Snake rootkit and components first associated with this actor a couple years ago.
+We suspect that this component was running for years at a victim site, but do not have concrete data to support that statement just yet.
+The Linux Turla module is a C/C++ executable statically linked against multiple libraries, greatly increasing its file size.
+It was stripped of symbol information, more likely intended to increase analysis effort than to decrease file size.
+Its functionality includes hidden network communications, arbitrary remote command execution, and remote management.
+Much of its code is based on public sources.
+ELF 32-bit LSB executable, Intel 80386, version 1 (SYSV), statically linked, for GNU/Linux 2.2.5, stripped
+Hardcoded C&C, known Turla activity: news-bbc.podzone[.
+]org
+The domain has the following pDNS IP: 80.248.65.183
+
+Note: the C&C domain is currently sinkholed by Kaspersky Lab.
+The sample is a stealth backdoor based on the cd00r sources.
+This Turla cd00r-based malware maintains stealth without requiring elevated privileges while running arbitrary remote commands.
+It can’t be discovered via netstat, a commonly used administrative tool.
+It uses techniques that don’t require root access, which allows it to be more freely run on more victim hosts.
+Even if a regular user with limited privileges launches it, it can continue to intercept incoming packets and run incoming commands on the system.
+To start execution, the process requires two parameters: ID (a numeric value used as a part of the “magic packet for authentication”) and an existing network interface name.
+The parameters can be inputted two different ways: from STDIN, or from dropper a launching the sample.
+This is NOT a command-line parameter, it’s a real prompt asking the attacker user to provide the input parameters.
+After the ID and interface name are entered and the process launched, the backdoor’s process PID is returned.
+Here is a screenshot of this simple interface:
+While there is no initial network callback, a section of code maintains a hardcoded c2 string “news-bbc.podzone[.]org”.
+This fully qualified domain name was first set up in 2010, suggesting that this binary is fairly recent in the string of Turla campaigns.
+Also, while we haven’t seen additional file download activity from this server by this tool, it likely participated as a file server of sorts.
+The module statically links PCAP libraries, and uses this code to get a raw socket, applies a filter on it, and captures packets, checking for a specific condition (the *original cd00r first used this method, based on ports and SYN-packets).
+This condition is expressed here (it is based on the ID value input at startup by the attacker):
+In simple terms, it checks for an ACK number in the TCP header, or the second byte from the UDP packet body.
+If such a packet is received and the condition check is successful, execution jumps to the packet payload contents, and it creates a regular socket.
+The backdoor handles this socket as a file with read/write operations.
+It’s not the typical recv/send used in this code.
+It uses this new socket to connect to the source address of the “magic packets”.
+Then it reports its own PID and IP to the remote address, and starts an endless loop for receiving remote commands.
+When a command arrives, it is executed with a “/bin/sh -c ” script.
+Further analysis of the sample’s functionality will be updated here.
+Although Linux variants from the Turla framework were known to exist, we haven’t seen any in the wild yet.
+This specific module appears to have been put together from public sources with some added functionality from the attackers.
+Some of the malicious code appears to be inactive, perhaps leftovers from older versions of the implant.
+Perhaps the most interesting part here is the unusual command and control mechanism based on TCP/UDP packets, as well as the C&C hostname which fits previously known Turla activity.
+The discovery of this Turla module rises one big question: how many other unknown Turla variants exist?
+Update: Since the publishing of this blogpost, we have discovered another Linux Turla module, which apparently represents a different malware generation than the previously known samples:
+The new sample was heuristically detected by our product due to similarities with the previously discovered samples.
+Your email address will not be published.
+Required fields are marked *
+ Save my name, email, and website in this browser for the next time I comment.
+Notify me when new comments are added.
+“without requiring elevated privileges” “links PCAP libraries, and uses this code to get a raw socket”
+You’re very confident about this.
+However my understanding was you can’t capture packets / open raw sockets without root.
+Are you going to elaborate on it?
+If the code it is build into code RUNS as root, you certainly can capture packets and open sockets though.
+And hell no I am not personally elaborating, or some 12 year old will write another one lol.
+cd00r is hardly new or sophisticated………… we’re talking about circa 2002 rootkit technology….. why all the excitement?
+RAW socket access is supposed to need at least CAP_NET_RAW capabilities.
+So not strictly root, but in practice, of course, it starts from there.
+How does this malware get onto a linux system in the first place?
+what is the attack vector?
+So, the $64 000 question:  How can we check for and, if necessary, take evasive action against this threat?
+Your best bet would be to blackhole the domain listed as hardcoded C&C domain.
+The IP, in fact, has already changed from what is published here, so trying to blackhole that IP address would be useless.
+If that domain either resolves to the localhost address, or possibly doesn’t resolve, then as the trojan would be unable to contact its C&C host, it would presumably shut down, or, at the very least, fail to take any further instructions.
+Thanks for finding and describing this threat.
+How do we defend against it?
+There’s no mention of this very important topic.
+Being an security expert this seems like a strange oversight on your part.
+…probably keep with the software updates, as much as possible anyway.
+The article states that it hasn’t been seen yet “in the wild”, so it probably is most likely not running on your local desktop.
+That said, should it become something worth worrying about, I’m hoping that there will be some kind of patch  or detection mechanism from the usual linux players – Red Hat, Ubuntu, etc.
+I think the instructions are quite clear: 1) be aware, 2) don’t panic.
+It seems as a hoax.
+Be carefull about this hystery.
+Unless it is verified it means nothing.
+Thats only way how to decrease linux market share for servers and growing desktop interest – with FUD and uncertainty.
+Yes, linux is much more secure than windows that it is not worth to do antivirus for it.
+Without viruses lot of companies will loose their job.
+isnt that (#) root shell was used to start the troyan?
+Again again and again the Eugeny Kasperskiy epic fail!
+Quick & Dirty way to check:
+find $( mount|awk ‘$5~/ext/{print $3}’ ) -xdev -type f -size +600k -size -800k -exec md5sum {} \+ | grep -E ‘0994d9deb50352e76b0322f48ee576c6|14ecd5e6fc8e501037b54ca263896a11|19fbd8cbfb12482e8020a887d6427315’
+simple enough but this late at night i would not have figured any more.
+Good idea but I’m getting errors on Fedora 20 (tried before trying it on Centos):
+awk: cmd.
+line:1: ^ invalid char ‘�’ in expression
+bash: 14ecd5e6fc8e501037b54ca263896a11: command not found…
+bash: 19fbd8cbfb12482e8020a887d6427315′: command not found…
+Granted, I’m no awk expert … executed as root and have not tried to troubleshoot it.
+So let me get this straight, you are not fully aware of what the code does but yet you decided to run it as root?
+Living on the edge indeed.
+You don’t need to be an awk expert to notice that either the web-software or the poster inadvertently created “mixed” quotes.
+All statements that should be enclosed in a pair of single-quotes seem to be using an opening back-tick and a closing single quote …
+And looking at my own response it’s the web-software that stuffed up, I used the SAME variety of double quotes above.
+@Craig, the command works, but you must change ‘ (u+2018) and ’ (u+2019) to ‘ (simple apostrophe sign) …
+but still it needs sudo, because it searches all your data for files of size between 600 and 800 kB and of name containing either 0994d9deb50352e76b0322f48ee576c6 or 14ecd5e6fc8e501037b54ca263896a11 or 19fbd8cbfb12482e8020a887d6427315
+find $( mount|awk ‘$5~/ext/{print $3}’ ) -xdev -type f -size +600k -size -800k -exec md5sum {} \+ | grep -E ‘0994d9deb50352e76b0322f48ee576c6|14ecd5e6fc8e501037b54ca263896a11|19fbd8cbfb12482e8020a887d6427315’
+Why is the process started as a root user ?
+If you say there is no need for root access, it could have been started by a normal user.
+It needs to be installed somehow as a kernel module and only a root user can do that.
+Regular users don’t have the ability to do that.
+If it’s a system process it doesn’t need “root” because the system is doing it (just like you don’t need “root” to start your computer).
+I wonder if they’re using “insmod” to insert the Turla code into kernel space.
+It would take someone with root access to do that but once it’s in there it needs no escalating and, depending upon the mod code, could pretty much have the run of the system.
+This is only Microsoft and its Trolls FUD campaign to discredit Linux !!
+hi  I have just started ,I want to ask a  question,When analyzing a Linux malicious code,What’s the matter with your IDA mark those functions?
+youself make ida sig  to linux lib?
+This is not FUD, this is stupidity and illiteracy!
+It’s possible they took advantage of a know kernel error in which takes advantage of an error when RAM space is created or something like that, that allows privileges to be esculated
+The hottest research right in your inbox
+While investigating a recent rise of attacks against Exchange servers, we noticed a recurring cluster of activity that appeared in several distinct compromised networks.
+With a long-standing operation, high profile victims, advanced toolset and no affinity to a known threat actor, we decided to dub the cluster GhostEmperor.
+We discovered a campaign delivering the Tomiris backdoor that shows a number of similarities with the Sunshuttle malware distributed by DarkHalo APT and target overlaps with Kazuar.
+This is our latest summary of advanced persistent threat (APT) activity, focusing on significant events that we observed during Q2 2021: attacks against Microsoft Exchange servers, APT29 and APT31 activities, targeting campaigns, etc.
+We recently came across unusual APT activity that was detected in high volumes, albeit most likely aimed at a few targets of interest.
+Further analysis revealed that the actor, which we dubbed LuminousMoth, shows an affinity to the HoneyMyte group, otherwise known as Mustang Panda.
+The hottest research right in your inbox
+© 2021 AO Kaspersky Lab.
+Registered trademarks and service marks are the property of their respective owners.
+The hottest research right in your inbox

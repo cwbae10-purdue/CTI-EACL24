@@ -1,0 +1,199 @@
+Deep Analysis of TinyPos from the Clop Gang’s Crime Scene | S2WLAB Talon
+Author: hypen(Sojun Ryu), S2WLAB Talon
+This report is published in collaboration with Theori.
+Clop ransomware is well-known enterprise-targeted ransomware that has been active since early 2019.
+Clop ransomware is an ongoing threat actively attacking the world.
+TA505, known as the operator of Clop ransomware, has been targeting the financial sector since 2014.
+Many experts and reports from them have asserted that there is a strong correlation between Clop ransomware and the TA505 threat actor.
+By posting 13 victims as a starter, Clop ransomware has launched a leak site titled “CL0P^_- LEAKS” around March 2020.
+One of the main purposes of running the leak site is to threat victim companies with their stolen data containing sensitive and confidential information which will be exposed to the public (Dark Web) if ransom negotiation fails.
+We have observed that TA505 used TinyPoS malware while performing the Clop ransomware attack during the recent incident response.
+TinyPoS is the malware discovered in 2015 when PoS malware was on its prevalence.
+This malware is a ‘Memory Scraper’ that targets PoS (Point-of-Sale) or ATM in order to steal Track 1 or Track 2 data from the process memory.
+TinyPoS exfiltrates stolen data through the network or saves the data as a file, and the latter was used in this incident.
+The adversary continuously attempted to collect the hijacked data after storing it at the main collection server located inside the victim’s company.
+While investigating past cases related to TinyPoS, we confirmed additional connections with not only Clop ransomware but DoppelPaymer and ProLock Ransomware.
+We have evidenced that TinyPoS has been deployed from the servers that were used by DoppelPaymer.
+Moreover, there is a high similarity between TinyPoS and ProLock when decoding the binary before execution.
+The above examples show that cybercriminals are cooperating somehow and that adversaries targeting the financial sector in the past are continuing to attempt to steal card data.
+Besides, TinyPoS steadily appears in PoS-related incidents according to the report published by VISA.
+The report emphasizes that there are still threat actors attempting to steal card data and it is necessary to review and rebuild our defense line to ensure that we are well prepared for such attacks.
+We hope you find this report to be helpful when researching these malware and threat groups.
+The card data that PoS malware attempts to steal usually represents Track 1 or Track 2.
+It is stored in the Magnetic Stripe on the back of the card.
+It contains important data such as card number, expiration date, and owner’s name.
+The card data that PoS malware attempts to steal usually represents Track 1 or Track 2.
+It contains important data such as card number, expiration date, and owner’s name.
+Track 1 includes the card number, owner name, expiration date, etc.
+Track 2 is almost identical to Track 1 data, but the owner’s name is not included.
+The majority of credit card payment systems utilize Track 2 data since it only contains the necessary information for transactions as well as authentication.
+Upon leakage, Track 2 data is known to be the most popular data traded at Deep/Darkweb because it can be utilized to create fake cards.
+TinyPoS is a very small size within 8KB and operates inside memory as assembly or binary form, so it needs a launcher and loader to execute it.
+The adversary used various methods for this, and each method is as follows.
+In the case of TinyPoS, it steals data from memory in real-time.
+The adversary periodically executes the malicious code using the scheduler.
+It has been confirmed that the scheduler registration is mainly executed by the command of the previously inserted remote control malicious code or through a batch file, and the launcher that runs TinyPoS is composed of Powershell.
+TP-Case-1 created a PowerShell script file to run TinyPoS, and TP-Case-2 saved TinyPoS binary data as a file.
+In TP-Case-3, TinyPoS was hidden in a file disguised as a regular file.
+The adversary created all three cases by disguised as a commonly used file name or a file name similar to the file being used by the compromised server.
+The executed TinyPoS can read the memory of the specific process that the adversary commanded or access every memory of the process that is not stated in the exclusion list in order to search for Track 1 and Track 2.
+After verifying the expiration date of the extracted data, the expired data is excluded.
+After that, only data verified by the Luhn algorithm is finally taken.
+We have evidenced some of TinyPoS techniques used by the adversary attempting to target only SQL Server process (sqlservr.exe) for the purpose of stealing data.
+sqlservr.exe is a well-known process for managing MS-SQL.
+In this sense, it can be regarded as the adversary’s intention to steal card data from MS-SQL.
+The Track 1 and 2 stored in the SQL Server database can be stolen from the memory in the following three cases.
+The adversary installed and removed various types of TinyPoS malware in the victim server.
+While staying at the victim server, the task name and log file path were continuously changed and installed.
+This allowed us to ingest files that the adversary did not accidentally delete.
+There were 3 cases of TinyPoS installation, but it is possible that there were actually more versions.
+It was confirmed that all cases were registered and operated in the scheduler through batch scripts or commands.
+[TP-CASE-1]TP-CASE-1 TinyPoS was included in PowerShell scripts, and the adversary used it around a year.
+Tasks registered with a batch file execute a PowerShell script file containing TinyPoS every 6 hours.
+In the log file generated by TinyPoS, the detected Track 1 and 2 data and the detected process name are recorded line by line.
+It is initially presumed that the adversary performed the lateral movement and installed each one by one because the Powershell script file name, log file path, and file creation time were also different for each affected server.
+C:\WINDOWS was mainly used for TinyPoS file creation and log file creation path.
+In the PowerShell script, the TinyPoS is stored as a byte array data type, and the adversary added and used the WaitForSingleObject function for synchronization in the “shellcode_injection_expanded.powershell” of social-engineer-toolkit published on GitHub to load it into memory.
+Most of the scripts contain only the 64bit version of TinyPoS, but some also include the 32bit version.
+Besides, there is a version that searches memory by targeting only the sqlservr.exe process, and all other than this searches memory based on the excluded process list.
+[TP-CASE-2]The second form of TinyPoS is to save as binary as a file.
+Since detection evasion techniques such as packing or obfuscation are not applied at all, this form is easy to detect by vaccines, and there is a high probability of being detected by engineers.
+The adversary created a file with the name “readme” disguised as an ordinary file, and it is presumed that TP-Case-2 was used only for the shortest time due to the risk of detection.
+Unlike in TP-Case-1, the working path was changed to C:\ProgramData, and both 32bit and 64bit versions were included in a single file.
+The third form is to save the shellcode in an XML file disguised as a scheduler.
+When a task is registered in the task scheduler, a file in the same XML format as the task name is created in the path C:\WINDOWS\System32\Tasks.
+Settings related to work are saved in the file.
+The adversary registers a task that reads and executes timesync.xml under the name “timesync”.
+The timesync.xml file was created by adding TinyPoS to the XML data related to the timesync task.
+The timesync.xml created by the adversary has the same data as the regular working file when opened with an editor.
+Since the added shellcode part is not visible in the form of a string.
+In TP-Case-3, unlike TP-Case-1, TinyPoS is loaded with a script partially modified from DKMC’s “exec-sc.ps1” published on Github.
+Also, the offset is classified according to whether it is 64bit, and TinyPoS suitable for the target OS is read from timesync.xml.
+There have also been changes in the list of excluded processes.
+The list of excluded processes from other TP-Cases is mainly composed of general processes.
+However, in TP-Case-3, the adversary checked the collected data and its source process.
+After that, unnecessary processes inside the actual target server were included in the list of excluded processes.
+Only some codes were encoded in the early version of TinyPoS, but from TP-Case-2, the main code located at a specific offset is decoded by XOR and then executed.
+This process is repeated until a specific 4-byte value (0xCFCFCFCF) comes out.
+Afterward, a mutex is created to prevent duplicate execution.
+TinyPoS attempts to read all the running processes of memory except for specific processes listed by TinyPoS in order to collect the card data.
+When reading the memory, it only reads the page lists that matches a certain condition in table below.
+For TP-Case-2 and 3, PAGE_READWRITE and MEM_PRIVATE are not checked.
+The flow chart of the track 1 and 2 data extraction and verification process in memory is described in below.
+When searching Track 1, for a wider search, it searches for 120 bytes, which is 40 bytes larger than the maximum length defined in the standard, and Track 2, it searches for 40 bytes, which is the same as the standard maximum length.
+After going through the above process, refined data containing actual information is extracted, excluding the starting characters such as ‘%’ or ‘;’ and the LRC value.
+After that, set the buffer in the format of ‘[Track Data] *[Process]**xx[LocalIP]\[ComputerName]’ by combining the local IP of the running server and the computer name, and then XOR-encode the data in units of 8 bytes using the value 0x6d2a1f3cb26e0c9f as a key.
+An 8-byte identification value of 0x20202020DD0ADD0A is added to the finally encoded data, then saved in a log file.
+After that, the next memory is searched and the process of extracting and verifying data in Track 1 and 2 is repeated.
+As a result of comparing various versions, an adversary’s mistake was found in the initial code.
+In TP-Case-1, the search length of Track 1 was 60 bytes, and the search length of Track 2 was 120 bytes.
+It was reversed in size and was fixed in a later version.
+We’ve noticed parser error of card data as it counts the space in between the strings of 15 to 16 numbers.
+For instance, if there is ‘[8 numbers][multiple spaces][7 numbers]=’, this pattern is recognized as a card number or card data that successfully runs through the validation process and stored in the log file of TinyPoS.
+An attempt to steal card data targeting database-related processes such as MICROS Database Service (resdbs.exe), SQL Server (sqlsvr), and MySQL (mysqld) was already used by TinyPoS which implies that this method of exfiltration has been adopted at some point in the past.
+Even if a specific data is deleted through a database query, depending on the type of DB, the data deleted by the query may still remain in the DB file, such as “mdf” for MS-SQL.
+The adversary already recognizes these characteristics and attempts to exfiltrate.
+Thus, in the case of TA505, we firmly believe that this notorious threat actor behind the clop ransomware recognized the above circumstances.
+Therefore, we advise in the case of DBA (Database Administrator) dealing with sensitive data, it is necessary to understand and recognize these databases’ forensic characteristics when operating the system.
+Track 1 and 2 data standards follow the international standard ISO/IEC 7813.
+According to this standard, items such as PVKI, PVV, and CVC are included in the Discretionary Data part.
+In practice, it is structured in the form of a combination of the cardholder verification code and a one-way hash value generated by combining information such as card number and expiration date.
+Also, the CVV (Card Verification Value) stored in Track 2 is a number for checking the integrity of Track data, called CVV1, and has a different value from CVV2 marked on the actual card used for online transactions.
+Therefore, in most online shopping malls that require CVV2, making a payment with only Track 2 data is impossible.
+Some shopping malls do not request CVV2 information as in quick payment, but there must be additional information given in alternation with not providing CVV2.
+However, after going through some processes with Track 2, it is possible to use the duplicated card offline.
+Special hardware equipment and programs are required to duplicate a card, which can be requested to a third party through Deep Web/Dark Web.
+Since there are flooding number of carding forums already exist and are active, this is not bothered at all.
+Therefore, the card information is one of the data actively traded.
+Card data stolen by an adversary can be exploited directly, but it can be sold on dark web forums or carding forums to reduce the risk of using duplicate cards offline.
+If data is sold in this way, since it is leaked to a person who is willing to abuse it, payment by a third party may occur afterward, resulting in actual damage due to the card leakage accident.
+In the early days of Clop ransomware, CobaltStrike and FlawedAmmyy were used.
+FlawedAmmyy is a remote control tool developed by exploiting a specific remote management solution’s source code.
+It has been used before TA505 that has been utilized as a Clop ransomware attack; nevertheless, both FlawedAmmyy and Clop ransomware has been packed by the identical packing, also a few features of malicious code was signed by an identical certificates.
+Afterwards, the attack was attempted using Amadey Bot, SDBbot, Get2, FlawedGrace, etc.
+Clop ransomware targets the AD environment and is distributed in bulk after taking over administrator privileges.
+Azorult, which has been packed with the same custom packer as Clop ransomware, also has a function to steal credit card information.
+However, Azorult focuses on collecting digital footprint data such as infected device information, browser information, and coin wallet information rather than credit card information itself.
+In addition, since credit card information is also collected from the data stored in the Chrome browser through the query seen in the below, it performs slightly different role than TinyPoS intensively steals Track 1 and 2 data.
+AbaddonPoS is a PoS malware coined its term by Proofpoint in November 2015.
+On January 2016, Foregenix reports a malware called TinyPoS, and the known difference in functionality between the two malware was not significant.
+Only difference was the way of implementation; AbaddonPoS has the shellcode encoded inside, while TinyPoS did not encoded.
+In addition, TinyPoS controls the thread branch with the values 0xC0C0C0C and 0xF0F0F0F.
+This has been also mentioned by Trendmicro through the report released on May 2016.
+A similar PoS malware, called PinkKite, was issued in 2018, but in April 2019, Forcepoint’s report stated that the difference between TinyPoS and PinkKite seem very similar except whether the leaked information is flowed to the network or stored as a file.
+Further analysis was not doable due to lack of PinkKite hash.
+In other words, AbaddonPoS and PinkKite can be seen as the same cluster of malware as TinyPoS.
+It was also referred to as “TinyPoS or PinkKite” in a report by CarbonBlack in May 2020.
+Initially some differences prevailed, however making the distinction between TinyPoS and AbaddonPoS lacked a point after Proofpoint stating TinyPoS as a type of AbaddonPoS.
+After 2018, this difference has disappeared and is used in the same manner as TP-Case-1, 2, and 3 as mentioned above implicating that TA505 is likely to have purchased and used the TinyPoS from a third party.
+According to CrowdStrike’s report, the attack group that produced TinyLoader and TinyPoS was named Tiny Spider and classified them as a separate group.
+TinyLoader is a downloader malware released by Proofpoint along with TinyPoS (aka.
+TinyLoader was used as a downloader for TinyPoS for approximately 4 years until the end of the year 2019.
+TinyLoader is composed of the same anti-debugging and obfuscation code as TinyPoS, and according to TrendMicro, each module that performs screen capture and process information collection can be additionally downloaded from the C&C server.
+The additional module download method is performed through the payload in charge of HTTP communication, and TinyPoS is also downloaded in the identical method.
+According to Talos’ report released in November 2019, DoppelPaymer, TinyPoS, SVCHOST SAMPLE, etc., were distributed from the same server.
+As a result of our analysis, SVCHOST SAMPLE was identical to TinyLoader.
+That is, TinyLoader, TinyPoS, and DoppelPaymer were distributed together from one server.
+At that time, the distributed TinyPoS was TP-Case-1.
+Through this, it was confirmed that the Powershell-type TinyPoS execution method was used in other incidents after at least April 2019.
+Since TinyLoader is also distributed from the same server, it is assumed that TinyPoS of TP-Case-1 is also installed through TinyLoader.
+Furthermore, PsExec was discovered from the same server.
+For that reason, the attack flow at that time was as follows.
+PsExec → [TinyLoader] → TinyPoS → DoppelPaymer
+However, according to the result of our recent incident response, the attack flow has been changed slightly as follows.
+PsExec → [TinyMet or CobaltStrike] → TinyPoS → Clop ransomware
+In addition, it was confirmed that Vawtrak derived from Gozi downloaded TinyLoader, and it has evolved into malware called IcedID.
+According to CrowdStrike, the IcedID malware is currently run by the Lunar Spider, and it has been confirmed that TinyLoader was distributed from the IcedID in 2019 following the Vawtrak malware in 2015.
+According to Talos’s report mentioned above, DoppelPaymer ransomware was also distributed from the same server.
+DoppelPaymer is very similar in source code to BitPaymer ransomware.
+ESET reports that BitPaymer and Dridex malware are related in several ways.
+As a result, it was revealed that the same developer produced the two different malware.
+Also, the analysis results of CrowdStrike show that Dridex malware and BitPaymer ransomware were found in identical incidents which strengthens the fact that it must be the same developing group.
+8 months later, an analysis report released by CrowdStrike revealed that DoppelPaymer was derived from BitPaymer.
+Some Evil Corp personnel that developed Dridex were separated into a threat group called Doppel Spider and attempted an attack using DoppelPaymer.
+It is also known that the group developed DoppelDridex, known as Dridex 2.0 version.
+The overall information can be seen in CERT-FR’s CTI report.
+Currently, Evil corp is mainly used to refer to the Indrik Spider, and it attempts to attack using WastedLocker instead of the BitPaymer.
+No assurance can be stated that Doppel Spider has purchased these tools from Tiny Spider that operates TinyLoader and TinyPoS, however, we can assume close relation between the two organizations by the above-mentioned facts.
+After TP-Case-1 was mentioned in the November 2019 Talos report, TinyPoS reappeared in the report released by CarbonBlack in May 2020.
+Although the PowerShell script is slightly different, it is assumed to be of the TP-Case-3 type.
+Malware mentioned in this report also appeared in VISA analysis report on September 2020.
+Through this, we assume that the change was made from TP-Case-1 to TP-Case-3 over the course of six months.
+Norfolkinfosec confirmed the above information and conducted further analysis, revealing that the decoding code pattern of TinyPoS is the same as that of ProLock ransomware except the check value of TinyPoS is ‘0xCFCFCFCF’, while ProLock is ‘0xC4C4C4C4’.
+The IoC released by Norfolkinfosec contains ProLock malware with the same file name as the “readme” of TP-Case-2 described in this report.
+Group-IB released its analysis report for ProLock in May 2020.
+The PowerShell script that executes ProLock is almost the same as the one used when executing TP-Case-3.
+And, the batch scripts that register the scheduler task in TP-Case-1 and 3 are also mentioned in the Talos report.
+Finally, we have confirmed the similar features between two malware, ProLock and TinyPos.
+Primary work path (C:\ProgramData) 2.
+Hard-coding pattern of search target process list5.
+Initially Distributed in PE form and then as a binary blob7.
+The use of ‘*’ for buffer initialization (ProLock) and delimiter (TinyPoS )
+In conclusion, it is highly likely that these results are derived from the same developer.
+We can assume that Tiny Spider has also started the ransomware business with ProLock but the client seems to moved to Egregor ransomware due to issues associated with ProLock.
+As the spread of IC (integrated circuit) cards increases, the damage to companies or financial sectors caused by PoS malware is gradually decreasing.
+However, card data that cannot be identified where it was stolen is being traded on the DDW (Deepweb and Darkweb).
+Even if a firm securely manages the card data and the related device, if the backed-up data in the past is not properly managed, an adversary can target this gap and steal important information.
+Usually, card data theft is secretly and continuously performed so that victims cannot notice it immediately, so it is not easy to determine whether there is an infection.
+TinyPoS is frequently found in many other card data theft incidents as well as ransomware incidents related to DoppelPaymer and Clop.
+In this attack, the adversary continuously used various versions of TinyPoS, updating the code in a frequent manner, such as changing the list of processes to be collected and amending the minor mistakes in a prompt manner.
+It means that the developers of TinyPoS have sold the source code or are working closely with buyers.
+Countless cybercrime threat actors are already increasing the cybercrime scale by cooperating by selling each other’s resources.
+As ransomware attack organizations increase and the cyber black market grows, cooperation among these criminal organizations will continue.
+Cybercriminals encrypt crucial files in the enterprise, by extorting money as hostages for stolen confidential information or customer data.
+These ransomware gangs will come up with various ways to acquire cash besides the existing attack methods using only ransomware.
+In the early days of ransomware, encrypted files were used as bait.
+Since then, the entire MBR was encrypted, the negotiation amount increased over time, targeting companies with relatively sufficient funds and attacking high-level executives.
+Various strategies are emerging each time.
+Most recently, there have been threats to attempt a DDoS attack if the negotiations are not accepted.
+The hijacking of card data is one of these strategies, and if it is successful, the adversary can request a higher amount of money from the victim.
+Even if negotiations fail, the stolen card data can benefit.
+In addition to TA505 in this report, FIN6 also has malware such as Ryuk, LockerGoga ransomware, and GratefulPoS.
+We confirmed that Revil (Sodinokibi) operator is also interested in PoS software.
+Ransomware gangs that are good at infiltrating and stealing data continue to stay within the enterprise and seek valuable assets.
+They will use a variety of strategies to monetize these data.
+These attempts will increase in the future, and ultimately, adversaries will continue to think about ways to make more money.
+Click Images and check the text version of each IoC
+S2W is a big data intelligence company specialized in the Dark Web, Deepweb and any other covert channels.
+S2W is a big data intelligence company specialized in the Dark Web and Crypto currencies.
+S2W is a big data intelligence company specialized in the Dark Web, Deepweb and any other covert channels.

@@ -1,0 +1,98 @@
+ESET researchers describe the latest components used in a recent Sednit campaign
+While summer is usually synonymous with vacations, it seems that the Sednit group has been developing new components to add to the Zebrocy malware family.
+The Sednit group – also known as APT28, Fancy Bear, Sofacy or STRONTIUM – has been operating since at least 2004 and has made headlines frequently in recent years.
+On August 20th, 2019, a new campaign was launched by the group targeting their usual victims – embassies of, and Ministries of Foreign Affairs in, Eastern European and Central Asian countries.
+This latest campaign started with a phishing email containing a malicious attachment that launches a long chain of downloaders, ending with a backdoor.
+An example of such an email was uploaded to VirusTotal on August 22nd, two days after the mail was delivered.
+An overview of the attack vector was recently published by Telsy TRT.
+However, we have some further pieces of this puzzle that could help to draw a more complete picture of the campaign.
+As predicted by other fellow researchers, the Sednit group added a new development language in their toolset — more precisely, for their downloader: the Nim language.
+However, their developers were also busy improving their Golang downloader, as well as rewriting their backdoor from Delphi into Golang.
+Figure 1 depicts the different steps leading to a victim being compromised, from the malicious email initially received in the inbox to the backdoor deployed on targets deemed “interesting enough” by the operators.
+When a victim is targeted by Zebrocy’s components, the chain is usually quite loud.
+Loud because, in this case, the victim has at least six malicious components dropped on the computer before the final payload is executed.
+Such activities can easily raise different types of flags for a security product.
+The document attached to the phishing email is blank, but references a remote template, wordData.dotm, hosted at Dropbox.
+Opening this document in Word causes it to download wordData.dotm, as seen in Figure 2, and to incorporate it into the associated document’s working environment, including any active content the template may contain.
+Empty word document downloading a remote template
+The wordData.dotm file contains malicious macros that then are executed.
+(Depending on the Microsoft Word version, the VBA macros may be disabled by default; if so, user action is required to enable them.)
+It also contains an embedded ZIP archive that the macros dropped and extracted.
+As shown in Figure 1, the macros in wordData.dotm open another document (lmss.doc that was unpacked from the archive extracted from wordData.dotm).
+Macros in lmss.doc execute lmss.exe (Zebrocy’s new Nim downloader, also extracted from the archive embedded in wordData.dotm) instead of wordData.dotm executing the downloader directly.
+However, it’s important to notice that lmss.doc, containing the VBA code that executes the new Nim downloader, also embeds a base64-encoded executable.
+According to its Document Properties, lmss.doc was created in January 2019 and modified on August 20th, a few hours before the campaign started.
+Creation and last modification dates of  lmss.doc
+The executable embedded in lmss.doc is an AutoIt downloader (SHA-1: 6b300486d17d07a02365d32b673cd6638bd384f3) used in the past for a campaign performed around the creation time of lmss.doc.
+Here, the AutoIt downloader is ignored and doesn’t have any purpose other than making the size of the document bigger.
+The operator probably forgot to remove the previous embedded downloader – it would not be the first time that Sednit operators have made mistakes.
+Sednit operators have used several downloaders written in different languages.
+This campaign uses the most recent extension of that list – a downloader written in the relatively new language, Nim.
+It’s a straightforward download-and-execute binary with two small details added.
+The first is probably used as an anti-sandbox trick and it checks that the first letter of the executed file (letter l here or 0x6C in hex) has not changed.
+The second is a kind of obfuscation where the operator replaces placeholder letters in a string with the correct ones, at defined offsets.
+As seen in Figure 5, the downloader reconstructs the correct download URL string with this method to avoid basic static analysis tools that could otherwise locate the URL string.
+Hex-Rays output of the strings deobfuscation
+For example, the string o-ps-c..ll is “patched” at three offsets by s, v and d, respectively, to give ospsvc.dll.
+In the case of the URL, since the beginning of the string in the downloader is h@@p://, tools looking for http:// won’t catch it.
+The Nim downloader fetches its dynamic-link library (DLL) payload, named ospsvc.dll, to C:\ProgramData\Java\Oracle\, and executes it as a service via regsvr32 /s.
+ospsvc.dll is a downloader written in Golang, and different from other Sednit downloaders seen in the past.
+Sednit’s previous Golang downloaders have been described in detail by other researchers [1][2][3] and it seems that Sednit’s developers have rewritten their previous Delphi downloader in Golang.
+Those earlier downloaders gather a lot of information about the victim computer and send it to their C&C server.
+However, this new one is quite light in terms of its data-gathering capabilities, as described below.
+Its function main_init() contains libraries that are initialized and don’t need further explanations due to their names (see this article for more information).
+Hex-Rays output of initialized functions in the  main_init() using the IDAGolangHelper plugin
+Since the DLL is run as a service, via the Nim downloader, we need to look at main_DllRegisterServer() instead of main_main().
+The strings and the key are stacked and they can be decrypted using a simple XOR loop.
+This simple encryption is quite efficient against tools that extract strings stacked from binaries statically.
+IDA Pro output of encrypted strings stacked
+Aside from downloading the next stage of the malware, taking screenshots of the victim’s desktop and executing commands received from the C&C server are the main functions of this malware.
+Screenshots are taken every 35 seconds during the first few minutes of this downloader’s execution, and then they are sent to the C&C server in base64-encoded form.
+The hostname and the %USERPROFILE% values are also sent to the C&C server encoded in base64.
+The reply from the C&C server is also straightforward: it’s a concatenation of base64-encoded strings, separated by “|”.
+<spaces>|<cmd to execute>|<name of the binary to drop>|<binary to drop>
+According to our telemetry, this downloader has been used to execute three different pieces of malware.
+The first one is the dumper that we described in our previous Zebrocy article.
+The second one is the usual Delphi backdoor – also run as a service via the same command used by the Nim downloader.
+The third one we saw is a new backdoor downloaded and executed on the victim’s machine, as described in the next section.
+The new Zebrocy backdoor is not written in Delphi as we are used to, but in Golang.
+To the best of our knowledge, this is the first time this backdoor has been seen, but it shares a lot of similarities with the Delphi one.
+By looking again at the main_init() function’s library initialization code (Figure 8) we can see new entries.
+An AES algorithm, hex encoding, and screenshot capabilities are the main entries that were added.
+Diff between the backdoor and the downloader functions initialized in the main_init()
+Notice that image_png_init replaces image_jpeg_init for taking screenshots.
+Images in JPG format are usually smaller in size than the PNG format.
+The backdoor is started with an argument that is a hex-encoded string.
+All but the last six-byte chunk of this string is XOR-encrypted with the key stored in the last six bytes of the string.
+The following python snippet describes the decryption logic.
+It’s the address of the C&C server, which is later encrypted and stored on disk.
+That encryption is done using the AES-128 ECB algorithm with a key generated from the hostname.
+Hence, there is no possibility to obtain this C&C server just by looking at the binary.
+There is no persistence defined by the downloaders as we have seen in the past, nor does the backdoor have any persistence mechanism.
+This new backdoor has various capabilities that were also previously seen in Zebrocy’s Delphi backdoor:
+As in the Delphi backdoor, there is a very limited set of commands – but the ability to execute arbitrary commands via cmd.exe extends possibilities like persistence or information gathering.
+Another similarity found is a three-digit version number (in the format x.y.z); the current major version is 4.y.z.
+The network protocol shares some similarities with the Delphi version of the backdoor.
+The first interaction with the C&C server retrieves an AES 32-bit key to encrypt future communications.
+They were previously used by the Delphi backdoor in its network protocol; it also uses the AES algorithm to encrypt the pseudo body (content after the Content-Type data).
+Notice that even if Content-Disposition and the second instance of Content-Type are real HTTP headers, here they are used inside the HTTP message body.
+The boundary field is randomized for every exchange and the filename field inside the pseudo Content‑Disposition header can be decrypted with the following snippet of Python:
+which results in the following string:
+That string can be further understood thus:
+Username: 757365722D5043
+SID*: 181620
+Date: 20190821151055
+Random: 207C.inc
+* 6 bytes comes from the current user’s Security Identifiers (SID) S-1-5-21‑xxxxxxxxx‑yyyyyyyyyy‑zzzzzzzzzz‑1000
+Further interactions with the C&C server follow this pattern except that the pseudo body, which is 1 in the example above, is replaced by the output of the command requested by the C&C server.
+The full message body is also encrypted, using the same AES algorithm used previously, with the key provided in the first exchange.
+New downloaders, new backdoor – the Sednit group has been active and is not letting their components get too old.
+By looking at it, it seems that the Sednit group is porting the original code to, or reimplementing it in, other languages in the hope of evading detection.
+It’s probably easier that way and it means they do not need to change their entire TTPs.
+The initial compromise vector stays unchanged, but using a service like Dropbox to download a remote template is unusual for the group.
+ESET recommends being attentive when users are opening attachments from suspicious emails.
+We will continue to monitor new activities from the Sednit group and will publish relevant information on our blog.
+For any inquiries, contact us at threatintel@eset.com.
+[1] https://unit42.paloaltonetworks.com/sofacy-creates-new-go-variant-of-zebrocy-tool/
+[2] https://securelist.com/a-zebrocy-go-downloader/89419/
+[3] https://www.vkremez.com/2018/12/lets-learn-dissecting-apt28sofacy.html

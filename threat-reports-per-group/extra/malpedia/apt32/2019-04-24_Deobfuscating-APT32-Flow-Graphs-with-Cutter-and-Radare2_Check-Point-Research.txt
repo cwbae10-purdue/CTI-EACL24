@@ -1,0 +1,147 @@
+The Ocean Lotus group, also known as APT32, is a threat actor which has been known to target East Asian countries such as Vietnam, Laos and the Philippines.
+The group strongly focuses on Vietnam, especially private sector companies that are investing in a wide variety of industrial sectors in the country.
+While private sector companies are the group’s main targets, APT32 has also been known to target foreign governments, dissidents, activists, and journalists.
+APT32’s toolset is wide and varied.
+It contains both advanced and simple components; it is a mixture of handcrafted tools and commercial or open-source ones, such as Mimikatz and Cobalt Strike.
+It runs the gamut from droppers, shellcode snippets, through decoy documents and backdoors.
+Many of these tools are highly obfuscated and seasoned, augmented with different techniques to make them harder to reverse-engineer.
+In this article, we get up and close with one of these obfuscation techniques.
+This specific technique was used in a backdoor of Ocean Lotus’ tool collection.
+We’ll describe the technique and the difficulty it presents to analysts — and then show how bypassing this kind of technique is a matter of writing a simple script, as long as you know what you are doing.
+The deobfuscation plugin requires Cutter, the official GUI of the open-source reverse engineering framework – radare2.
+Cutter is a cross-platform GUI that aims to expose radare2’s functionality as a user-friendly and modern interface.
+Last month, Cutter introduced a new Python plugin system, which figures into the tool we’ll be constructing below.
+The plugin itself isn’t complicated, and neither is the solution we demonstrate below.
+If simple works, then simple is best.
+Cutter is available for all platforms (Linux, OS X, Windows).
+You can download the latest release here.
+If you are using Linux, the fastest way to get a working copy of Cutter is to use the AppImage file.
+If you want to use the newest version available, with new features and bug fixes, you should build Cutter from source.
+If you are up for that detour, follow this tutorial.
+First, let’s have a look at the backdoor itself.
+The relevant sample (486be6b1ec73d98fdd3999abe2fa04368933a2ec) is part of a multi-stage infection chain, which we have lately seen employed in the wild.
+All these stages are quite typical for Ocean Lotus, especially the chain origin being a malicious document (115f3cb5bdfb2ffe5168ecb36b9aed54).
+The document purports to originate from Chinese security vendor Qihoo 360, and contains a malicious VBA Macro code that injects a malicious shellcode to rundll32.exe.
+The shellcode contains decryption routines to decrypt and reflectively load a DLL file to the memory.
+The DLL contains the backdoor logic itself.
+First, the backdoor decrypts a configuration file which is pulled from the file resource.
+The configuration file stores information such as the Command and Control servers.
+The binary then tries to load an auxiliary DLL to the memory using a custom-made PE loader.
+This DLL is called HTTPProv.dll and is capable of communicating with the C2 servers.
+The backdoor can receive dozens of different commands from the Command and Control servers, including shellcode execution, creation of new processes, manipulation of files and directories, and more.
+Many obfuscation techniques are used by Ocean Lotus in order to make their tools harder to reverse engineer.
+Most noticeable, Ocean Lotus is using an enormous amount of junk code in their binaries.
+The junk code makes the samples much bigger and more complicated, which distracts researchers trying to pry into the binary.
+Trying to decompile some of these obfuscated functions is a lost cause; the assembly often plays around with the stack pointer, and decompilers are not well-equipped to handle this kind of pathological code.
+Upon analysis of the backdoor, one obfuscation technique can be immediately noticed.
+It is the heavy use of control flow obfuscation which is created by inserting junk blocks into the flow of the function.
+These junk blocks are just meaningless noise and make the flow of the function confusing.
+Fig 2: An example of a junk block
+As you can see in the image above, the block is full of junk code which has nothing to do with what the function actually does.
+It’s best to ignore these blocks, but that’s easier said than done.
+A closer look at these blocks will reveal something interesting.
+These junk blocks are always being fail-jumped to by a conditional jump from a previous block.
+Furthermore, these junk blocks will almost always end with a conditional jump which is the opposite of the conditional jump of the previous block.
+For example, if the condition above the junk block was jo <some_addr>, the junk block will most likely end with jno <some_addr>.
+If the block above ended with jne <another_addr>, the junk block will then end with… you guessed right – je <another_addr>.
+Fig 3: Opposite conditional jumps
+With this in mind, we can begin structuring the characteristics of these junk blocks.
+The first characteristic of the obfuscation is the occurrence of two successive blocks which end with opposite conditional jumps to the same target address.
+The other characteristic requires the second block to contain no meaningful instructions such as string references or calls.
+When these two characteristics are met, we can say with a high chance that the second block is a junk block.
+In such a case, we would want the first block to jump over the junk block so the junk block would be removed from the graph.
+This can be done by patching the conditional jump with an unconditional jump, aka a simple JMP instruction.
+Fig 4: Modifying the conditional jump to a JMP instruction will ignore the junk block
+So here is a heads up for you – the plugin we present below is written for Cutter, but was designed to be compatible with radare2 scripts, for those of you who are CLI gurus.
+That means that we are going to use some nifty radare2 commands through r2pipe – a Python wrapper to interact with radare2.
+This is the most effective and flexible way for scripting radare2.
+It’s not trivial to get the plugin to support both Cutter and radare2, since one is a GUI program and the other is a CLI.
+That means that GUI objects would be meaningless inside radare2.
+Luckily, Cutter supports r2pipe and is able to execute radare2 commands from inside its Python plugins.
+The first thing we are going to do is to create a Python class which will be our core class.
+This class will contain our logic for finding and removing the junk blocks.
+Let’s start by defining its __init__ function.
+The function will receive a pipe, which will be either an r2pipe (available from import r2pipe) object from radare2 or a cutter (available from import cutter) object from Cutter.
+Now we can execute radare2 commands using this pipe.
+The pipe object contains two major ways to execute r2 commands.
+The first is pipe.cmd(<command>) which will return the results of the command as a string, and the second is pipe.cmdj(<command>j) which will return a parsed JSON object from the output of radare2’s command.
+The next thing we would want to do is to get all the blocks of the current function and then iterate over each one of them.
+We can do this by using the afbj command which stands for Analyze Function Blocks and will return a Json object with all the blocks of the function.
+For each block, we want to know if there is a block which fails-to in a case where the conditional jump would not take place.
+If a block has a block to which it fails, the second block is an initial candidate to be a junk block.
+Next, we would like to check whether our junk block candidate comes immediately after the block.
+If no, this is most likely not a junk block since from what we inspected, junk blocks are located in the code immediately after the blocks with the conditional jump.
+Then, we would want to check whether the block candidate contains no meaningful instructions.
+For example, it is unlikely that a junk block will contain CALL instructions or references for strings.
+To do this, we will use the command pdsb which stands for Print Disassembly Summary of a Block.
+This radare2 command prints the interesting instructions that appear in a certain block.
+We assume that a junk block would not contain interesting instructions.
+Last, we would like to check whether the conditional jumps of both blocks are opposite.
+This will be the last piece of the puzzle to determine whether we are dealing with a junk block.
+For this, we would need to create a list of opposite conditional jumps.
+The list we’ll show is partial since the x86 architecture contains many conditional jump instructions.
+That said, from our tests, it seems like the below list is enough to cover all the different pairs of opposite conditional jumps that are presented in APT32’s backdoor.
+If it doesn’t, adding additional instructions is easy.
+Now that we defined the validation functions, we can glue these parts together inside the clean_junk_blocks() function we created earlier.
+In case that all the checks are successfully passed, and we can say with a high chance that we found a junk block, we would want to patch the first conditional jump to JMP over the junk block, hence removing the junk block from the graph and thus, from the function itself.
+To do this, we use two radare2 commands.
+The first is aoj @ <addr> which stands for Analyze Opcode and will give us information on the instruction in a given address.
+This command can be used to get the target address of the conditional jump.
+The second command we use is wai <instruction> @ <addr> which stands for Write Assembly Inside.
+Unlike the wa <instruction> @ <addr> command to overwrite an instruction with another instruction, the wai command will fill the remaining bytes with NOP instructions.
+Thus, in a case where the JMP <addr> instruction we want to use is shorter than the current conditional-jump instruction, the remaining bytes will be replaced with NOPs.
+After overwriting the conditional-jump instruction, we continue to loop over all the blocks of the function and repeat the steps described above.
+Last, if changes were made in the function, we re-analyze the function so that the changes we made appear in the function graph.
+At last, the clean_junk_blocks() function is now ready to be used.
+We can now also create a function, clean_graph(), that cleans the obfuscated function of the backdoor.
+This concludes the core class.
+As mentioned earlier, our code will be executed either as a plugin for Cutter, or straight from the radare2 CLI as a Python script.
+That means that we need to have a way to understand whether our code is being executed from Cutter or from radare2.
+For this, we can use the following simple trick.
+The code above checks whether the cutter library can be imported.
+If it can, we are running from inside Cutter and can feel safe to do some GUI magic.
+Otherwise, we’re running from inside radare2, and so we opt to import r2pipe.
+In both statements, we are assigning a variable named pipe which will be later passed to the GraphDeobfuscator class we created.
+This is the simplest way to use this plugin.
+Checking if __name__ equals “__main__” is a common Python idiom that checks if the script was run directly or imported.
+If this script was run directly, we simply execute the clean_graph() function.
+Cutter’s documentation describes how to go about building and executing a Plugin for Cutter, and we follow its lead.
+First, we need to make sure that we are running from inside Cutter.
+We already created a boolean variable named cutter_variable.
+We simply need to check whether this variable is set to True.
+If it does, we proceed to define our plugin class.
+This is a skeleton of a Cutter plugin — it contains no proper functionality at all.
+The function create_cutter_plugin() is called by Cutter upon loading.
+At this point, if we will place our script in Cutter’s plugins directory, Cutter will recognize our file as a plugin.
+To make the plugin execute our functionality, we need to add a menu entry that the user can press to trigger our deobfuscator.
+We chose to add a menu entry, or an Action, to the “Windows -> Plugins” menu.
+The script is now ready, and can be placed in the Python folder, under Cutter’s plugins directory.
+The path to the directory is shown in the Plugins Options, under “Edit -> Preferences -> Plugins“.
+For example, on our machine the path is: “~/.local/share/RadareOrg/Cutter/Plugins/Python“.
+Now, when opening Cutter, we can see in “Plugins -> Preferences” that the plugin was indeed loaded.
+Fig 5: The plugin was successfully loaded
+We can also check the “Windows -> Plugins” menu to see if the menu item we created is there.
+And indeed, we can see that the “APT32 Graph Deobfuscator” item now appears in the menu.
+Fig 6: The menu item we created was successfully added
+We can now choose some function which we suspect for having these junk blocks, and try to test our Plugin.
+In this example, We chose the function fcn.00acc7e0.
+Going to a function in Cutter can be done either by selecting it from the left menu, or simply pressing “g” and typing its name or address in the navigation bar.
+Make sure you are in the graph view.
+Feel free to wander around and try to spot the junk blocks.
+We highlighted them in the image below which shows the Graph Overview (mini-graph)  window.
+Fig 7: Junk block highlighted in fcn.00acc7e0
+Since we have a candidate suspicious function, we can trigger our plugin and see if it successfully removes them.
+To do this, click on “Windows -> Plugins -> APT32 Graph Deobfuscator“.
+After a second, we can see that our plugin successfully removed the junk blocks.
+Fig 8: The same function after removing the junk blocks
+In the following images, you can see more pairs of function graphs before and after the removal of junk blocks.
+Fig 9: Before and After of fcn.00aa07b0
+Fig 10: Before and After of fcn.00a8a1a0
+Ocean Lotus’ obfuscation techniques are in no way the most complicated or hard to beat.
+In this article we went through understanding the problem, drafting a solution and finally implementing it using the python scripting capabilities of Cutter and Radare2.
+The full script can be found in our Github repository, and also attached to the bottom of this article.
+If you are interested in reading more about Ocean Lotus, we recommend this high-quality article published by ESET’s Romain Dumont.
+It contains a thorough analysis of Ocean Lotus’ tools, as well as some exposition of the obfuscation techniques involved.
+APT32 Graph Deobfuscator – Full Code
+© 1994 Check Point Software Technologies LTD. All rights reserved.
+Property of CheckPoint.com | Privacy Policy

@@ -1,0 +1,107 @@
+
+          By Chris Navarrete, Yanhui Jia, Matthew Tennis, Durgesh Sangvikar and Rongbo Shao
+March 8, 2021 at 6:00 AM
+Tags: C2, Emotet, evasion, malware
+This post is also available in: 
+    日本語 (Japanese)
+Unit 42 researchers have identified and analyzed a new update of Emotet, the notorious banking Trojan, that has been active in the wild since December 2020.
+Emotet has long been a thorn in the side of defenders with a reputation for its tenacity, longevity and resilient evasion techniques.
+Recent actions by international law enforcement have disrupted the Emotet threat actors and their infrastructure.
+However, the tactics, techniques and procedures (TTPs) employed in this Emotet update present an opportunity to expose the inner workings of an active, prominent threat against all industries.
+In this blog, we will detail the end-to-end attack chain of this Emotet update, including its first-stage malicious document lure, the deobfuscation of its payload into a second-stage PowerShell loader and the downloading of the third-stage binary R43H.dll.
+We will also detail the persistence mechanisms used by this Emotet update, as well as the command and control (C2) channel and its indicators of compromise (IOCs).
+Lastly, we will demonstrate the difficulties that security solutions face against Emotet’s evasion techniques.
+Palo Alto Networks Next-Generation Firewall customers are protected from Emotet with Threat Prevention and WildFire security subscriptions.
+Customers are also protected with Cortex XDR.
+Emotet is commonly distributed with a Word document attached in phishing emails.
+Below are the steps in an Emotet attack chain:
+The analyzed sample is a Microsoft Office OLE2 Compound File Binary Word file.
+As with many spear-phishing attacks, this one also social-engineers the user to enable macro support to start the delivery of malicious Visual Basic for Applications (VBA) code.
+The embedded VBA macro code is executed when the user opens the lure document in Microsoft Word with macros enabled, spawning a Document_Open() event.
+The next call is to a function named Jotxu6biv0471oy0().
+The behavior of this function and further execution of the first-stage malware is described below:
+Retrieve a single StoryRange of the wdMainTextStory type from the document’s StoryRanges.Item() method and store it in the variable mKbjhqs.
+The content of that variable is the obfuscated payload data that will be deobfuscated later in the attack chain.
+A StoryRange in the VBA world is used to find or replace text inside a document.
+Collect obfuscated data through a series of GoTo calls, which stores data across several variables.
+The data is then concatenated and assigned to variable C_tmpi32le9.
+The string stored in C_tmpi32le9 is deobfuscated and substituted in a series of function calls displayed in Figure 4.
+The text payload stored in C_tmpi32le9 is deobfuscated with a call to function Lehj73snaqzhyepdw9().
+This function works as a wrapper for function Jumkzxvtzz2s(), which implements a simple string substitution routine.
+The function also calls the built-in function Replace(), which is passed the string ]b2[s as the delimiter to search and replace in the payload string.
+The resulting payload is the WMI moniker winmgmts:win32_process, which is stored in variable H4qcty67722xqmrmn.
+Generate a new object by making a call to the CreateObject() function and passing as parameter the winmgmts:win32_process string.
+The resulting object value is stored in the Fcqv6woostm0 variable, which is an object of the Win32_Process WMI Class.
+This variable is a handle to an object capable of spawning new processes.
+Perform a length correction routine and store the resulting data in variable Ma9hdg7q365lpb.
+A call to function Lehj73snaqzhyepdw9() is made with Ma9hdg7q365lpb as a parameter.
+A call to method Win32_Process.Create() is made by referencing the previously instantiated object and passing as first parameter the returning value of the previously executed Lehj73snaqzhyepdw9() function.
+The returning value contains the deobfuscated final payload (operating system and PowerShell commands).
+The first stage of this Emotet attack chain ends with the execution of the deobfuscated payload originally embedded in the malicious document.
+The payload contains a series of calls to cmd.exe nested around an obfuscated call to PowerShell with base64 data passed as an argument.
+The second stage of the attack chain begins with nested cmd.exe calls, the first of which invokes msg.exe.
+This displays a message window to the victim containing a decoy Word error, “Word experienced an error trying to open the file.”
+Next, PowerShell is invoked with base64 encoded data as a parameter, and cmd.exe takes the string P^Ow^er^she^L^L as an argument.
+This argument is crafted using the caret escape character (^) to avoid static detection.
+The -w option sets the PowerShell.exe process to start in the background.
+The -ENCOD option tells PowerShell to decode the base64 argument on the fly.
+The purpose of this obfuscated code is as follows:
+Set the security protocol used by the ServicePoint Manager to TLS 1.2.
+Set the absolute path of a randomly generated file.
+Generate an array of a total of seven Uniform Resource Identifiers (URIs).
+Instantiate a new object of the WebClient .NET Class, which leverages the DownloadFile() method to retrieve files from each item (URI) contained in the array generated in the previous step.
+The downloaded file will be saved into a fixed absolute path and filename %USERPROFILE%\Ygyhlqt\Bx5jfmo\R43H.dll.
+It’s worth mentioning that the folder names used at this step are matched with the ones generated during macro execution in the first stage of the attack chain.
+Perform a length check to equal 37652 bytes.
+This specific check is presumably made to ensure the binary content was transferred successfully.
+Execute the downloaded DLL file by executing the rundll32.exe command and providing the Control_RunDLL as an entrypoint function.
+The following picture shows the deobfuscated version of the entire command.
+As described above, the PowerShell script performs several HTTP requests to different URIs.
+The response from the server shows that a DLL file has been downloaded.
+The name of the file is set to NK05DJ2yiA.dll.
+Figure 15 shows the process tree having a parent process powershell.exe and the consecutive runs of rundll32.exe.
+The first process is given the absolute path to R43H.dll as an argument, and the second process is given a path to a file with a random path and filename.
+However, both processes begin with the same entrypoint function called Control_RunDLL.
+The following describes the inner workings of this DLL and its participation in the infection chain.
+Once the downloader code receives the second-stage DLL file, it will be saved in the path %USERPROFILE%\Ygyhlqt\Bx5jfmo\ and will be renamed to R43H.dll.
+According to the detection generated by the ExeInfoPE tool, it shows that this is a Microsoft Visual C++ ver.
+During the third-stage malware execution, a new absolute path will be randomly generated.
+A call to the MoveFileExW() function will move the file from its original location to this new one.
+The absolute path format is as follows:
+Next, as shown in Figure 17, a call to the CreateProcessW() function sets the value of the lpCommandLine parameter, which includes the absolute path of the recently moved DLL file, and the aforementioned entrypoint function Control-RunDLL.
+The actions performed by the second rundll32.exe execution will be described in the Fourth-Stage Malware section.
+The Emotet malware performs several actions, and one of those is the use of Resource Win32 API functions with the objective of loading binary data from the executable resource section, decrypting it and dropping a newly crafted malware.
+First, at offset 0x10002119, a call to the VirtualAlloc() function is made.
+This will allocate 0x1B000 (110592d) bytes, a MEM_COMMIT allocation type and memory protection option as PAGE_EXECUTE_READWRITE.
+At offset 0x10002128, the function call 100045C0 copies the bytes from the resource section into the newly generated memory allocation from the previous step (see Figure 18).
+The following picture (Figure 19) shows a comparison between the byte contents of the resources taken directly from the Resource Hacker tool and the contents in memory taken directly from the running process.
+During the execution of subsequent instructions, a call to the 0x10001D9A function is made.
+This function has a loop located at offset 0x10001E4D and performs several operations.
+One of these operations is a 1-byte XOR instruction (xor byte ptr [esi+ecx], al) located at offset 0x10001E4D.
+Its purpose is to decrypt a total of 110591 bytes of the executable’s resource data where the PE binary data is stored.
+The final result is an in-memory reconstructed executable file.
+In Figure 19, the encrypted and decrypted data in the process’s memory can be seen.
+At offset 0x10002167, an indirect function pointer call is made to the address pointed to by the EAX register, which is the entrypoint of the Control_RunDLL function of the in-memory (dropped) executable file.
+Figure 20 shows this in a graphical manner for reference.
+Once the call EAX instruction is executed, the execution control is transferred to the new executable file.
+The Emotet malware installs a new service by calling the CreateServiceW() function, which starts the copy of the malware in an automated manner by the operating system.
+Figure 21 shows this new service already installed.
+The service name is generated randomly and the below list contains different names used throughout several test runs.
+At this stage, the final payload is preparing the environment to submit information to the C2 server.
+To do so, it executes function calls to retrieve the required data to finally perform the HTTP request.
+The following steps assume a base address of 0x2E1000 and describe the details and sequences followed by the Emotet malware until the delivery of the payload.
+As can be seen in the function call list, the HttpSendRequestW() API function is used to send the data to the server.
+This function allows the sender to exceed the amount of data that is being sent normally by HTTP clients.
+Figure 24 shows the data after being sent and captured by Wireshark.
+Emotet was a potent adversary before coordinated law enforcement action shut down its infrastructure in late January 2021.
+The attack chain detailed above is elaborate and is designed to evade security detections.
+A single security appliance is not equipped to prevent an Emotet attack.
+Only a combination of security solutions – firewalls, sandboxes, endpoints and software to integrate all these components can help prevent an Emotet attack.
+At the time of this writing, the samples listed in the IOCs section below were not publicly available.
+However, we have created detections and coverage against their behavior and communication.
+Palo Alto Networks customers are protected from this kind of attack by the following:
+Sign up to receive the latest news, cyber threat intelligence and research from us
+Please enter your email address!
+Please mark, I'm not a robot!
+By submitting this form, you agree to our Terms of Use and acknowledge our Privacy Statement.
+© 2021 Palo Alto Networks, Inc. All rights reserved.

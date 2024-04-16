@@ -1,0 +1,96 @@
+The OceanLotus Group (aka APT32, CobaltKitty | previous reports: The SpyRATs of OceanLotus; OceanLotus APT Group Leveraging Steganography) is using a suite of remote access trojans dubbed "Ratsnif" to leverage new network attack capabilities.
+Blackberry Cylance threat researchers have analyzed the Ratsnif trojans, which offer a veritable swiss-army knife of network attack techniques.
+The trojans, under active development since 2016, combine capabilities like packet sniffing, gateway/device ARP poisoning, DNS poisoning, HTTP injection, and MAC spoofing.
+We delved into four distinct Ratsnif samples, three of them developed in 2016, the fourth created during the latter half of 2018.
+  PE32 executable for MS Windows (console) Intel 80386 32-bit
+The earliest example of Ratsnif uncovered thus far was compiled on the same day that its C2 domain was first activated:
+It appears to be a debug build, and closely resembles a later variant from September 2016 that will be the main focus of analysis for the three 2016 variants described in this article.
+  PE32 executable for MS Windows (console) Intel 80386 32-bit
+Compiled less than 24 hours after the previous sample, this build contains only one minor difference in functionality, whereby a call to pcap_dump_flush() has been removed prior to recompilation:
+Call to pcap_dump_flush in b4e3b2a1f1e343d14af8d812d4a29440940b99aaf145b5699dfe277b5bfb8405
+Missing call to pcap_dump_flush in b214c7a127cb669a523791806353da5c5c04832f123a0a6df118642eee1632a3
+In addition, the CodeView debugging information has changed, reflecting the new "age" of the sample after recompilation:
+Age of 0x14 in b4e3b2a1f1e343d14af8d812d4a29440940b99aaf145b5699dfe277b5bfb8405
+Age of 0x15 in b214c7a127cb669a523791806353da5c5c04832f123a0a6df118642eee1632a3
+Both samples were submitted to VirusTotal within a minute of being compiled and contain the same path as the PDB information.
+It seems likely this sample was automatically submitted to an online scanning service by the developer:
+VirusTotal submission showing date/time and path
+  PE32 executable (DLL) (GUI) Intel 80386, for MS Windows
+Remarkably similar in functionality to the previous samples from August 2016, this sample is a release build and was likely one of the earlier Ratsnifs to be deployed by OceanLotus in-the-wild.
+Upon execution, Ratsnif creates a run once mutex named "onceinstance", initialises Winsock version 2.2, and harvests system information such as the username, computer name, workstation configuration (via NetWkstaGetInfo API), Windows system directory and network adapter information.
+This information will then be sent to the attacker's C2 server via an HTTP post to the /cl_client_online.php API endpoint.
+Next, a logging thread is created, which is used to route log messages to the C2 via HTTP POST requests to /cl_client_logs.php.
+The malware then proceeds to load wpcap.dll, before importing the following functions:
+With WinPcap successfully loaded, a further HTTP POST request is made to /cl_client_cmd.php, which is used to obtain a command code from the attacker.
+This code will check for commands every 10 seconds.
+C2 commands are decrypted using AES with a hard-coded static key via Windows APIs, before being dispatched by a simple command processor.
+All observed Ratsnif samples have been hardcoded with one or more C2 domains, regardless of whether they are used.
+This sample contains 2 hard-coded domains, although only one appears to have ever been active:
+The C2 server itself is expected to expose a fairly intuitively named web API, supporting the following endpoints:
+  POST containing harvested system information
+  POST result of C2 command
+ The malware contains support for the following commands issued via the cl_client_cmd.php HTTP response:
+  PE32 executable (DLL) (GUI) Intel 80386, for MS Windows
+  Wed, 08 Aug 2018 02:52:52 UTC
+Surfacing during the latter half of 2018 and wrapped in a bespoke OceanLotus shellcode loader, this sample was first reported in a blog from Macnica Networks.
+Compared to the 2016 variants this sample introduces a configuration file and does not rely on C2 for operation.
+It also adds new features in the form of HTTP injection, protocol parsing, and SSL hijacking.
+For this particular sample, the actual sniffer executable is Base64 encoded within a loader DLL and wrapped in two layers of shellcode.
+The loader DLL decodes the payload, copies it to memory and executes the 1st stage shellcode, which will decompress the binary and execute the 2nd stage shellcode in a separate thread.
+The 2nd stage shellcode will inject the sniffer executable into memory and hook several API functions responsible for returning the process command line (GetCommandLineA, GetCommandLineW, _acmdln, _wcmdln), so they return a hardcoded string instead.
+The string contains the parameter that specifies a path to the config file, as well as the executable’s original path:
+It is not immediately obvious why the attackers used this convoluted method to pass the config path to the malware.
+The configuration file is a simple text file, Base64 encoded, where the first line is ignored, and each subsequent line specifies a parameter.
+However, there is a bug in parsing the value of the dwn_ip parameter, which will result in a memory read violation if the value is present in the configuration:
+ Figure 8: Bug in the code: the value of "dwn_ip" is passed as a string, while print_debug_msg expects a pointer to a string
+Once executed, the sniffer will read the configuration from the specified file, decode it using Base64 and parse it to an in-memory structure.
+If the "-sniff" parameter is specified in the configuration, the malware will add a firewall exception and disable Large Send Offload (LSO) for each network adapter in the registry:
+  netsh advfirewall firewall add rule name=\"Core Networking - Router Solicitation\" dir=in action=allow program={self_path} enable=yes
+Command-line used to add Windows firewall rule
+  wmic path win32_networkadapter where index=%d call disable
+Command-line used to disable network adapters prior to disabling LSOs
+After importing the same APIs from wpcap.dll as the 2016 variants (with the addition of pcap_geterr), the malware creates threads responsible for ARP poisoning and DNS spoofing.
+In order to be able to decrypt the SSL traffic, the malware performs SSL hijacking, using an open source library called WolfSSL and separately supplied certificate and private key files.
+For that purpose, it creates an internal WolfSSL server, listening on the first available port in the range 65000 – 65535:
+ Figure 11: Use of WolfSSL
+Unlike the 2016 variants of Ratsnif that stored all packets to a PCAP file, the 2018 variant employs multiple sniffer classes for harvesting sensitive information from packets.
+This will minimize the amount of data the attacker has to collect, exfiltrate and process, and also reveals what information the attacker is interested in.
+The malware can sniff traffic for the following protocols/ports:
+  ABOR ACCT ADAT ALLO APPE AUTH CCC CDUP CONF CWD DELE ENC EPRT EPSV FEAT HELP HOST LANG LIST LPRT LPSV MDTM MIC MKD MLSD MLST MODE NLST OPTS PASS PASV PBSZ PORT PROT PWD QUIT REIN REST RETR RMD RNFR RNTO SITE SIZE SMNT STAT STOR STOU STRU SYST TYPE USER XCUP XMKD XPWD XRCP XRMD XRSQ XSEM XSEN 230
+  CAPABILITY LOGOUT STARTTLS AUTHENTICATE LOGIN SELECT EXAMINE CREATE RENAME LSUB STATUS APPEND CHECK CLOSE EXPUNGE FETCH STORE UID
+  AUTHINFO USER AUTHINFO PASS ANONYMOUS 281
+  RCEV RCVD RSET +OK USER PASS RETR QUIT
+  HELO MAIL RCPT SEND SOML SAML VRFY EXPN TURN FROM
+  SELECT name, password_hash FROM master.sys.sql_logins where is_disabled = 0; -- priv
+ Each sniffer class interface contains two methods for extracting sensitive information from the incoming and outgoing packets, respectively.
+These typically rely on searching for cleartext header strings to facilitate credential theft:
+Searching for login and password commands in the Telnet protocol  In addition, the HTTP sniffer interface is also able to perform injection to insert arbitrary attacker supplied content into HTML.
+Although this sample contains a Base64 encoded C2 URL hardcoded in the .rdata section (the same address as in the 2016 versions), the malware never seems to use it; instead, it logs the captured information into text files for further exfiltration by another module.
+To recreate conditions in which the sample would operate, a default gateway was configured on 192.168.8.135 and was running iNetSim to act as the DNS and HTTP servers.
+The attacker machine was located at 192.168.8.134 and the victim at 192.168.8.138.
+Ratsnif was configured to operate as follows:
+Figure 14 shows the malware sending ARP packets asking for the MAC addresses of all the machines on the subnet specified in the config file, whilst ignoring itself (192.168.8.134) and the default gateway (192.168.8.135):
+Figure 15 shows the malware sending ARP packets asking for the MAC addresses of all the machines on the subnet specified in the config file, whilst ignoring itself (192.168.8.134) and the default gateway (192.168.8.135): ARP Broadcasts
+Once it has MAC addresses for all machines on the subnet, Ratsnif will then send unsolicited ARP packets to those addresses, updating the MAC address of the default gateway for each victim:
+Figure 16 shows the effect on the victim machine, with the attacker IP address and the default gateway IP address (192.168.8.135) both now sharing the same physical address:
+ Figure 16. arp -a results showing poisoned ARP Table on the victim machine
+Once the ARP table is poisoned, all traffic destined for the default gateway will be routed through Ratsnif and can be stored and manipulated prior to retransmission.
+Finally, Figure 17 shows a poisoned DNS response for www.google.com, whereby the DNS query was intercepted by Ratsnif, modified to point to an attacker controlled IP address and the fake response sent to the original requestor:
+Ratsnif log file output showing ARP poisoning and DNS spoofing in action  C2
+  Privacy Protection Service INC d/b/a PrivacyProtect.org
+ History  Obtained via Shodan, this history shows when the C2 server exposed various ports, including HTTP, SMB and RDP, for the purpose of controlling Ratsnif and other OceanLotus malware:
+Ratsnif is an intriguing discovery considering the length of time it has remained undetected, likely due to limited deployment.
+It offers a rare glimpse of over two years of feature development, allowing us to observe how threat actors tailor tooling to their nefarious purposes.
+While all samples borrow heavily from open-source code/snippets, overall development quality is deemed to be poor.
+Simply put, Ratsnif does not meet the usual high standards observed in OceanLotus malware.
+  Core Networking - Router Solicitation
+  Sniffs packets and saves to file
+  User/computer name, system directory and workstation information
+  Performs packet interception, modification and retransmission
+
+        BlackBerry uses cookies to help make our website better.
+Some of the cookies are necessary for proper
+            functioning of the site, while others are to help us understand how you use it.
+Read more here about our cookies, and how you can
+            opt out.
+By continuing to use this site you accept our use of cookies.

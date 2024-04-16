@@ -1,0 +1,64 @@
+These are just unpolished notes.
+The content likely lacks clarity and structure; and the results might not be adequately verified and/or incomplete.
+The malware in this blog post is known as BazarBackdoor, Team9Backdoor, BazDor, BazarLoader and BazaLoader
+The DGA in this blog post has been implemented by the DGArchive project.
+For more information about the malware in this blog post see the Malpedia entry on BazarBackdoor.
+This page lists malware URLs that are tagged with BazarLoader.
+You can download bazaloader samples from this page.
+Edit 2020-07-19: Cybereason published an excellent article A Bazar of Tricks: Following Team9’s Development Cycles.
+They only show the seeding part of the domain generation algorithm, however, the listing of generated bazar domains matches the algorithm in this blog post (apart from the first two domains alztwfdicu.bazar and ocgjqlaspr.bazar which are hardcoded).
+The article shows that the DGA is part of Bazar Loader, which will try to download Bazar Backdoor.
+I therefore renamed most instances of BazarBackdoor to BazarLoader.
+Edit 2020-07-14: I have documented some additions to the DGA of BazarLoader:
+BazarLoader (also known as Bazar Loader, Bazar Backdoor or Team9 Backdoor) is a module of the dreaded TrickBot Trojan.
+It is mostly used to gain a foothold in compromised enterprise networks 1 2 3 4.
+The malware is named after the C&C domains with top level domain .bazar.
+This TLD is provided by EmerDNS, a peer-to-peer decentralized domain name system in OpenNIC.
+This makes it very difficult, if not impossible, for law enforcement to take over these domains.
+BazarLoader has been using a handful of hard-coded domains such as bestgame.bazar, forgame.bazar or newgame.bazar in the past, but today a sample was uploaded to Virustotal that tries a plethora of domains such as:
+These look like algorithmically generated — and it turns out they are.
+This blog post shows how the underlying domain generation algorithm works.
+I analysed the aforementioned sample from Virustotal:
+Many AV classify the sample as malicious, but only Microsoft and Rising also name the sample, both as Trickbot — which is at correct in the broader sense.
+The binary unpacks to this:
+The detection for this sample is worse and none of the AV products assigns a non-generic name.
+The sample will finally inject the following executable, which only 3 out of 76 products even classify as malicious.
+The domain generation algorithm of BazarLoader is in a single function, including seeding (click to enlarge):
+The algorithm roughly consists of these three steps:
+The (simplified) decompilation of the first step is as follows:
+The function GetTickCount usually doesn’t bode well for DGAs: since this functions is largely unpredictable, it almost always means that the generated domains will be unpredictable as well.
+However, this algorithm is different.
+The tick count is mapped to a value between 0 and 24, which is then divided by 6+i.
+The division shrinks down the range of numbers, and ultimately the range of potential letters.
+The character set is also offset by double the loop index, leading to these choices of letters:
+So even though the exact letters can’t be predicted, there are only 2160 combinations.
+Since the malware continuously tries to contact newly generated domains, registering a few of the 2160 domains is probably enough to get lucky with GetTickCount within a couple of minutes of malware runtime.
+Seeding is based on on the current date, which is determined by GetDateFormatA.
+The function GetDateFormatA with LOCALE_INVARIANT locale returns the current date formatted as <month>/<day>/<year>, so for example 07/10/2020 for July 10, 2020.
+The month and year are taken from this string and converted into integers.
+The month is then turned into a two-digit number by calculating a = 12 - month and padding it with zero if necessary.
+The year is transformed into a four-digit number according to b = year - 18.
+The two values are then concatenated into a string.
+For example, July 2020 turns into 052002.
+The last six characters of the second level domain are based on the seed and the first six letters:
+This simply treats each character of the seed string as an integer, and uses that to offset the characters of the first six letters to form the last six letters.
+For instance, let’s look at the seed string 052002 applied to the randomly picked first six letters cfhiilc:
+The malware’s check if the letter falls before a is actualy not necessary, as the offset is always positive between 0 and 9.
+A check to see if the letter falls beyond z would be more reasonable, but is also unnecessary: the “largest” letter in the first half is “m”, which offset by 9 leads to “v”.
+The following image illustrates the procedure:
+When implemented in Python, the DGA looks something like this:
+The possible letters per position is very limited.
+Assuming that the year is between 2020 and 2029, the domains match the following regular expression (Edit 2020-11-10: Fixed the regular expression, thanks to Luca Corbatto for providing the correct regex):
+The following table summarizes the properties of BazarLoader’s DGA.
+Since the function to determine the second half of the domain is reversible, the month and year can be calculated from the domains.
+I wrote a small Javascript form that does just that.
+For those of you who block Javascript, here’s a screenshot.
+The same code in Python can also be found on my GitHub page
+As far as I can tell, the attackers registered five domains using the Emercoin address ETQERUknhW2A5cBmfHN4VBqL7VGiFnKQRh.
+Also see tweets by Brad @malware_traffic and Security-in-bits @Securityinbits:
+The IP resource record of the DGA domains are XOR decrypted with key 0xFE to get the real IP of the C2 servers.
+You can use this Javascript form to calculate the transformation.
+In-depth analysis of the new Team9 malware family ↩︎
+BazarBackdoor: TrickBot gang’s new stealthy network-hacking malware ↩︎
+Group Behind TrickBot Spreads Fileless BazarBackdoor ↩︎
+© 2012 - 2021 Johannes Bader, last updated September 13, 2021

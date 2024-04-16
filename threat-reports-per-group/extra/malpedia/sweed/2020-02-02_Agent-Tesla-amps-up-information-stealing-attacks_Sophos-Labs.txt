@@ -1,0 +1,89 @@
+The Agent Tesla family of remote access trojan (RAT) malware has been active for over seven years, yet it remains one of the most common threats to Windows users.
+A variety of attackers use the malware to steal user credentials and other information from victims through screenshots, keyboard logging, and clipboard capture.
+Because the malware’s compiler hard-codes operator-specific variables at build time, Agent Tesla behavior can vary widely—and the malware continues to evolve.
+Recent changes increased the number of applications targeted for credential theft, including web browsers, email clients, virtual private network clients, and other software that store user names and passwords.
+The evolution of the tool also extends to its delivery package, with one version that now targets Microsoft’s Anti-Malware Software Interface (AMSI) in an attempt to defeat endpoint protection software.
+SophosLabs has tracked multiple actors using Agent Tesla, including the ones behind the RATicate campaigns we began investigating in November of 2019.
+We’ve continued to see new variants in a growing number of attacks over the past 10 months; as recently as December of 2020, Agent Tesla accounted for 20 percent of malware email attachments detected in Sophos customer telemetry.
+In this report, we will delve into the two currently active versions we’ve identified, which we’ve identified as Agent Tesla version 2 and version 3.
+The differences between the two demonstrate how the RAT has evolved, employing multiple types of defense evasion and obfuscation to avoid detection—including options to install and use the Tor anonymizing network client, and the Telegram messaging API, for command and control (C2) communications.
+The differences we see between v2 and v3 of Agent Tesla appear to be focused on improving the success rate of the malware against sandbox defenses and malware scanners, and on providing more C2 options to their attacker customers.
+Both current versions of Agent Tesla use a set of global variables that determine the functionality and behavior of the malware.
+The attacker provides the values for these variables in the form of a configuration file that govern a wide variety of behaviors, such as the delay time between C2 attempts (shown below).
+The variables common to both versions of Agent Tesla determine which network protocol is to be used for C2 communications, based on an integer value set by the configuration file.
+They also can enable or disable the following behaviors:
+The RAT’s compiler encodes these options into the executable that’s delivered to the victim.
+Agent Tesla usually arrives in a malicious spam email as an attachment.
+In the example below, the malware that drops Agent Tesla is disguised as a .zip compressed file attachment that the attacker claims contains a catalog for the recipient to review:
+More recent versions of Agent Tesla use a number of methods to both make sandbox and static analysis more difficult and evade endpoint detection.
+Going beyond the use of packers to obfuscate code, these multi-stage malware installers also pull in components hosted (in some cases) in plain view on legitimate websites.
+The Agent Tesla installer also attempts to overwrite code in Microsoft’s AMSI.
+The first stage is a .NET-based downloader, which grabs chunks of base64-encoded, obfuscated code for the second stage from websites such as Pastebin and a Pastebin clone called Hastebin.
+The base64-encoded chunks are delimited from the rest of the HTML content by three “@” symbols, before and after the chunk, as shown in the sample below:
+The downloader also tries to get the memory address of AmsiScanBuffer—calling Windows’ amsi.dll with the Windows LoadLibraryA function to get the DLL’s base address, and then GetProcAddress using that base address and  the “AmsiScanBuffer” procedure name to get the address of the function.
+Once Agent Tesla gets the address of AmsiScanBuffer, it patches the first 8 bytes of this function in memory:These are the patched x86 instructions these opcodes refer to:
+The effect of this patch to the AmsiScanBuffer routine forces AMSI to return an error (code 0x80070057), making all the AMSI scans of memory appear to be invalid.
+This sabotages endpoint protection software dependent on AMSI, by essentially making them skip further AMSI scans for dynamically loaded assemblies within the Agent Tesla process.
+Since this happens early in the first stage downloader’s execution, it renders ineffective any AMSI protection against the subsequent components of the downloader, the second-stage loader, and the Agent Tesla payload itself.
+After downloading the chunks, the downloader stage joins and decodes them, then decrypts them with a simple algorithm.
+The decoded and decrypted buffer is the second stage—a loader that carries the final Agent Tesla payload.
+The second stage uses a series of steps to avoid sandbox analysis through debugging.
+First, using the Microsoft .NET Debugger class, it checks to see if a debugger is attached by checking the Debugger.IsAttached property, and then checks to see if logging is enabled by using the Debugger.IsLogging method.
+Then, using the NtSetInformationThread Windows API function, it sets the ThreadHideFromDebugger field in order to hide the thread from the debugger.
+Once this value is set, the debugger never gets information from the thread, and the practical effect is that it detatches the debugger.
+This technique is hardly new, but it remains very effective.
+Overall, the functionality of Agent Tesla v2 and v3 is largely the same, with a few notable differences noted below :
+The first thing both versions of Agent Telsa do when activated is to check for (and kill) any other running instances of Agent Tesla—a step taken to ensure that the originally deployed copy is removed if the bot is configured to establish persistence.
+It then initializes additional, dynamically-set global variables (such as an identifying number and name) and the folder to be used for installation.
+These vary from sample to sample.
+The malware then performs another sandbox evasion technique, initializing a timer that is used to check if the code is being executed on a sandbox.
+The timer has a procedure that uses GetLastInputInfo to retrieve and compare user input; if there’s no user input detected, Agent Tesla shuts down.
+Both v2 and v3 of Agent Tesla can be configured to communicate over HTTP, SMTP, and FTP.
+Agent Tesla v3 adds the Telegram chat protocol as an option.
+Each follows a slightly different path to push stolen data back to the attacker:
+The attacker chooses one of these C2 communications channels as part of the pre-build configuration process; in the majority of cases we’ve observed, the attacker uses SMTP for communication with the C2 server, possibly because it is more secure for the operator, and requires less infrastructure.
+(The attacker only needs an email account for SMTP, while the HTTP method would require the attacker to establish and maintain a web server running a control panel.)
+The HTTP C2 method does have certain benefits for the attacker, however.
+The HTTP C2 protocol is the only one that supports remote execution of any of Agent Tesla’s functions.
+While the information-stealing behavior of Agent Tesla is largely the same across all C2 communications protocols, there are two that only work with HTTP:  a remote uninstall feature, and a feature that lets the operator know the bot has been installed successfully.
+In Agent Tesla v2, an additional variable (which we refer to in our analysis as “keepalive”) also determines whether these features work; The malware’s developers apparently decided this variable was redundant and eliminated it in Agent Tesla v3.
+Even the new Telegram chat protocol is one-way only.
+An overview of Agent Tesla’s command and control traffic for each available network protocol.In both versions of Agent Tesla, if HTTP is selected as the C2 protocol, the malware sends an empty HTTP message to the C2 server.
+The setting also enables a timer that sends empty HTTP messages each time it is triggered to keep the session with the C2 server active, and another timer that periodically checks to see if the malware’s operator has issued a command that it should uninstall itself from the infected system.
+The HTTP C2 channel is also the only one that encrypts its content.
+While it does not inherently use HTTPS, the content of the C2 traffic is Triple DES encrypted, using a key set in the configuration file.
+Agent Tesla v3 adds another enhancement to HTTP communications—the alternative of using a Tor proxy.
+If selected in the configuration file, the malware downloads and installs a Tor client from the official Tor site.
+If the Tor client is already present, it kills the process before installing the new one, and writes a torrc configuration file from encrypted strings hardcoded into the malware.
+If the malware’s operator has set the persistence to “true” in the configuration, the malware copies itself to a folder and sets that folder’s attributes to “Hidden” and “System” in order to conceal it from view in Windows Explorer.
+It also puts the installation folder path into the Windows Registry’s SOFTWARE\Microsoft\Windows\CurrentVersion\Run  and SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run keys.
+In Agent Tesla v3, the same variable that enables persistence also triggers collection of the infected system’s external IP address—one  data point the malware uses to fingerprint its host for identification by its operator.
+The malware does this by using the public web API of ipify.org.
+Other than the IP address, the fingerprinting data Agent Tesla v3 collects is the same as that in v2:
+Agent Tesla gathers user credentials.
+In Agent Tesla v3, the number of applications targeted for credential harvesting has been expanded considerably—the current list of applications targeted includes, but is not limited to:
+Agent Tesla bundles the stolen credentials with the host fingerprint data, and transmits them back to the C2 once during execution.
+The malware doesn’t repeat this process unless it has been configured for persistence and the infected system restarts.
+The credential-stealing function also includes code which launches a separate thread to exfiltrate browser cookies.
+While this code is present in all the samples of Agent Tesla from both v2 and v3, it isn’t always used.
+Also, this feature is not set from the configuration file—so, perhaps, it’s a premium feature attackers must buy from Agent Tesla’s developer.
+If this option is enabled, a timer is initialized that captures an image of the infected system’s screen via .NET libraries.
+The  function then sends the image to the C2 as JPEG images over the configured network protocol.
+As with the keyboard capture dumps, this routine is also initialized on a timer.
+If the hookkeyboard setting is enabled, the malware records all keystrokes and periodically sends the logs to the C2 server on a schedule.
+In Agent Telsa v3, the developers can now capture data from the Windows clipboard; this data is sent back to the C2 by the same timer.
+The most common delivery method for Agent Tesla is malicious spam—such as the emails we highlighted in our RATicate research.
+Agent Tesla remains a consistent threat—for many months, it has remained among the top families of malware in malicious attachments caught by Sophos.
+Because of this sustained stream of Agent Tesla attacks, we believe that the malware will continue to be updated and modified by its developers to evade endpoint and email protection tools.
+The email accounts used to spread Agent Tesla are often legitimate accounts that have been compromised.
+Organizations and individuals should, as always, treat email attachments from unknown senders with caution, and verify attachments before opening them.
+Sophos endpoint protection detects Agent Tesla’s installer malware and the RAT itself, both through machine learning and detection signatures, and protects against AMSI bypass attacks by preventing removal of AMSI registration.
+Indicators of compromise for Agent Tesla are posted on SophosLabs’ GitHub page.
+Sean Gallagher is a Senior Threat Researcher at Sophos.
+Previously, Gallagher was IT and National Security Editor at Ars Technica, where he focused on information security and digital privacy issues, cybercrime, cyber espionage and cyber warfare.
+He has been a security researcher, technology journalist and information technology practitioner for over 20 years.
+Working in Dynamic Protection Team analyzing and detecting new threats.
+I like bot emulation, automatic detection, obfuscation and botnet tracking.
+- "If it can be opened with a debugger then I like it."
+Your email address will not be published.
+ Save my name, email, and website in this browser for the next time I comment.

@@ -1,0 +1,47 @@
+During a recent operation, the Red Team got local admin privileges on a workstation where an EDR solution was identified.
+In this scenario, the next step to proceed with the engagement was to infect and persist on the compromised system, towards securing remote access.
+After exploring several options, a Microsoft Teams binary was identified as vulnerable to DLL Hijacking.
+This article explains how to take advantage of this situation, making use of a Cobalt Strike payload embedded in a DLL.
+Finally, it details how to mimic legitimate Microsoft Teams traffic when communicating with the C&C using Cobalt Strike malleable C2 profiles.
+In order to ease up the process, the Red Team prepared a local environment, as close as possible to the original, to carry out the appropriate tests.
+After that, we used Process Monitor to identify processes trying to load non-existent DLLs.
+To do so, the following filters were applied:
+The process “Update.exe” (32bits) was spotted trying to load “CRYPTSP.dll” from the executable directory, failing to do so as this library is located in C:\Windows\SysWOW64.
+This means that if a malicious DLL is placed in the same directory as the binary, the next time “Update.exe” is started, the process will load this library first and make use of some exported functions.
+This executable was an ideal candidate for the operation for different reasons:
+After the target has been selected, the Red Team needs to implement a DLL that executes malicious code (in this case, a Cobalt Strike payload).
+To accomplish this, the binary was debugged placing breakpoints on all imported functions to check which of them was being invoked first at “CRYPTSP.dll”.
+This showed that CryptAcquireContextW() is the first function being called by “Update.exe”, so the Red Team developed a library that exports this function with a customized loader that recovers and executes the raw Cobalt Strike payload (shellcode) from disk.
+A more transparent alternative would be to create a wrapper using DLL Proxying techniques.
+In this case, the exported function performs the following actions:
+Due to the restrictions of the environment, in which Internet connectivity was only allowed to Microsoft domains, Domain Fronting was used alongside customized Cobalt Strike profiles.
+These settings provide a flexible way of building the HTTP requests and responses to communicate with the C&C.
+The Red Team used this functionality to hide the agent’s communication, mimicking the HTTP traffic issued by Microsoft Teams.
+In this case, a staged payload was used, which is divided into two parts: the stager and the stage.
+The first, smaller one, is responsible for obtaining the second C&C stage: a DLL containing all the agent’s logic (a beacon in Cobalt Strike terms) that is going to be reflectively loaded into memory.
+By using this type of payload, the communication flows with the C&C could be categorized into 3 types:
+The http-stager section defines how to retrieve the beacon, where the stager request simulates an image download, making use of Microsoft Teams’ own HTTP headers.
+The response appears to be a legitimate picture, but contains the beacon DLL.
+In order to achieve this, well-formed JPEG header and trailing bytes are used.
+This way, tools like Wireshark will identify the content of the HTTP response as a JPEG image.
+The following part of the profile is used to define the format of periodic requests in which the Cobalt Strike agent asks for new tasks to be executed.
+These requests use the “events” GET parameter to send base64-encoded session information.
+As we saw before, the information encoded by the server is embedded into responses that appear to be legitimate.
+Finally, the http-post block specifies the format of the result requests sent from the agent to the C&C.
+For this example, the output is inside of the Authentication HTTP header, pretending to be a JWT authentication token.
+This article shows how an attacker could take advantage of DLL Hijacking vulnerabilities in services to execute malicious code through signed binaries, mimicking the traffic of the corresponding legitimate application to minimize the chances of being detected.
+
+MADRID
+C/Quintanapalla 8, Las Tablas (Madrid) 28050
+(+34) 912 919 319
+
+SANTIAGO DE COMPOSTELA
+Travesía do Montouto 1, Teo (A Coruña) 15894
+(+34) 912 919 319
+
+BlackArrow ©2020 All rights reserved.
+We are using cookies to give you the best experience on our website.
+You can find out more about which cookies we are using or switch them off inCookies Settings
+Strictly Necessary Cookie should be enabled at all times so that we can save your preferences for cookie settings.
+This website uses Google Analytics to collect anonymous information such as the number of visitors to the site, and the most popular pages.
+\n Keeping this cookie enabled helps us to improve our website.

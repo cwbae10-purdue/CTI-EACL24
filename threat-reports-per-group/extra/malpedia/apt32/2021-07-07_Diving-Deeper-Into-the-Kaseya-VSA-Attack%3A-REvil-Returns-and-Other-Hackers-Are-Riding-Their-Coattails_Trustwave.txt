@@ -1,0 +1,88 @@
+Get access to immediate incident response assistance.
+Attracting more than a half-million annual readers, this is the security community's go-to destination for technical breakdowns of the latest threats, critical vulnerability disclosures and cutting-edge research.
+On, July 2nd, a massive ransomware attack was launched against roughly 60 managed services providers (MSPs) by criminals associated with the REvil ransomware-as-a-service (RaaS) group.
+The attack leveraged the on-premises servers deployed by IT Management Software vendor Kaseya.
+It was initially thought that Kaseya might have been compromised themselves as a root cause  -- similar to the compromises associated with SolarWinds software in December of 2020.
+Instead, the attackers found and leveraged an unpatched zero-day vulnerability in Kaseya's VSA software.
+At the time of this blog, 1,500 downstream customers of these MSPs have been infected with ransomware.
+This vulnerability has been issued CVE-2021-30116 and was discovered and reported to Kaseya by a researcher for the Dutch Institute for Vulnerability Disclosure (DIVD).
+A patch was being actively worked on by Kaseya according to the DIVD, but not finalized prior to REvil discovering and exploiting the issue.
+At this point, it is still not clear what the actual issue is or how the exploit may work, although initial reports suggest a potential authentication bypass.
+A patch has not been released, and Kaseya is recommending that customers with on-premises VSA Servers take them offline until a patch is issued.
+The REvil group initially demanded $70 million USD to reveal a universal decryptor for all affected victims but has since lowered the demand to $50 million.
+In the past, the REvil group has also exfiltrated data either for sale or to pressure a victim even more into paying the ransom.
+This appears to be the case with this campaign as well, as we've seen REvil call out many customers bragging on their Darknet hosted "Happy Blog" about the amount of data they have in their possession.
+Over the course of the weekend, our SpiderLabs Malware Analysis team received a malware submission from our Global Threat Operations group.
+They were investigating a piece of DLL file they found on one of our customer's critical servers hit by a ransomware attack.
+This server was running Kaseya VSA.
+The file is a digitally signed DLL with a file named mpsvc.dll
+Upon initial investigation, the DLL is the payload itself - REvil Ransomware.
+So we thought to step back a little bit and investigate how this DLL got loaded.
+This pointed us to an ongoing discussion on Reddit.
+It turns out that this library was side-loaded by a legitimate Microsoft executable (MsMpEng.exe).
+MsMpEng.exe is benign and part of the Microsoft Antimalware service.
+An older version was used by the attackers.
+As you can see in the screenshot below, it shows the properties of this Microsoft executable and digital signature details.
+When MsMpEng.exe runs, it picks up the attacker's "mpsvc.dll" and loads an exported function from the malicious library called ServiceCrtMain().
+This function unpacks and loads the ransomware into the memory and executes it.
+Stepping back, MsMpEng.exe and mpsvc.dll were both installed in the infected system by a dropper named Agent.exe.
+"Agent.exe" dropper contains two binaries - MsMpEng.exe and mpsvc.dll embedded in its body (particularly in the resources section), which when executed, writes (with system privilege) both files into C:\Windows.
+Agent.exe then executes MsMpEng.exe that eventually loaded the malicious "mpsvc.dll" file.
+"Agent.exe" was initially dropped as a Base64 encoded file – named as "Agent.crt" to the path C:\kworking.
+This .crt file was deployed through a malicious update by exploiting Kaseya VSA servers, and it eventually sent out this update to the Kaseya VSA Agents running on managed devices.
+Once the malicious update is deployed to the devices, Kaseya VSA Agents will run a PowerShell command to decode the .crt  file and then execute it.
+For the initial vector, Huntress' blog reported that the attacker used an authentication bypass in the web interface of the Kaseya VSA server to gain an authenticated session.
+They then uploaded the payload and execute a command via SQL injection to deploy the malicious updates
+To visualize, this is how post-exploitation execution flows:
+The payload was found to be REvil ransomware version 2.
+We have managed to decode the ransomware configuration.
+A decoded copy can be found here.
+The configuration file itself is embedded in the ransomware encoded in RC4 with the key mXT1QFyEUbrxc4cbP84jbN5wrHeqmFXt
+Based in the configuration, It avoids encrypting files from this list of directory:
+It also avoids encrypting system files:
+            "ntldr",            "thumbs.db",            "bootsect.bak",            "autorun.inf",            "ntuser.dat.log",            "boot.ini",            "iconcache.db",            "bootfont.bin",            "ntuser.dat",            "ntuser.ini",            "desktop.ini"
+It avoids encrypting any file extension from this list:
+It terminates running processes if the name is in this list:
+It also stops the following services if they are running:
+        "veeam",        "memtas",        "sql",        "backup",        "vss",        "sophos",        "svc$",        "mepocs"
+The configuration also includes the following fields:
+The ransom note is also included in the configuration:
+Where:{EXT} - a random extension name of the encrypted file{UID} - value is taken from the infected system's volume serial number and CPUID.
+It is used by the attacker to identify the victim{KEY} - base64 encoded data of the encrypted stat data.
+Stat data consists of the infected host information including CPU architecture, system default language, host's workgroup name, hostname, and operating system
+There is also a list of over 1,200 controller domains that the ransomware supposedly connects to, however, connection to these domains was disabled in the configuration file.
+You can find the full list in the decoded configuration file here.
+In addition to the configuration, the ransomware also avoids systems that have default languages from what was the USSR region.
+Perhaps not surprisingly,  spammers have been quick to jump on this issue as a lure in their malicious emails.
+Today, we encountered spams claiming that Microsoft issued an update which can provide protection against the Kaseya's vulnerability.
+Both a malicious link and attachment are contained in the spams.
+A spoofed link to Kaseya's webpage https://www.kaseya.com/potential-attack-on-kaseya-vsa/, where the updates about CVE-2021-30116 are posted, is contained in the email body.
+Clicking  this link will lead to an executable file being downloaded from hxxp://45[.]153[.]241[.]113/download/pload[.]exe.
+The downloaded executable file and the executable attached to the spams are the same file -  CobaltStrike malware.
+The executable file loads a Cobalt Strike launcher that unpacks and executes a Cobalt Strike beacon.dll in memory and creates an encrypted tunnel between the infected host and the adversaries.
+Cobalt Strike is a post-exploitation tool that is used for legitimate purposes by network penetration testers.
+However, cybercriminals also utilize this tool for malicious purposes to exfiltrate data from compromised hosts, move laterally within the host's network, and also to act as a backdoor.
+Extracting the configuration of this Cobalt Strike beacon agent reveals the command and control server, port, the attacker's public key to encrypt exfiltrated data and communications, user-agent, POST URI, among other things, as shown below.
+Adversaries are very opportunistic, often after headliner events like this, we see spam campaigns that ride on a premise of such events.
+So the usual message applies, keep cautious of email, especially unsolicited ones, and think twice before opening attachments.
+The notoriety and increasing threat posed by ransomware attacks have been impossible to prevent.
+We recommend having a good backup solution, and this is crucial and of utmost importance nowadays.
+Also, implementing a good patch management program could help add an additional layer of security.
+These previous Trustwave blogs provide more advice on how to be prepared for ransomware attacks.
+Trustwave Managed IDS is deploying signatures to detect this campaign.
+Trustwave MailMarshal has detections in place for the Kaseya-themed scam email.
+Additionally Trustwave Security Testing Services are deploying checks for Kaseya VSA and customers should be able to scan and detect VSA instances once the check is available.
+Thanks also to Diana Lopera and Karl Sigler for their help and research in developing this post.
+IOCs for REvil / Kaseya:
+Prior Analysis Trustwave Analysis of REvil: https://www.trustwave.com/en-us/resources/blogs/spiderlabs-blog/undressing-the-revil/
+Analysis of REvil 2.2: https://intel471.com/blog/changes-in-revil-ransomware-version-2-2
+Further Analysis of REvil: https://blog.amossys.fr/sodinokibi-malware-analysis.html
+Kaseya VSA Detection ToolKaseya VSA Detection Tool: https://kaseya.app.box.com/s/0ysvgss7w48nxh8k1xt7fqhbcjxhas40
+Sign up to receive the latest security news and trends from Trustwave.
+Copyright ©
+                         Trustwave Holdings, Inc. All rights reserved.
+This is a bot-free zone.
+Please check the box to let us know you're human.
+Read complimentary reports and insightful stories in the Trustwave Resource Center
+One of our sales specialists will be in touch shortly.
+Read complimentary reports and insightful stories in the Trustwave Resource Center

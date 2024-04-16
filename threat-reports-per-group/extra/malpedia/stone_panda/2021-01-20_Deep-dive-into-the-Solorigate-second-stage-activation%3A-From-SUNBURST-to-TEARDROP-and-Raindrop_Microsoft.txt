@@ -1,0 +1,130 @@
+UPDATE: Microsoft continues to work with partners and customers to expand our knowledge of the threat actor behind the nation-state cyberattacks that compromised the supply chain of SolarWinds and impacted multiple other organizations.
+Microsoft previously used ‘Solorigate’ as the primary designation for the actor, but moving forward, we want to place appropriate focus on the actors behind the sophisticated attacks, rather than one of the examples of malware used by the actors.
+Microsoft Threat Intelligence Center (MSTIC) has named the actor behind the attack against SolarWinds, the SUNBURST backdoor, TEARDROP malware, and related components as NOBELIUM.
+As we release new content and analysis, we will use NOBELIUM to refer to the actor and the campaign of attacks.
+More than a month into the discovery of Solorigate, investigations continue to unearth new details that prove it is one of the most sophisticated and protracted intrusion attacks of the decade.
+Our continued analysis of threat data shows that the attackers behind Solorigate are skilled campaign operators who carefully planned and executed the attack, remaining elusive while maintaining persistence.
+These attackers appear to be knowledgeable about operations security and performing malicious activity with minimal footprint.
+In this blog, we’ll share new information to help better understand how the attack transpired.
+Our goal is to continue empowering the defender community by helping to increase their ability to hunt for the earliest artifacts of compromise and protect their networks from this threat.
+We have published our in-depth analysis of the Solorigate backdoor malware (also referred to as SUNBURST by FireEye), the compromised DLL that was deployed on networks as part of SolarWinds products, that allowed attackers to gain backdoor access to affected devices.
+We have also detailed the hands-on-keyboard techniques that attackers employed on compromised endpoints using a powerful second-stage payload, one of several custom Cobalt Strike loaders, including the loader dubbed TEARDROP by FireEye and a variant named Raindrop by Symantec.
+One missing link in the complex Solorigate attack chain is the handover from the Solorigate DLL backdoor to the Cobalt Strike loader.
+Our investigations show that the attackers went out of their way to ensure that these two components are separated as much as possible to evade detection.
+This blog provides details about this handover based on a limited number of cases where this process occurred.
+To uncover these cases, we used the powerful, cross-domain optics of Microsoft 365 Defender to gain visibility across the entire attack chain in one complete and consolidated view.
+We’ll also share our deep dive into additional hands-on-keyboard techniques that the attackers used during initial reconnaissance, data collection, and exfiltration, which complement the broader TTPs from similar investigative blogs, such as those from FireEye and Volexity.
+An attack timeline that SolarWinds disclosed in a recent blog showed that a fully functional Solorigate DLL backdoor was compiled at the end of February 2020 and distributed to systems sometime in late March.
+The same blog also said that the attackers removed the Solorigate backdoor code from SolarWinds’ build environment in June 2020.
+Considering this timeline and the fact that the Solorigate backdoor was designed to stay dormant for at least two weeks, we approximate that the attackers spent a month or so in selecting victims and preparing unique Cobalt Strike implants as well as command-and-control (C2) infrastructure.
+This approximation means that real hands-on-keyboard activity most likely started as early as May.
+Timeline of the protracted Solorigate attack
+But how exactly does this jump from the Solorigate backdoor (SUNBURST) to the Cobalt Strike loader (TEARDROP, Raindrop, and others) happen?
+What code gets triggered, and what indicators should defenders look for?
+Diagram of transition between Stage 1 and Stage 2 of the Solorigate attack
+Sophisticated attackers like those behind Solorigate have a goal of expansion and stealthy persistence to maximize the amount of time they can remain undetected and collect valuable information.
+It’s important for organizations to be able to look at forensic data across their entire environment to see how far attackers have traversed the network and how long they were there, in order to have confidence that attacks have been properly remediated from the environment.
+The best way to do that is with an extended detection and response (XDR) solution that enables organizations to replay past events to look for activity that might reveal the presence of an attacker on the network.
+Affected organizations without an XDR solution like Microsoft 365 Defender in place will have a difficult job of performing incident response.
+What we found from our hunting exercise across Microsoft 365 Defender data further confirms the high level of skill of the attackers and the painstaking planning of every detail to avoid discovery.
+To illustrate, the following diagram shows the entry vector attack chain at a glance:
+Transition from Solorigate backdoor to Cobalt Strike
+We spent countless hours investigating Microsoft Defender telemetry and other signals from potential patient-zero machines running the backdoored version of SolarWinds DLL.
+Most of these machines communicated with the initial randomly generated DNS domain .avsvmcloud.com but without significant activity (step #1).
+However, we saw limited cases in May and June where the initial DNS network communication was closely followed by network activity on port 443 (HTTPS) to other legit-looking domains (step #7).
+On these handful of machines, we performed deep inspection of telemetry.
+We know that the Solorigate backdoor only activates for certain victim profiles, and when this happens, the executing process (usually SolarWinds.BusinessLayerHost.exe) creates two files on disk (step #2):
+At this point the attackers are ready to activate the Cobalt Strike implant.
+However, the attackers apparently deem the powerful SolarWinds backdoor too valuable to lose in case of discovery, so they tried to separate the Cobalt Strike loader’s execution from the SolarWinds process as much as possible.
+Their hope is that, even if they lose the Cobalt Strike implant due to detection, the compromised SolarWinds binary and the supply chain attack that preceded it are not exposed.
+The attackers achieved this by having the SolarWinds process create an Image File Execution Options (IFEO) Debugger registry value for the process dllhost.exe (step #3).
+This is a known MITRE ATT&CK technique used for persistence, but it could also be abused to trigger execution of malicious code when a certain process is launched.
+Once the registry value is created, the attackers simply wait for the occasional execution of dllhost.exe, which might happen naturally on a system.
+This execution triggers a process launch of wscript.exe configured to run the VBScript file dropped in step #4.
+The VBScript in turn runs rundll32.exe, activating the Cobalt Strike DLL (step #5) using a clean parent/child process tree completely disconnected from the SolarWinds process.
+Finally, the VBScript removes the previously created IFEO value to clean up any traces of execution (step #6) and also deletes the following registry keys related to HTTP proxy:
+In our investigation, we identified several second-stage malware, including TEARDROP, Raindrop, and other custom loaders for the Cobalt Strike beacon.
+During the lateral movement phase, the custom loader DLLs are dropped mostly in existing Windows sub-directories.
+Below are some example paths (additional paths are listed at the end of this blog):
+The files have names that resemble legitimate Windows file and directory names, once again demonstrating how the attackers attempted to blend in the environment and hide in plain sight:
+TEARDROP, Raindrop, and the other custom Cobalt Strike Beacon loaders observed during the Solorigate investigation are likely generated using custom Artifact Kit templates.
+Each custom loader loads either a Beacon Reflective Loader or a preliminary loader that subsequently loads the Beacon Reflective Loader.
+Reflective DLL loading is a technique for loading a DLL into a process memory without using the Windows loader.
+Structure of the two variants of Cobalt Strike Beacon loaders observed in Solorigate attacks
+In the succeeding sections, we discuss the Cobalt Strike Beacon variants we observed in our Solorigate investigations.
+To date, Microsoft has analyzed two versions of the second-stage custom Cobalt Strike Beacon loader known as TEARDROP (detected as Trojan:Win64/Solorigate.SA!dha by Microsoft):
+Irrespective of the loading methodology, both versions have an export function that contains the trigger for the malicious code.
+The malicious code is executed in a new thread created by the export function.
+Upon execution, the malicious code attempts to open a file with a .jpg extension (e.g., festive_computer.jpg, upbeat_anxiety.jpg, gracious_truth.jpg, and confident_promotion.jpg).
+Further analysis is required to determine the purpose and role of the .jpg file referenced by each sample.
+The code also checks the presence of the Windows registry key SOFTWARE\Microsoft\CTF and terminates if the registry key is present or accessible.
+Next, the code proceeds to decode and subsequently execute an embedded custom preliminary loader.
+Structure of Variant 1 custom loader
+The preliminary loader used by this variant of custom loader is typically generated using a Cobalt Strike Artifact Kit template (e.g., bypass-pipe.c):
+Disassembled function from preliminary loader compiled from Artifact Kit’s bypass-pipe.c template
+In its true form, the custom Artifact Kit-generated preliminary loader is a DLL that has been transformed and loaded like shellcode in memory.
+The preliminary loader is responsible for loading the next-stage component, which is a Beacon Reflective Loader/DLL (Cobalt Strike Beacon is compiled as a reflective DLL).
+The Reflective Loader ultimately initializes and executes Beacon in memory.
+In our investigations, we came across additional custom loaders for Cobalt Strike’s Beacon that appear to be generated using custom Cobalt Strike Artifact Kit templates.
+Unlike TEARDROP, in which the malicious code is triggered by an export function, the malicious code in these variants is triggered directly from the DLL’s entry point, which creates a new thread to execute the malicious code.
+These Variant 2 custom loaders also contain an attacker-introduced export (using varying names) whose only purpose is to call the Sleep() function every minute.
+Example of a custom export function from a Variant 2 loader
+Additionally, unlike TEARDROP, these variants do not contain a custom preliminary loader, meaning the loader DLL de-obfuscates and subsequently executes the Cobalt Strike Reflective DLL in memory.
+Structure of Variant 2 custom Loader
+These custom loaders can be further divided into two types:
+Two subtypes of the custom Loader
+The ultimate goal of both Type A and B loaders is to de-obfuscate and load a Cobalt Strike Reflective Loader in memory.
+At the conclusion of the de-obfuscation process, both variants proceed to load the Reflective Loader in memory, which subsequently executes Cobalt Strike Beacon in memory.
+Metadata and timeline analysis of the custom loaders, combined with analysis of the configuration data extracted from each Beacon payload, led to following discoveries:
+File path for a C++ header file (.hpp) observed in custom Cobalt Strike loader samples
+As mentioned, the attackers behind Solorigate are skillful and methodic operators who follow operations security (OpSec) best practices to minimize traces, stay under the radar, and avoid detection.
+Some examples of why these attackers stand out for their professional OpSec methodology and anti-forensic behavior are listed below:
+See some of the most interesting and unique TTPs in the table below.
+In most cases, commands and tools are executed via an intermediate “cmd.exe /C” process launched from the Cobalt Strike main parent process.
+We are actively working with MITRE to make sure that any novel technique emerging from this incident is documented in future updates of the ATT&CK framework.
+Execution of additional commands from rundll32.exe seemed to be often interleaved with “cmd.exe /C”.
+This info can be useful for hunting this specific process tree chain as showed in the example.
+When the attackers needed to execute more risky actions on objectives (e.g., credential theft, or recon), they spawned an additional dllhost.exe process with no command-line, which is a rare event.
+Invoke-WMIMethod win32_process -name create -argumentlist ‘rundll32 c:\Windows\[folder]\[beacon].dll [export]’ -ComputerName [target]
+wmic /node:[target] process call create “rundll32 c:\windows\[folder]\[beacon].dll [export]”
+sc \\[dest_machine] stop [service name][perform lateral move Source->Dest]
+sc \\[source_machine] start [service name]
+7z.exe a -v500m -mx9 -r0 -p[password-redacted] .\[filename1].zip .\[filename2].log or .txt
+[renamed-adfind].exe -sc u:* > .\[folder]\[file].
+[renamed-adfind].exe -h [machine] -f (name=”Domain Admins”) member -list | [renamed-adfind].exe -h [machine] -f objectcategory=* > .\[folder]\[file].
+Some examples of [renamed-adfind] observed by Microsoft and other security researchers::
+SearchIndex.exe
+sqlceip.exe
+postgres.exe
+IxNetwork.exe
+csrss.exe
+As we continue to gain deeper understanding of the Solorigate attack, we get a clearer picture of the skill level of the attackers and the extent of planning they put into pulling off one of the most sophisticated attacks in recent history.
+The combination of a complex attack chain and a protracted operation means that defensive solutions need to have comprehensive cross-domain visibility into attacker activity and provide months of historical data with powerful hunting tools to investigate as far back as necessary.
+Modern attacks like Solorigate highlight the need for organizations to use advanced security solutions like Microsoft 365 Defender and Azure Sentinel and operate security response under an “assume breach” mentality.
+Microsoft 365 Defender harnesses the power of multiple capabilities and coordinates protection across domains to provide comprehensive defense.
+Azure Sentinel collects data from multiple data sources, including Microsoft 365 Defender, to connect data together and allow broad hunting for attacker activity.
+In our ongoing forensic analysis of known Solorigate cases with malicious activity occurring between May and November 2020, we have in some instances seen the following relevant alerts generated by Microsoft Defender for Endpoint and Microsoft Defender for Identity.
+Incident responders and defenders investigating Solorigate incidents during that timeframe can refer to these alerts, alone or in combination, as potential indicators of the Solorigate activity.
+Microsoft Defender for Endpoint alerts:
+Microsoft Defender for Identity alerts:
+Alert raised by Microsoft Defender for Endpoint on Solorigate-related malicious activity in June 2020
+The disclosure of the Solorigate attack and the investigations that followed unearthed more details and intelligence that we used to improve existing detections and build new ones.
+Security operations teams looking to get a comprehensive guide on detecting and investigating Solorigate can refer to Using Microsoft 365 Defender to protect against Solorigate.
+Meanwhile, security administrators can use the recommendations for hardening networks against Solorigate and similar sophisticated cyberattacks outlined in Increasing resilience against Solorigate and other sophisticated attacks with Microsoft Defender.
+To get the latest information and guidance from Microsoft, visit https://aka.ms/solorigate.
+Microsoft 365 Defender Research Team
+Microsoft Threat Intelligence Center (MSTIC)
+Microsoft Cyber Defense Operations Center (CDOC)
+Custom Cobalt Strike Beacon loader (SHA-256):
+File paths for the custom Cobalt Strike Beacon loader:
+A collection of Advanced Hunting Queries (AHQ) related to Solorigate is located in our AHQ repository in GitHub.
+To locate possible exploitation activity related to the contents of this blog, you can run the following advanced hunting queries via Microsoft Defender for Endpoint:
+Look for anomalous usage or running process of 7zip.
+Run query in Microsoft Defender for Endpoint.
+Presence of custom Cobalt Strike
+Look for presence of custom cobalt strike loaders.
+Run query in Microsoft Defender for Endpoint.
+Run query in Microsoft Defender for Endpoint.
+Look for network connections to known command and control domains.
+Run query in Microsoft Defender for Endpoint.
+Microsoft is a leader in cybersecurity, and we embrace our responsibility to make the world a safer place.

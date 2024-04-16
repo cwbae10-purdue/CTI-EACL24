@@ -1,0 +1,73 @@
+Even in these uncertain times, state-sponsored groups continue their hacking attempts and we must stay vigilant at all times.
+We recently investigated such a state-sponsored attack on a SentinelOne customer, one of the leaders in their field of business.
+In light of the Coronavirus lockdowns and subsequent understaffing at many businesses, we were contacted by the customer to help investigate an intrusion that was discovered in their network by threat alerts in their SentinelOne Console.
+We were contacted shortly after the malicious activity was discovered and asked to find the attackers’ persistence methods as well as to ensure full remediation.
+In this post, we’ll describe the procedure of how we did that by using SentinelOne features as well as other tools and methods we developed along the way.
+Progression: The attack propogated initially through the company’s VPN to an inner Windows server, and then on to the Domain Controller and afterward to servers containing the sought-after data.
+Toolkit: The attackers used a CobaltStrike beacon with a then-unknown persistence method using DLL hijacking (detailed below).
+Other than that, the group relied solely on LOLBins and mostly fileless methods for local execution and lateral movement.
+Hunting: Beacon configuration parsing tool and related SentinelOneQL hunting queries.
+We learned from the customer that the same actor had accessed the company in August 2019 via their Citrix server.
+Even though the customer has had multiple credential rotations since, implemented haveibeenpwned password lookups and aligned with NIST 800-63B, our assessment was that the actor had used intelligence gained from stolen credentials in their previous access to connect to the company’s VPN service.
+The attackers connected to the company’s VPN through a public PureVPN node.
+This hides their real IP address in the VPN’s logs and makes attribution more difficult.
+At the beginning of our investigation, we reviewed the threats marked by the SentinelOne Agent in the Console.
+One of the Attack Storylines looked like this:
+From this, we could see how the attackers achieved lateral movement and what code they ran: a one-line PowerShell payload that we identified as a CobaltStrike Beacon stager:
+It’s easy to see from the Attack Storyline that after the beacon was up and running, they first ran quser to verify they’re running as SYSTEM and then migrated themselves into explorer.exe for masquerading as a benign process.
+From explorer.exe, they ran multiple recon commands (the IPs in this post were changed for privacy):
+We can tell that at least some of the commands aren’t as part of an automated recon script by their occasional typo; for example, these commands were ran one after the other:
+By looking at that explorer’s DNS requests and PowerShell HTTP requests we were able to obtain their C2 domains.
+To verify these domains we base64-decoded the Beacon’s PowerShell stager and analyzed that shellcode using the great scdbg tool:
+One of their first actions in the network was to dump credentials via copying the NTDS.
+To do so, using the Beacon they connected to the Domain Controller’s C$ share and uploaded update.bat, and to run it they created a remote scheduled task.
+But instead of running the task on demand, it was timed so it would run shortly after:
+The batch file contained the commands to dump the NTDS (and other registry files needed to parse it) and delete the scheduled task:
+To exfiltrate the NTDS the attackers used rar.exe that was already present on the system (validating the target has WinRAR installed first):
+In our searches, the usage of WinRAR’s CLI tool with password encryption was found to be pretty indicative of malicious actions.
+By taking the NTDS from the network the attackers can freely move laterally as any user using pass-the-hash or golden/silver tickets.
+Remedial actions taken at this point:
+Soon after these actions, we saw in the SentinelOne Console that after a user logs in to the infected systems the beacon starts signalling again.
+Not surprisingly, the adversary had used some kind of persistence here.
+We found an interesting file drop they had made very early in this operation – a DLL file to C:Windowswlanapi.dll that was uploaded remotely to several systems.
+The dropped DLL contains an encoded Beacon payload and a custom-made unpacker.
+It masquerades by name to a legitimate wlanapi.dll, which is part of the Wireless LAN service (wlansvc) responsible for exporting functions for tasks such as listing nearby wireless networks and connecting to them.
+In our research, we found that this file does not always exist by default and is probably downloaded automatically by the OS when there is a wireless adapter.
+This DLL is loaded by explorer.exe when a user logs in, as explained in in this detailed post, which was released just as we finished our research.
+This is how the exports of the normal wlanapi.dll look:
+But the dropped DLL has no exports, and the DllMain looks like this:
+The beacon_init is a simple function that decodes the Beacon payload and runs it in a new thread.
+It starts with a check of whether it’s running in svchost.exe, but then totally ignores that check.
+It then creates a mutex named GlobalexampleMutex.
+It builds the mutex name using a float for the first 16 chars and an int for the remaining three characters:
+This means the string "GlobalexampleMutex" won’t be found in a string search on this binary, only "GlobalexampleMu".
+Then it copies the encoded Beacon buffer to a newly allocated memory, from where it XORs it using a hardcoded 10-byte key:
+We dumped to file the decoded Beacon from memory and parsed it using a script we wrote to extract the Beacon’s configuration.
+During our investigation, we wanted to make sure we had extracted every bit of information from the memory dumps we had and the persistence we that we had found so we can use that data to search for the same actor across all our customers and in VirusTotal.
+To this end, we wrote a Python script that parses CobaltStrike Beacon configuration from a PE file or a memory dump.
+The Beacon’s configuration is usually XOR-encoded using a single hardcoded byte, which is 0x69 in Beacon version 3 and 0x2e in Beacon version 4, and is in a TLV (Type-length-value) format.
+In our searches we found good scripts (thanks JPCERT and CAPE!
+), but they lacked support for Beacon version 4 and didn’t parse every field there is in the configuration, so we chose to rewrite and improve them.
+The script is available here and its usage is simple:
+Parsing the Beacon encoded inside the wlanapi.dll gives this (cleaned a bit for brevity):
+Using this information it’s possible to create Yara rules that match the exact configuration of the Beacon you want.
+Let’s say you want to find Beacons version 3 with Host: officeasiaupdate.appspot.com as header parameter and a combination of parameters DNS_Idle=0.0.0.0 and SleepTime=3000:
+Then in a Yara rule:
+Any feedback and pull requests are welcomed.
+MD5: 87E00060C8AB33E876BC553C320B37D4SHA1: BDF9679524C78E49DD3FFDF9C5D2DC8980A58090Description: wlanapi.dll (Persistence)
+Here are some queries that can be used in the ‘Visibility’ page in the SentinelOne Console.
+These queries can help find some of the actions that were described above but as for any hunting query – they might need fine-tuning for some environments.
+Unsigned DLL being dropped straight into windows, system32 or syswow64 folders:
+DLL being moved into windows, system32 or syswow64 folders:
+Suspicious BAT / CMD files being dropped into temp folder:
+Using too many cmd /c with RCE Living off the land binaries
+Rar with password or with a specific compression level (our research suggests it’s rare to see it used legitimately with the RAR CLI tool).
+Executing scheduled task once on a specific time
+Loading a wlanapi.dll or wlanhlp.dll that was dropped from a different process.
+In this case, the Unknown file is referenced to lateral movements groups.
+Get notified when we post new content.
+Keep an eye out for new content!
+In the era of interconnectivity, when markets, geographies, and jurisdictions merge in the melting pot of the digital domain, the perils of the threat ecosystem become unparalleled.
+Crimeware families achieve an unparalleled level of technical sophistication, APT groups are competing in fully-fledged cyber warfare, while once decentralized and scattered threat actors are forming adamant alliances of operating as elite corporate espionage teams.
+Get notified when we post new content.
+Keep an eye out for new content!

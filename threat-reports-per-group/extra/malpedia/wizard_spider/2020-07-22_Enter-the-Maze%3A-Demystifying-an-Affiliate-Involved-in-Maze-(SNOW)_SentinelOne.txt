@@ -1,0 +1,86 @@
+Affiliate involved in Maze ransomware operations profiled from the actor perspective while also detailing their involvement in other groups.
+By Jason Reaves and Joshua Platt
+Maze ransomware became famous for moving from widespread machine locking to corporate extortion with a blackmail component.
+Like most cybercrime groups, their intention is to maximize profits.
+As companies have adapted to the threat of ransomware by improving backup solutions and adding more layers of protection, the ransomware actors would noticeably see a hit in their returns as companies refused to pay.
+It makes sense then to add another layer since you have already infiltrated the network to add a blackmail component by stealing sensitive data.
+Most of the existing research into Maze shows that it is frequently a secondary or tertiary infection vector[8].
+This means it is leveraged post initial access phase, frequently reported to be through RDP[5,6].
+Therefore, finding the loader being leveraged for delivering the Maze payload in memory is something that doesn’t happen very frequently.
+This loader has been leveraged in its unpacked form[9] being directly downloaded (hxxp://37[.]1.210[.
+ServerWhile researching the custom loader, we discovered an active attack server leveraged by a Maze affiliate, SNOW.
+Defense EvasionProcess injection to hide beacon
+Initial access involved using an infected system with RDP opened to the internet for scanning, scanning performed was both SMB and RDP based.
+Once the actor has an infected system, they will sometimes reuse it for further scanning either internally or externally.
+Example actor leveraging Metasploit for SMB scanning:
+The actor also leveraged Cobalt Strike on selected infections to perform RDP scanning using portscan.
+Multiple check-in logs indicated the beacon’s preferred stager parent was PowerShell.
+process: powershell.exe; pid: 28068; os: Windows; version: 10.0; beacon arch: x64 (x64)
+Multiple systems the actor gained initial access to had no Administrator access, so the actor frequently would then begin looking for other systems and mapping out the network (recon).
+The actor was also very patient in these situations, choosing to focus on several persistence paths using multiple backdoors and waiting in the hopes that someone would login to the system with higher access.
+The actor would sometimes let these infections sit for 2-3 days before logging back in and checking them.
+If the actor did have higher privileges, then they would frequently attempt to escalate using methods outlined in the Privilege Escalation section of the TTP (Tactics, Techniques and Procedures) section.
+The actor would begin looking for other systems they could access using existing credentials, mapped shares, other harvested credentials, or vulnerabilities.
+Once the actor had mapped out the network and harvested credentials from normal workstations, they would attempt to pivot to higher profile servers such as the domain controller.
+Due to the likelihood of the actor exfiltrating data or performing ransom activities the investigation ends here with the takedown of the server.
+Before looking at the overlaps, we should explain that this actor uses a particular loader that is designed to detonate the onboard protected Maze file.
+Most of the loaders discovered start with a killswitch check, this loader immediately has one such string:
+In the event that the file “C:AhnLabSucks” exists, then the DLL will print the message “Ahnlab really sucksn” and will then exit.
+If it doesn’t exist, it begins allocating memory and copying over data:
+Next some hardcoded strings are loaded:
+Eventually, this leads to a function call that is sitting in a loop along with a sub loop for XORing.
+This is a commonly seen code structure for encryption algorithms such as AES.
+This, however, is not AES; it turns out to be Sosemanuk[7].
+If you’ve never identified encryption or compression algorithms before, hardcoded values are a good place to try to identify the encryption routine.
+Take for example this hardcoded DWORD value:
+Searching for this value led me to Sosemanuk source code, which I then compared with what I was seeing in the binary:
+There were also a number of hardcoded tables used:
+A search for ‘0xe19fcf13’ gets us hits for Sosemanuk source code, and we can find the tables pretty easily from the source:
+After downloading the source and building it into a shared object library, we can utilize this shared object file from Python.
+To test, I ripped out the small block of data that was copied over and then used the Sosemanuk python script that was provided by the package at https://www.seanet.com/~bugbee/crypto/sosemanuk/.
+This turns out to be the code that will map a binary into memory:
+There is also a larger chunk of data that will be copied over later:
+We can hazard a guess this will be a PE file, but since the same Sosemanuk encryption key and IV will be utilized we can just decrypt and check:
+After decrypting out the payload it is very easy to identify that it is a sample of Maze ransomware:
+There are two interesting overlaps involving this Maze Loader.
+The first is that one of the actor’s recovered samples was a crypted sample of a Maze loader with a certificate chain onboard from Sectigo for “BCJTJEJXDCZSKZPJGJ0”.
+Pivoting on this chain leads us to a number of eCrime malware families that have been used for delivering second stage malware previously.
+Also interesting is that the new Gozi being utilized by Gozi ConfCrew[10] uses one of these keys for their loader service: ‘21291029JSJUXMPP’.
+Secondly, during our investigation of a packed sample of this loader, we noticed that it was delivering Maze with a very distinctive crypter commonly associated with TrickBot.
+The crypter being used here is one that is predominately utilized by TrickBot customers.
+The latest variant is easy to identify due to its continued use of VirtualAllocExNuma and a modified RC4 routine.
+The string “383669855” is the ROR-13 hash of VirtualAllocExNuma after being uppcased.
+After being resolved, it will be used to allocate a large chunk of memory and have the data copied over.
+The data will then be decrypted using a slightly modified version of RC4, the SBOX size is extended.
+After unpacking we are left with a DLL.
+This DLL turns out to be the Maze Loader that we discussed earlier.
+This loader also has a certificate appended to it in the overlay data:
+The overlay certificate even includes the WIN_CERTIFICATE structure, so it was possibly ripped off a binary and then appended to the end of the file.
+As previously mentioned, we began tracking this actor’s attack servers, which predominantly leverage the use of Cobalt Strike.
+However, trying to pivot on a tool like Cobalt Strike can be challenging, as you will get lost in a sea of data pretty quickly.
+It can be easy to simply look for beacons using the same IOC and pivot on that, but that is naive so we decided to look for some other ways.
+The Cobalt Strike beacons discovered here provide an excellent opportunity to showcase this methodology using a real world example.
+Let’s take a recovered beacon from this investigation where the attacker was using the leaked version of Cobalt Strike.
+The above is the watermark value from the recovered Cobalt Strike beacon config.
+These values stored packed in a structure that is XOR encoded inside of the beacons.
+This data is signaturable, however.
+37 is the value used to designate the watermark value inside the beacon config.
+To pivot on this data in OSINT, all we need to do is look for the data block above.
+For the purposes of example, I will only show a simple example where we use the default XOR key for Cobalt Strike beacon configs:
+Taking a look at the results in VirusTotal:
+So now we have at least narrowed our sea of Cobalt Strike beacons down a bit to a pool of <100 samples.
+While looking at the config data for these beacons, we notice more trends that begin to stick out:
+Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; Trident/5.0)Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 6.1; Trident/4.0)Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 5.1; Trident/4.0)
+Leading to possibly more related infrastructure:
+Another interesting aspect of this watermark is that it shows up at the end of the PowerShell stager shellcode as well:
+As mentioned, this leads to other infrastructure that could be used by either the affiliate or another affiliate involved in Maze.
+The investigation is ongoing as the actors appear to be very active.
+We have covered in this paper tracking and profiling one of the actors involved in Maze ransomware while also discovering intel of his involvement with multiple other major eCrime families including Zloader, Gozi and TrickBot.
+The notorious ransomware group, Maze, which leverages blackmail and data theft on top of file locking is now found with evidence of an affiliate being involved in multiple major eCrime groups and utilizing a service that is predominantly associated with TrickBot and their customers.
+Most of the major crimeware families have capabilities to deliver other files and this means more things to think about for enterprise defenders as alerts are prioritized, dwell time can be a gamble and it’s no longer safe to assume that you can expect an infection to act a certain way.
+Get notified when we post new content.
+Keep an eye out for new content!
+In the era of interconnectivity, when markets, geographies, and jurisdictions merge in the melting pot of the digital domain, the perils of the threat ecosystem become unparalleled.
+Crimeware families achieve an unparalleled level of technical sophistication, APT groups are competing in fully-fledged cyber warfare, while once decentralized and scattered threat actors are forming adamant alliances of operating as elite corporate espionage teams.
+Get notified when we post new content.
+Keep an eye out for new content!

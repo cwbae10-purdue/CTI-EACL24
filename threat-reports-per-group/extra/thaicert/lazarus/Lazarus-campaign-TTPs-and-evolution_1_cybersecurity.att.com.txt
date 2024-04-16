@@ -1,0 +1,89 @@
+Explore The Hub, our home for all virtual experiences
+AT&T Alien Labs™ has observed new activity that has been attributed to the Lazarus adversary group potentially targeting engineering job candidates and/or employees in classified engineering roles within the U.S. and Europe.
+This assessment is based on malicious documents believed to have been delivered by Lazarus during the last few months (spring 2021).
+However, historical analysis shows the lures used in this campaign to be in line with others used to target these groups.
+The purpose of this blog is to share the new technical intelligence and provide detection options for defenders.
+Alien Labs will continue to report on any noteworthy changes.
+Since 2009, the known tools and capabilities believed to have been used by the Lazarus Group include DDoS botnets, keyloggers, remote access tools (RATs), and drive wiper malware.
+The most publicly documented malware and tools used by the group actors include Destover, Duuzer, and Hangman.
+Several documents identified from May to June 2021 by Twitter users were identified as being linked to the Lazarus group.
+Documents observed in previous campaigns lured victims with job opportunities for Boeing and BAE systems.
+The documents attempted to impersonate new defense contractors and engineering companies like Airbus, General Motors (GM), and Rheinmetall.
+All of these documents contain macro malware, which has been developed and improved during the course of this campaign and from one target to another.
+The core techniques for the three malicious documents are the same, but the attackers attempted to reduce the potential detections and increase the faculties of the macros.
+The first two documents from early May 2021 were related to a German Engineering company focused on the defense and automotive industries, Rheinmetall.
+The second malicious document appears to include more elaborate content, which may have resulted in the documents going unnoticed by victims.
+The Macro has base64 encoded files, which are extracted and decoded during execution.
+Some of the files are split inside the Macro and are not combined until the time of decoding.
+One of the most distinctive characteristics of this Macro is how it evades detections of a MZ header encoded in base64 (TVoA, TVpB, TVpQ, TVqA, TVqQ or TVro), by separating the first two characters from the rest of the content, as seen in Figure 1.
+Figure 1: Concealing of MZ header, as captured by Alien Labs.
+The rest of the content is kept together in lines of 64 characters, and because of this, YARA rules can be used to detect other, typical executable content encoded in base64 aside of the MZ header.
+In this case, up to nine different YARA rules alerted to suspicious encoded strings in our Alien Labs analysis, like VirtualProtect, GetProcAddress, IsDebuggerPresent, GetCurrentProcessId, etc.
+Figure 2: YARA rules detections listed in the AT&T Alien Labs Open Threat Exchange, OTX.
+All files created by the executable and used by the different Macros are located in a new folder C:/Drivers with the purpose of masquerading their activity.
+The Macro copies and renames the Microsoft legitimate executable Certutil.exe into this folder.
+The reason for this copy is to avoid endpoint detection and response (EDR) signatures based on system utilities executed from non-standard sources (a Microsoft Office document in this case).
+Additionally, the copy of Certutil is disguised to avoid using the full string, by partially replacing it with an asterisk %systemroot%\system32\certut*.exe.
+As seen in later iterations, this technique was slightly modified to further reduce the number of detections.
+Certutil is used to decode the previously mentioned file, doing it within the same folder and with a different executable name.
+Once the necessary files have been decoded, the encoded files are removed from the system.
+The script queries WMI to list all the explorer.exe processes, where it will try to inject the malicious payload.
+For the injection, the attackers used Mavinject (a legitimate Windows component that can be used and abused) to perform arbitrary code injections inside any running process.
+Mavinject.exe has been abused for several years, as indicated in this blog from 2017.
+Figure 3: Mavinject injection to explorer, as captured by Alien Labs.
+Figure 4: Malicious Document execution tree listed in the AT&T Alien Labs OTX.
+The payload is in fact a downloader, which requests the next stage to a hardcoded Command and Control (C&C) server and saves it to a new file.
+This request is made through HTTPS with hardcoded headers.
+In this case, the domain used as C&C has been registered for several years, and the domain continues to have a long expiration date.
+For these reasons, this domain was assessed as a compromised domain, leveraged by Lazarus as C&C.
+Figure 5: Hardcoded HTTP headers, as captured by Alien Labs.
+A few weeks after the Rheinmetall document was observed, a very similar document emerged targeting General Motors.
+The characteristics of this document were very similar to the previous one, but with minor updates in the C&C communication process.
+After attempting to execute all its code, the Macro reports back to the C&C server with the status of the infection.
+In the code, a variable is updated from 1 to 3, signaling the status of the execution.
+The C&C is capable of tracking where its execution is failing, or encountering unexpected behavior, based on the requests made to the different documents in the C&C.
+The status report to the C&C also requests the lure document, which at this moment is downloaded from the same C&C and opened.
+Figure 6: C&C beacon to report execution status, as captured by Alien Labs.
+The domain used in this document and payload allgraphicart[.
+]com is no longer a compromised domain.
+It was first registered on April 1, 2021.
+However, it did not have any noteworthy activity until these malicious documents showed up, at least a month after the domain was registered.
+The domain was registered with Porkbun LLC, who offers domains with the free option of protecting the whois information.
+In early June, a month after the first document of this campaign was observed, a new document was identified targeting Airbus.
+This time, the C&C communications were very similar to the previous iteration of the document; however, the execution and injection processes were different.
+This document continues utilizing and masquerading Certutil, but the copy command had the minor addition of another asterisk to reduce the detection risk: %systemroot%\system32\*ertut*.exe.
+In addition to Certutil, the legitimate explorer executable is copied to the C:\Drivers folder through a similar method %systemroot%\exp*.exe.
+As previously mentioned, these files will be copied and renamed to avoid EDR signature-based detections, but this time the destination filenames were carefully chosen.
+If alphabetically ordered, the first two files will correspond to legitimate software, followed by the malicious files, which could mislead investigators on their first peak on the C:\Drivers folder.
+This Macro contains three files encoded with base64 which are copied to disk and decoded during execution:
+After the actions, the Macro executes the mentioned payload with an updated technique.
+The attackers are no longer using Mavinject, but directly executing the payload with explorer.exe, significantly modifying the resulting execution tree as seen in Figure 10.
+Once the payload has been executed, the Macro waits for three seconds before creating of an .inf file in the same folder.
+Whether it was successfully executed or not, the Macro will proceed to send the beacon to the C&C with the execution status and delete all the temporary files, attempting to clean their tracks.
+The only files left in C:\Drivers\ at this point are the payload and the .inf file.
+Figure 7: Malicious Document execution tree, as captured by AT&T Alien Labs.
+]com follows the same pattern and characteristics of the one used in the second iteration.
+The reported activity remains in line with the Lazarus’ past campaigns and is not expected to be the last.
+Attack lures, potentially targeting engineering professionals in government organizations, showcase the importance of tracking Lazarus and their evolution.
+AT&T Alien Labs will continue to monitor and report on any noteworthy changes.
+The following associated detection methods are in use by Alien Labs.
+They can be used by readers to tune or deploy detections in their own environments or for aiding additional research.
+2033135: ET TROJAN Observed Lazarus Maldoc CnC Domain (shopweblive .com in TLS SNI)
+TDR / MTDR CORRELATION RULES
+Malicious activity detected after Certutil.exe file decoding
+Suspicious Process Created by Microsoft Office Application
+The following technical indicators are associated with the reported intelligence.
+A list of indicators is also available in the OTX Pulse.
+Please note, the pulse may include other activities related but out of the scope of the report.
+The findings of this report are mapped to the following MITRE ATT&CK Matrix techniques:
+About the Author: Fernando Martinez
+Fernando Martinez is a Security Researcher working in AT&T Alien Labs team.
+Passionate about Security, running and coffee.
+Telecommunication Engineer, prior to working in Alien Labs, Fernando worked in Digital Forensics and Incident Response.
+Read more posts from Fernando Martinez ›
+TAGS: malware research, yara, otx, alien labs, otx pulse, open threat exchange, lazarus, malicious documents, analysis
+‹ BACK TO ALL BLOGS
+AT&T Cybersecurity Insights™ Report:
+5G and the Journey to the Edge
+We use cookies to provide you with a great user experience.
+By using our website, you agree to our Privacy Policy and Website Terms of Use.

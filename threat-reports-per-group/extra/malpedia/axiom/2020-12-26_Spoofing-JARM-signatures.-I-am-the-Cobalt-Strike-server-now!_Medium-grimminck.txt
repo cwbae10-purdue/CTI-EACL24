@@ -1,0 +1,31 @@
+Dec 25, 2020·3 min read
+TL;DR: JARM is very useful fingerprinting tool, but can be deceived by replaying server hello’s from other services.
+The JARM scanner created by @SalesforceEng is quite an effective tool for system fingerprinting.
+It uses the Server Hello responses from a TLS handshake to generate a signature.
+These can then be used to find similar software or services.
+Ideal for finding C2 or other malicious servers that implement TLS.
+So, It doesn’t come as a surprise that Shodan.io uses this fingerprinting mechanism in their scanners.
+Read the Salesforce post for more information about the JARM library, scanner and its uses.
+The question, then, arises: Is it possible to spoof these JARM signatures?
+Salesforce stated in their post that scanning a Cobalt Strike server would result in the following signature 07d14d16d21d21d07c42d41d00041d24a458a375eef0c576d23a7bab9a9fb1
+That this signature isn’t Cobalt Strike specific, was revealed in the Cobalt Strike blog.
+Let’s still use it as a starting point anyway.
+First I used the list of addresses published by Salesforce to find a server with a matching hash.
+I scanned it using jarmscan and created a packet capture of the response.
+The ssl handshake (filter: ssl.handshake.type == 1) filter in Wireshark will display all TLS client hello’s sent by the scanner.
+And in turn the “Cobalt Strike“ server will return its Server Hello’s.
+These are used by jarmscan to generate a unique signature (filter: ssl.handshake.type == 2).
+These Server Hello’s are the packets we want to replay.
+This can easily be done by setting up a TCP server listening for the specific Client Hello’s, then replaying their corresponding Server Hello’s captured from the alleged Cobalt Strike server.
+A rather lazy, but effective approach.
+I scanned the server on three separate occasions and found the duplicate bytes for every request.
+I used these bytes to identify each specific Client Hello.
+Luckily Wireshark has an option to display packets as C Arrays.
+This made it pretty easy to get the Server Hello’s working in my Golang spoofing application.
+By replaying these responses, slowly but steadily the fingerprint can be rebuilt.
+A full signature can be faked after implementing a reply for all ten different requests.
+You’re probably thinking: So what?
+What is the use of spoofed TLS fingerprints?
+They could be used by malicious actors to hide their applications when tools like JARM scanners are deployed to identify services in a network or on the internet.
+It can also be used for good.
+A honeypot replaying the fingerprint of a specific service can be used to setup a digital smokescreen for attackers.

@@ -1,0 +1,97 @@
+OverviewAnchorDNS is a backdoor used by the TrickBot actors to target selected high value victims.
+It has been seen delivered by both TrickBot and Bazar1 malware campaigns2.
+We also see the use of another Anchor component called AnchorAdjuster.
+The newer variants contain a modification to the structure of the messages sent to the C2, and have added additional encryption routines when creating the DNS queries.
+The tool is executed by an external command and has been seen being run by CobaltStrike2.A valid series of arguments need to be passed to the AnchorAdjuster for it to execute succesfully.
+This creates a UUID unique to the victim machine.
+The string AAAAAAAAAAAAAAAA acts as a placeholder for the UUID and is typically stored in the .rand section.Secondly, if it finds a 66 byte string of all Bs, it overwrites this string with XOR encoded C2s.
+The C2s are the values that were passed to the AnchorAdjuster’s --domain argument.
+This also helps the threat actors to hide any new C2s created, especially if the AnchorDNS sample were to be discovered by a threat researcher.AnchorDNSAnchorDNS communicates to its C2 servers using DNS Tunnelling.
+Using the DNS protocol for command & control benefits AnchorDNS because such requests are often allowed to pass through firewalls.
+Using this method, AnchorDNS is able to exfiltrate data to its C2s in the form of DNS queries.
+The data is encoded and made to appear as subdomains.
+This new name is very different from that of the name used in the past variants4.
+The format of the GUID is as follows:<Computer_Name>_W<major version><minor version><version build number>.<16 bytes UUID>The 16 byte UUID is hardcoded in the .rand section of the AnchorDNS PE file.
+This order is still maintained in the new variants.
+Each query would contain information about the query type and a 16 byte UUID.
+The query type would inform the C2 on what type of message it is receiving and the UUID helps it keep track of the queries.
+If the crafted query is type 0, the message gets divided into parts.
+This is to ensure that the length of the query remains under 255 characters.
+Finally, the queries are XOR’ed with the key 0xb9.
+The image below gives an example of a message for DNS query type 0x0001 and how each divided part is crafted:Message being built for the queriesThe resulting data is encoded with a custom Base32 algorithm and the encoded Base32 UUID is appended at the end.
+Before the start of making the 3 types of DNS queries, the bot tries to resolve the C2 domain to an IP address.
+This IP address is used as a check by the bot to confirm if the C2 has received the message.
+These records form a particular structure (that has been reverse engineered before56), whereby the final message is constructed.
+The change seen is that the resulting data built from the IP records is xor encoded.
+The key to decode the message is Miguel de Cervantes Saavedra.ConclusionDespite their simplicity, the changes seen in AnchorDNS are still effective in evading detection.
+The use of AnchorAdjuster allows the threat actors to modify the AnchorDNS backdoor in-place, providing a stealthy way to add fresh C2s that have been created for new targets.
+AnchorDNS is a backdoor used by the TrickBot actors to target selected high value victims.
+It has been seen delivered by both TrickBot and Bazar1 malware campaigns2.
+AnchorDNS is particularly difficult to track given that it is deployed only post-infection and that too only after a period of reconnaissance, once the malware operators have established that the target is of special interest.
+Following analysis of AnchorDNS samples published in recent reporting23, we have observed that the C2 communications protocol of AnchorDNS has changed.
+We also see the use of another Anchor component called AnchorAdjuster.
+The newer variants contain a modification to the structure of the messages sent to the C2, and have added additional encryption routines when creating the DNS queries.
+Data received from the C2 is now encoded, thereby making the traffic less obvious.
+In this post we analyze the role that AnchorAdjuster plays and outline the changes made to the communication protocol by the recent AnchorDNS samples.
+AnchorAdjuster is a tool that is used to modify an AnchorDNS sample with an updated config and the victim’s UUID.
+The tool is executed by an external command and has been seen being run by CobaltStrike2.
+A valid series of arguments need to be passed to the AnchorAdjuster for it to execute succesfully.
+If arguments are not passed, the tool outputs a message onto the console detailing the arguments required:
+Below is a description of the arguments:
+The AnchorAdjuster tool works as follows:
+Firstly, if it finds a 16 byte string of AAAAAAAAAAAAAAAA in the AnchorDNS bot, it rewrites it with a UUID that it generates by calling CoCreateGuid.
+This creates a UUID unique to the victim machine.
+The string AAAAAAAAAAAAAAAA acts as a placeholder for the UUID and is typically stored in the .rand section.
+Secondly, if it finds a 66 byte string of all Bs, it overwrites this string with XOR encoded C2s.
+The C2s are the values that were passed to the AnchorAdjuster’s --domain argument.
+The XOR key used is a hardcoded hex value 0x23.
+Finally, using the name passed to the --target argument, the tool creates a new AnchorDNS bot with these modifications.
+Below is an example standard output log from the tool after successful execution:
+This technique reuses an AnchorDNS sample to be able to communicate to new C2s that it provides, without having to re-compile an entirely new AnchorDNS binary.
+This also helps the threat actors to hide any new C2s created, especially if the AnchorDNS sample were to be discovered by a threat researcher.
+AnchorDNS communicates to its C2 servers using DNS Tunnelling.
+Using the DNS protocol for command & control benefits AnchorDNS because such requests are often allowed to pass through firewalls.
+Using this method, AnchorDNS is able to exfiltrate data to its C2s in the form of DNS queries.
+The data is encoded and made to appear as subdomains.
+In addition, the C2 can communicate back to the bot by sending information in the form of DNS A records whereby the data is reconstructed by the bot based on AnchorDNS’s specific format.
+To get a better grasp on what new changes have been implemented to this DNS communication, this section will do a quick high-level review on how AnchorDNS works.
+The name of the bot at the start of the message has changed from anchor_dns to stickseed.
+This new name is very different from that of the name used in the past variants4.
+One possible explanation is that tick in stickseed represents the Windows API GetTickCount and seed for a pseudorandom number generator, the two functions that we see being frequently used in the new variant.
+The GUID created by the Bot is recorded by the C2 to keep track of the different infected machines.
+The format of the GUID is as follows:<Computer_Name>_W<major version><minor version><version build number>.<16 bytes UUID>
+The 16 byte UUID is hardcoded in the .rand section of the AnchorDNS PE file.
+If there are no 16 bytes in the .rand section or if there is a string AAAAAAAAAAAAAAAA in that section, the bot skips making any DNS queries.
+Below is a summary of the messages and the command sent to the C2:
+Each message above, made by the AnchorDNS bot, to send to the C2 involves a sequence of 3 types of DNS queries5.
+This order is still maintained in the new variants.
+The table below shows a summary of the sequence of DNS queries made:
+The new variants make changes to the way in which the queries are crafted.
+To better understand the changes made, this section will briefly review how the queries were crafted in the previous variants.
+Each query would contain information about the query type and a 16 byte UUID.
+The query type would inform the C2 on what type of message it is receiving and the UUID helps it keep track of the queries.
+If the crafted query is type 0, the message gets divided into parts.
+This is to ensure that the length of the query remains under 255 characters.
+Finally, the queries are XOR’ed with the key 0xb9.
+This is the only encoding we see in the previous variants.
+The table below summarizes the queries crafted in the old variants6:
+In the new variant, before a query is crafted, the message in each DNS query type is XOR’ed with the key United States of America (USA).
+After encoding the message, a 16 byte UUID is generated for each query type (like the previous variant, the UUID is for the C2 to keep track of the query) and is further encoded with a custom Base32 algorithm using the custom dictionary dghbcijklmnfqrwxyz23stuopaev4569.
+The bot then calculates if the message needs to be divided into parts for all 3 DNS query types (in the previous variant we see this for only the query type 0).
+Below is a python function that calculate the number of parts a message would get divided into and the size of each part:
+In the new variant, the DNS query types are labeled differently (but still follow the same order as the previous):
+For each divided message part, additional information is appended.
+The image below gives an example of a message for DNS query type 0x0001 and how each divided part is crafted:
+The resulting data is encoded with a custom Base32 algorithm and the encoded Base32 UUID is appended at the end.
+So for example, the message parts above would result in the following types of DNS queries being made:
+The query responses for each DNS query type have been slightly modified.
+Before the start of making the 3 types of DNS queries, the bot tries to resolve the C2 domain to an IP address.
+This IP address is used as a check by the bot to confirm if the C2 has received the message.
+Below is a table on what each response means.
+As with the previous version, the DNS query type 0xffff responds with multiple IP records.
+These records form a particular structure (that has been reverse engineered before56), whereby the final message is constructed.
+The change seen is that the resulting data built from the IP records is xor encoded.
+The key to decode the message is Miguel de Cervantes Saavedra.
+Despite their simplicity, the changes seen in AnchorDNS are still effective in evading detection.
+The use of AnchorAdjuster allows the threat actors to modify the AnchorDNS backdoor in-place, providing a stealthy way to add fresh C2s that have been created for new targets.
+The actors behind AnchorDNS continue to actively develop their toolset, increasing flexibility and raising the barrier for detection.

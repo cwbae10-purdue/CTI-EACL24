@@ -1,0 +1,100 @@
+
+          By Anthony Kasza and Micah Yates
+April 7, 2017 at 5:00 AM
+Tags: AutoFocus, Blockbuster, Korea, Lazarus Group, malware, spearphishing
+Unit 42 has identified malware with recent compilation and distribution timestamps that has code, infrastructure, and themes overlapping with threats described previously in the Operation Blockbuster report, written by researchers at Novetta.
+This report details the activities from a group they named Lazarus, their tools, and the techniques they use to infiltrate computer networks.
+The Lazarus group is tied to the 2014 attack on Sony Pictures Entertainment and the 2013 DarkSeoul attacks.
+This recently identified activity is targeting Korean speaking individuals, while the threat actors behind the attack likely speak both Korean and English.
+This blog will detail the recently discovered samples, their functionality, and their ties to the threat group behind Operation Blockbuster.
+This investigation began when we identified two malicious Word document files in AutoFocus threat intelligence tool.
+While we cannot be certain how the documents were sent to the targets, phishing emails are highly likely.
+One of the malicious files was submitted to VirusTotal on 6 March 2017 with the file name "한싹시스템.doc".
+Once opened, both files display the same Korean language decoy document which appears to be the benign file located online at "www.kuipernet.co.kr/sub/kuipernet-setup.docx".
+Figure 1 Dropped decoy document
+This file (Figure 1) appears to be a request form used by the organization.
+Decoy documents are used by attackers who want to trick victims into thinking a received file is legitimate.
+At the moment, the malware infects the computer, it opens a non-malicious file that contains content the target expected to receive (Figure 2.)
+This serves to fool the victim into thinking nothing suspicious has occurred.
+Figure 2 Spear Phishing Attack uses a decoy a file to trick the target
+When these malicious files are opened by a victim, malicious Visual Basic for Applications (VBA) macros within them write an executable to disk and run it.
+If macros are disabled in Microsoft Word, the user must click the “Enable Content” button for malicious VBA script to execute.
+Both documents make use of logic and variable names within their macros, which are very similar to each other.
+Specifically, they both contain strings of hex that when reassembled and XOR-decoded reveal a PE file.
+The PE file is written to disk with a filename that is encoded in the macro using character substitution.
+Figure 3 shows part of the logic within the macros which is identical in both files.
+Figure 3 Malicious document malicious macro source code
+The executable which is dropped by both malicious documents is packed with UPX.
+Once unpacked, the payload (032ccd6ae0a6e49ac93b7bd10c7d249f853fff3f5771a1fe3797f733f09db5a0) can be statically examined.
+The compile timestamp of the sample is March 2nd, 2017, just a few days before one of the documents carrying the implant was submitted to VirusTotal.
+The payload ensures a copy of itself is located on disk within the %TEMP% directory and creates the following registry entry to maintain persistence if the system is shutdown
+It then executes itself with the following command line:
+The implant beacons to its command and control (C2) servers directly via the servers' IPv4 addresses, which are hard coded in the binary, no domain name is used to locate the servers.
+The communications between the implant and the server highly resemble the "fake TLS" protocol associated with malware tools used by the Lazarus group and described in the Operation Blockbuster report.
+However, the possible values of the Server Name Indication (SNI) record within the CLIENT HELLO of the TLS handshake used by the implant differ from those described in the report.
+The names embedded in the new sample and chosen for communications include:
+The C2 servers contacted by the implant mimic the expected TLS server responses from the requested SNI field domain name, including certificate fields such as the issuer and subject.
+However, the certificates' validity, serial number, and fingerprint are different.
+Figure 4 shows a fake TLS session which includes the SNI record "www.join.me" destined for an IPv4 address which does not belong to Join.Me.
+Figure 4 The use of "www.join.me" as an SNI record of a TLS handshake to an IPv4 address which does not host that domain name
+Because the attackers reused similar logic and variable names in their macros, we were able to locate additional malicious document samples.
+Due to the heavy reuse of code in the macros we also speculate the documents are created using an automated process or script.
+Our analysis of the additional malicious documents showed some common traits across the documents used by the attackers:
+Multiple testing documents which dropped and executed the Korean version of the Microsoft calc.exe executable, but contained no malicious code, were also identified.
+This mirrors a common practice in demonstrating exploits of vulnerabilities.
+Interestingly enough, all of the test documents identified were submitted to VirusTotal with English file names from submitters located in the United States (although not during US "working hours").
+Despite the documents having Korean code pages, when executed they open decoy documents with the English text: "testteststeawetwetwqetqwetqwetqw".
+These facts lead us to believe at least some of the developers or testers of the document weaponizing tool may be English speakers.
+While some of the documents identified carry benign payloads, most of the payloads were found to be malicious.
+A cluster of three malicious documents were identified that drop payloads which are related via C2 domains.
+The payloads can be seen highlighted in Figure 5.
+Figure 5 Related executables, their C2 domain names, their dropper documents, and the shared batch file
+The two malicious payloads circled in Figure 5 write a batch script to disk that is used for deleting the sample and itself, which is a common practice.
+The batch script dropped by the two payloads share a file name, file path, and hash value with a script sample (77a32726af6205d27999b9a564dd7b020dc0a8f697a81a8f597b971140e28976).
+This sample is described in a 2016 research report by Blue Coat discussing connections between the DarkSeoul group and the Sony breach of 2014.
+The script's (Figure 6) hash value will vary depending on the name of the file it is to delete.
+It also includes an uncommon label inside it of "L21024".
+The file the script deletes is the payload which writes the script to disk.
+In the case of Figure 6, the payload was named "thing.exe".
+Figure 6 The contents of the shared batch script
+In addition to the commonalities already identified in the communication protocols and the shared cleanup batch script use by implants, the payloads also share code similarities with samples detailed in Operation Blockbuster.
+This is demonstrated by analyzing the following three samples, which behave in similar ways:
+We used these three samples to reach the conclusion that the samples investigated are tied to the Lazarus group.
+First, these three samples all use a unique method of executing a shell command on the system.
+An assembly function is passed four strings.
+Some of the strings contain placeholders.
+The function interpolates the strings and creates a system command to be executed.
+The following four parameters are passed to the function:
+These are used not only in the implant we investigated, but also in the two samples above.
+Additionally, many samples discussed in the Operation Blockbuster report also made use of this technique.
+Figure 7 shows the assembly from the unpacked implant (032ccd6ae0a6e49ac93b7bd10c7d249f853fff3f5771a1fe3797f733f09db5a0) delivered by our malicious document and shows the string interpolation function being used.
+Figure 7 The string interpolation function assembly with library names from 032ccd6ae0a6e49ac93b7bd10c7d249f853fff3f5771a1fe3797f733f09db5a0
+Figure 8 shows the same string interpolation logic but within a different sample (79fe6576d0a26bd41f1f3a3a7bfeff6b5b7c867d624b004b21fadfdd49e6cb18.)
+The instructions are the same except where the system calls are replaced with DWORDs which brings us to a second similarity.
+Figure 8 The string interpolation function assembly without library names from 79fe6576d0a26bd41f1f3a3a7bfeff6b5b7c867d624b004b21fadfdd49e6cb18
+The second similarity ties this sample to a known Lazarus group sample (520778a12e34808bd5cf7b3bdf7ce491781654b240d315a3a4d7eff50341fb18.)
+Upon execution, both samples set aside memory to be used as function pointers.
+These pointers are assigned values by a dedicated function in the binary.
+Other functions in the binary call the function pointers instead of the system libraries directly.
+The motivation for the use of this indirection is unclear, however, it provides an identifying detection mechanism.
+These two samples resolve system library functions in a similar yet slightly different manner.
+The sample known to belong to the Lazarus group uses this indirect library calling in addition to a function that further obfuscates the function's names using a lookup table within a character substitution function.
+This character substitution aspect was removed in the newer samples.
+The purpose for removing this functionality between the original Operation Blockbuster report samples and these newer ones is unclear.
+Figure 9 displays how this character substitution function was called within the Lazarus group sample.
+Figure 9 The character substitution function from 520778a12e34808bd5cf7b3bdf7ce491781654b240d315a3a4d7eff50341fb18 being called
+Figure 10: A comparison of features between samples
+Overlaps in network protocols, library name obfuscation, process creation string interpolation, and dropped batch file contents demonstrate a clear connection between the recent activity Unit 42 has identified and previously reported threat campaigns.
+Demonstrated by the malicious document contents, the targets of this new activity are likely Korean speakers, while the attackers are likely English and Korean speakers.
+It is unlikely these threat actors will stop attacking their targets.
+Given the slight changes that have occurred within samples between reports, it is likely this group will continue to develop their tools and skillsets.
+Customers using WildFire are protected from these threats and customers using AutoFocus can find samples from this campaign tagged as Blockbuster Sequel.
+Ignite ’17 Security Conference: Vancouver, BC June 12–15, 2017
+Ignite ’17 Security Conference is a live, four-day conference designed for today’s security professionals.
+Hear from innovators and experts, gain real-world skills through hands-on sessions and interactive workshops, and find out how breach prevention is changing the security industry.
+Visit the Ignite website for more information on tracks, workshops and marquee sessions.
+Sign up to receive the latest news, cyber threat intelligence and research from us
+Please enter your email address!
+Please mark, I'm not a robot!
+By submitting this form, you agree to our Terms of Use and acknowledge our Privacy Statement.
+© 2021 Palo Alto Networks, Inc. All rights reserved.

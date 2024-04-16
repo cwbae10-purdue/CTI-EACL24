@@ -1,0 +1,105 @@
+In May 2020, Kaspersky technologies prevented an attack on a South Korean company by a malicious script for Internet Explorer.
+Closer analysis revealed that the attack used a previously unknown full chain that consisted of two zero-day exploits: a remote code execution exploit for Internet Explorer and an elevation of privilege exploit for Windows.
+Unlike a previous full chain that we discovered, used in Operation WizardOpium, the new full chain targeted the latest builds of Windows 10, and our tests demonstrated reliable exploitation of Internet Explorer 11 and Windows 10 build 18363 x64.
+On June 8, 2020, we reported our discoveries to Microsoft, and the company confirmed the vulnerabilities.
+At the time of our report, the security team at Microsoft had already prepared a patch for vulnerability CVE-2020-0986 that was used in the zero-day elevation of privilege exploit, but before our discovery, the exploitability of this vulnerability was considered less likely.
+The patch for CVE-2020-0986 was released on June 9, 2020.
+Microsoft assigned CVE-2020-1380 to a use-after-free vulnerability in JScript and the patch was released on August 11, 2020.
+We are calling this and related attacks ‘Operation PowerFall’.
+Currently, we are unable to establish a definitive link with any known threat actors, but due to similarities with previously discovered exploits, we believe that DarkHotel may be behind this attack.
+Kaspersky products detect Operation PowerFall attacks with verdict PDM:Exploit.Win32.Generic.
+The most recent zero-day exploits for Internet Explorer discovered in the wild relied on the vulnerabilities CVE-2020-0674, CVE-2019-1429, CVE-2019-0676 and CVE-2018-8653 in the legacy JavaScript engine jscript.dll.
+In contrast, CVE-2020-1380 is a vulnerability in jscript9.dll, which has been used by default starting with Internet Explorer 9, and because of this, the mitigation steps recommended by Microsoft (restricting the usage of jscript.dll) cannot protect against this particular vulnerability.
+CVE-2020-1380 is a Use-After-Free vulnerability that is caused by JIT optimization and the lack of necessary checks in just-in-time compiled code.
+A proof-of-concept (PoC) that triggers vulnerability is demonstrated below:
+
+To understand this vulnerability, let us take a look at how func() is executed.
+It is important to understand what value is set to A[5].
+According to the code, it should be an O argument.
+At function start, the O argument is re-assigned to 1, but then the function arguments length is set to 0.
+This operation does not clear function arguments (as it would normally do with regular array) but allows to put argument O2 into the arguments list at index zero using Array.prototype.push, meaning O = O2 now.
+Besides that, if the argument F is equal to 1, then O will be re-assigned once again, but to the integer number 2.
+It means that depending on the value of the F argument, the O argument is equal to either the value of the O2 argument or the integer number 2.
+The argument A is a typed array of 32-bit floating point numbers, and before assigning a value to index 5 of the array, this value should be converted to a float.
+Converting an integer to a float is a relatively simple task, but it become less straightforward when an object is converted to a float number.
+The exploit uses the object abp with an overridden valueOf() method.
+This method is executed when the object is converted to a float, but inside the method there is code that frees ArrayBuffer, which is viewed by Float32Array and where the returned value will be set.
+To prevent the value from being stored in the memory of the freed object, the JavaScript engine needs to check the status of the object before storing the value in it.
+To convert and store the float value safely, JScript9.dll uses the function Js::TypedArray<float,0>::BaseTypedDirectSetItem().
+You can see decompiled code of this function below:
+The problem lies in the fact that the function Js::TypedArray<float,0>::BaseTypedDirectSetItem() is used only in interpretation mode.
+When the function func() is compiled just in time, the JavaScript engine will use the vulnerable code below.
+
+And here is the code of the Js::JavascriptConversion::ToFloat_Helper() function.
+
+As you can see, unlike in interpretation mode, in just-in-time compiled code, the life cycle of ArrayBuffer is not checked, and its memory can be freed and then reclaimed during a call to the valueOf() function.
+Additionally, the attacker can control at what index the returned value is written.
+However, in the case when “arguments.length = 0;”and “arguments.push(O2);” are replaced in PoC with “arguments[0] = O2;” then Js::JavascriptConversion::ToFloat_Helper() will not trigger the bug because implicit calls will be disabled and it will not perform a call to the valueOf() function.
+To ensure that the function func() is compiled just in time, the exploit executes this function 0x10000 times, performing a harmless conversion of the integer, and only after that func() is executed once more, triggering the bug.
+To free ArrayBuffer, the exploit uses a common technique abusing the Web Workers API.
+The function postMessage() can be used to serialize objects to messages and send them to the worker.
+As a side effect, transferred objects are freed and become unusable in the current script context.
+When ArrayBuffer is freed, the exploit triggers garbage collection via code that simulates the use of the Sleep() function: it is a while loop that checks for the time lapse between Date.now() and the previously stored value.
+After that, the exploit reclaims the memory with integer arrays.
+
+When a large number of arrays is created, Internet Explorer allocates new LargeHeapBlock objects, which are used by IE’s custom heap implementation.
+The LargeHeapBlock objects will store the addresses of buffers allocated for the arrays.
+If the expected memory layout is achieved successfully, the vulnerability will overwrite the value at the offset 0x14 of LargeHeapBlock with 0, which happens to be the allocated block count.
+LargeHeapBlock structure for jscript9.dll x86
+ After that, the exploit allocates a huge number of arrays and sets them to another array that was prepared at the initial stage of the exploitation.
+Then this array is set to null, and the exploit makes a call to the CollectGarbage() function.
+This results in defragmentation of the heap, and the modified LargeHeapBlock will be freed along with its associated array buffers.
+At this stage, the exploit creates a large amount of integer arrays in hopes of reclaiming the previously freed array buffers.
+The newly created arrays have a magic value set at index zero, and this value is checked through a dangling pointer to the previously freed array to detect if the exploitation was successful.
+
+As a result, the exploit creates two different JavascriptNativeIntArray objects with buffers pointing to the same location.
+This makes it possible to retrieve the addresses of the objects and even create new malformed objects.
+The exploit takes advantage of these primitives to create a malformed DataView object and get read/write access to the whole address space of the process.
+After the building of the arbitrary read/write primitives, it is time to bypass Control Flow Guard (CFG) and get code execution.
+The exploit uses the Array’s vftable pointer to get the module base address of jscript9.dll.
+From there, it parses the PE header of jscript9.dll to get the address of the Import Directory Table and resolves the base addresses of the other modules.
+The goal here is to find the address of the function VirtualProtect(), which will be used to make the shellcode executable.
+After that, the exploit searches for two signatures in jscript9.dll.
+Those signatures correspond to the address of the Unicode string “split” and the address of the function: JsUtil::DoublyLinkedListElement<ThreadContext>::LinkToBeginning<ThreadContext>().
+The address of the Unicode string “split” is used to get a code reference to the string and with its help, to resolve the address of the function Js::JavascriptString::EntrySplit(), which implements the string method split().
+The address of the function LinkToBeginning<ThreadContext>() is used to obtain the address of the first ThreadContext object in the global linked list.
+The exploit locates the last entry in the linked list and uses it to get the location of the stack for the thread responsible for the execution of the script.
+After that comes the final stage.
+The exploit executes the split() method and an object with an overridden valueOf() method is provided as a limit argument.
+The shellcode is a reflective DLL loader for the portable executable (PE) module that is appended to the shellcode.
+The module is very small in size, and the whole functionality is located inside a single function.
+It creates a file within a temporary folder with the name ok.exe and writes to it the contents of another executable that is present in the remote code execution exploit.
+After that, ok.exe is executed.
+The ok.exe executable contains is an elevation of privilege exploit for the arbitrary pointer dereference vulnerability CVE-2020-0986 in the GDI Print / Print Spooler API.
+Initially, this vulnerability was reported to Microsoft by an anonymous user working with Trend Micro’s Zero Day Initiative back in December 2019.
+Due to the patch not being released for six months since the original report, ZDI posted a public advisory for this vulnerability as a zero-day on May 19, 2020.
+The next day, the vulnerability was exploited in the previously mentioned attack.
+The vulnerability makes it possible to read and write the arbitrary memory of the splwow64.exe process using interprocess communication, and use it to achieve code execution in the splwow64.exe process, bypassing the CFG and EncodePointer protection.
+The exploit comes with two executables embedded in its resources.
+The first executable is written to disk as CreateDC.exe and is used to create a device context (DC), which is required for exploitation.
+The second executable has the name PoPc.dll and if the exploitation is successful, it is executed by splwow64.exe with a medium integrity level.
+We will provide further details on CVE-2020-0986 and its exploitation in a follow-up post.
+Execution of a malicious PowerShell command from splwow64.exe
+The main functionality of PoPc.dll is also located inside a single function.
+It executes an encoded PowerShell command that proceeds to download a file from www[.]static-cdn1[.
+]com/update.zip, saves it to the temporary folder as upgrader.exe and executes it.
+We were  unable to analyze upgrader.exe because Kaspersky technologies prevented the attack before the executable was downloaded.
+Internet Explorer and Windows zero-day exploits used in Operation PowerFall
+Your email address will not be published.
+Required fields are marked *
+ Save my name, email, and website in this browser for the next time I comment.
+Notify me when new comments are added.
+Just one thing: are you sure that CVE-2019-0676 is a bug in jscript.dll?
+I was not able to confirm this on MSRC or any other sources.
+Hi Firas Salem, thank you for pointing this out, its actually should be CVE-2019-1367 instead
+The hottest research right in your inbox
+While investigating a recent rise of attacks against Exchange servers, we noticed a recurring cluster of activity that appeared in several distinct compromised networks.
+With a long-standing operation, high profile victims, advanced toolset and no affinity to a known threat actor, we decided to dub the cluster GhostEmperor.
+We discovered a campaign delivering the Tomiris backdoor that shows a number of similarities with the Sunshuttle malware distributed by DarkHalo APT and target overlaps with Kazuar.
+This is our latest summary of advanced persistent threat (APT) activity, focusing on significant events that we observed during Q2 2021: attacks against Microsoft Exchange servers, APT29 and APT31 activities, targeting campaigns, etc.
+We recently came across unusual APT activity that was detected in high volumes, albeit most likely aimed at a few targets of interest.
+Further analysis revealed that the actor, which we dubbed LuminousMoth, shows an affinity to the HoneyMyte group, otherwise known as Mustang Panda.
+The hottest research right in your inbox
+© 2021 AO Kaspersky Lab.
+Registered trademarks and service marks are the property of their respective owners.
+The hottest research right in your inbox

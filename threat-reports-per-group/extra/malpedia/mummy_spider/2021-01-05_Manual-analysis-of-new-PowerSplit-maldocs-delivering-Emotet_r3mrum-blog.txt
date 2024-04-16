@@ -1,0 +1,112 @@
+It’s been a long time since my last blog post (~ 2 years).
+The new year has inspired me to dust off some cobwebs and produce a blog post that hopefully someone can learn from.
+In this post, I’ll be covering how to perform manual analysis of the new PowerSplit malicious documents (maldocs) that were first seen in the wild starting in mid/late December 2020.
+Thus far, I’ve only seen this version of PowerSplit delivering Emotet but in the past it has delivered other families such as Retefe and Gozi ISFB.
+Preferably, initial analysis of these types of maldocs would simply consist of submitting the sample some kind of sandbox environment.
+Since PowerSplit doesn’t employ any kind of anti-analysis or anti-vm controls, other than some obfuscation, the sample should fully detonate and the malicious powershell command executed by the maldoc should be present within the detonation output.
+The target audience for this post are those who either want to get their hands dirty or do not have the ability to submit their sample to a sandbox.
+Note for the reader: My analysis in this post details the shortcut I use in order to quickly get to the important artifacts such as malicious command executed by the maldoc and the corresponding C2 URLs embedded within.
+This shortcut skips over a few concepts like how the macro is automatically executed when the document is opened and how I determined that Ddyw4mboy7b (referenced later on) is an instance of the winmgmtS:win32_process class for the sake of brevity.
+Copy the maldoc into a virtual machine (VM) isolated from the network (Host-Only mode).
+This is kind of a big deal.
+Triple check that this host doesn’t have network access to anything.
+Within the isolated VM, open the maldoc with Microsoft Word.
+You should be presented with something similar to this:
+Enable editing by selecting View –> Edit Document from the toolbar menu.
+Ensure that you have the Developer tab enabled (File –> Options –> Customize Ribbon –> Add ‘Developer’ to the Main Tabs).
+You should see the Developer tab, like so:
+On the Developer tab, click the Visual Basic button.
+This will open the Visual Basic (VB) Editor where you can access the embedded macros.
+Locate the module that contains macro code.
+Thus far, these PowerSplit maldocs have only contained two entries in the modules section.
+In this example, one module is named E2ajbo3kwzka_d5z and the other is Qtep_eof7eoc0a.
+As shown in this screenshot, the module Qtep_eof7eoc0a is empty.
+So, we can ignore it.
+In the module that contains the code (E2ajbo3kwzka_d5z), scroll to the very bottom and then slowly scroll up, looking for the pattern:
+It will likely be the first ‘long’ line you will encounter as you scroll up.
+In this sample, it is on line 233 of the macro:
+Ddyw4mboy7b is an instance of the winmgmtS:win32_process class.
+The Create function of this class is being called with 3 arguments:
+Arg1 = Jmz4_bcx3_h(Kb3vxm90vt0_lgn8r3)Arg2 = Zj0kk9rvc7emhtArg3 = Coyz3quoogwk6on
+Microsoft’s documentation on win32_process’s Create function says that the first argument (Jmz4_bcx3_h(Kb3vxm90vt0_lgn8r3)) passed to the Create function is the CommandLine value to be executed.
+The value being passed is actually a call to a function named Jmz4_bcx3_h.
+This is the maldoc’s string decoder function that takes in an encoded string, stored in the variable Kb3vxm90vt0_lgn8r3, and returns the decoded version.
+Arg2 (Zj0kk9rvc7emht) and Arg3 (Coyz3quoogwk6on) represent the CurrentDirectory and ProcessStartupInformation respectively.
+For the purposes of this analysis, we dont care about Arg2 and Arg3… but we need to somehow capture the decoded value that is ultimately passed as Arg1.
+To do this, we need to first comment out the line containing the call to win32_process’s Create function so that it does not execute.
+This can be accomplished by prepending a single quotation mark to the beginning of the line.
+This essentially defangs the maldoc.
+Next, we need to capture the decoded Arg1 value, which represents the command that the maldoc is attempting to execute.
+We can accomplish this by printing out the result of the string decoder function call that was originally passed as Arg1 to the Ddyw4mboy7b.Create function.
+There are a few ways to do this but my preferred method is to use Debug.Print().
+Add a Debug.Print statement, passing it the Arg1 value, just above the line commented.
+If done right, the macro will look like this:
+In order to see the output when the Debug.Print statement is called, we need to enable the ‘Immediate Window’.
+To do this, either hit CTRL+G or go to View –> Immediate Window within the VB Editor.
+If done correctly, a new window labeled Immediate will appear at the bottom of the VB Editor window.
+Now save the modified macro in the VB Editor (CTRL+S).
+Before moving on to the next step, I must reiterate to only do this within an isolated virtual machine.
+Even though we technically defanged THIS document, there is the potential that a different variant could have additional code that we have not accounted for in this analysis.
+Failing to detonate in an isolated VM could result in host system infection and potential spreading to other resources on the network… that would be bad.
+Now switch back to the Word document from the VB Editor and click the ‘Enable Content’ button.
+Doing so will automatically execute the embedded macro… but this is what we want to happen.
+We want the macro to execute so that the string decoding will take place and the decoded string will be printed by the Debug.Print statement that we inserted.
+The actual malicious command will not execute because we commented out the line that was responsible for that action.
+To see if this worked correctly, go back to the VB Editor and inspect the contents of the Immediate window.
+You should see the decoded command that the maldoc was attempting to execute.
+For this sample, the malicious command being executed by the maldoc is a base64 encoded powershell command that includes a pop-up message box that is displayed to the victim when run (Note: this command has not been defanged.
+DO NOT RUN on un-isolated host):
+A vast majority of the code contained within this macro is junk code that has been inserted to cause confusion and to complicate analysis.
+In this example, all code pertaining to the writing of some file is junk code and can be removed without impacting the functionality of the macro.
+The junk code pattern is:
+Knowing this, you could clean up the code a bit by doing a find for the following regex pattern and replacing it with nothing:
+Additionally, since control flow is executed in order and doesn’t jump around, the GoTo statements included can also be considered junk.
+Doing a similar find/replace for the following pattern cleans up the code even further:
+Taking these two steps reduced the total lines of code in the macro from 348 to 24, revealing the true core code that is leveraged by the maldoc:
+Once base64-decoded, the heavily encoded powershell script being executed is:
+Note for the reader: formatting of the above code was cleaned up a bit by putting individual statements on their own line as opposed the original format which had everything on a single line.
+Though encoding styles have changed over time, the PowerSplit maldoc has been generally consistent with how it stores and decodes its C2 URLs.
+The consistency of this format is actually how PowerSplit got its name (the amalgamation of “PowerShell” and the Split() function) .
+Line 16 highlighted in the code above (and displayed below) contains the pattern that we need to look for.
+Typically, with PowerSplit, the C2 URLs are contained within a large encoded string (highlighted in green) that is passed through a replace function (highlighted in red) that performs the ‘decode’.
+The decoded string, which now consists of concatenated C2 URLS separated by some delimiter, is then passed to a split function (highlighted in blue) that converts the single string into an array of C2 URLs:
+"SPliT”($Biy7vfz + $Slfr1gp + $Z7vulcv);
+To decode, copy and paste the above line into a PowerShell command prompt an hit Enter.
+This will place the decoded contents into the variable $Jkdys0o.
+Then type the variable name ($Jkdys0o in this case) and hit Enter to display the variable’s contents, which should be the list of C2 URLs:
+Output (Note: URLs manually defanged):
+Because we extracted this single line from the script, the code that initializes and assigns values to the variables $Biy7vfz, $Slfr1gp, and $Z7vulcv that are used in the Split function is missing.
+As a result, the URL string was never properly converted to an array… but that is ok. We can apply some common sense here and realize that the string was split via the ‘@’ symbol which would have yielded the following output:
+At the time of analysis, these C2 URLs were serving up Emotet.
+Since Emotet analysis isn’t the focus of this blog, I’ll simply suggest here that you use something like the CAPEv2 Sandbox to also automatically extract the Emotet configuration from the binary downloaded by the PowerSplit maldoc.
+
+
+				View all posts by R3MRUM
+Fill in your details below or click an icon to log in:
+
+
+			You are commenting using your WordPress.com account.
+( Log Out / 
+				Change )
+
+
+			You are commenting using your Google account.
+( Log Out / 
+				Change )
+
+
+			You are commenting using your Twitter account.
+( Log Out / 
+				Change )
+
+
+			You are commenting using your Facebook account.
+( Log Out / 
+				Change )
+ Notify me of new comments via email.
+ Notify me of new posts via email.
+Malware Traffic Analysis
+Open Analysis Labs Tutorials
+Malware Tech Blog
+Malware Unicorn’s Blog
+Malware Unicorn’s RE101

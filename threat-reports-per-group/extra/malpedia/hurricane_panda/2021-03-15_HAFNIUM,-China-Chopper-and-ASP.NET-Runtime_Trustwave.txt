@@ -1,0 +1,70 @@
+Get access to immediate incident response assistance.
+Attracting more than a half-million annual readers, this is the security community's go-to destination for technical breakdowns of the latest threats, critical vulnerability disclosures and cutting-edge research.
+The recent Microsoft Exchange Server zero-day exploits (CVE-2021-26855, CVE-2021-26857, CVE-2021-26858, CVE-2021-27065)  have seen tens of thousands of organizations compromised by HAFNIUM and numerous other threat actor groups.
+Although the China Chopper web shell has been around for years, in the interest of providing more information to the security community during this time,  we decided to dig even deeper into how the China Chopper web shell works as well as how the ASP.NET runtime serves these web shells.
+China Chopper is an Active Server Page Extended (ASPX) web shell that is typically planted on an Internet Information Services (IIS) server through an exploit.
+China Chopper is used for post-exploitation by giving attackers access to execute any code they want on the server.
+The China Chopper server-side ASPX web shell is extremely small and typically, the entire thing is just one line.
+There are multiple versions of this web shell for executing code in different languages such as ASP, ASPX, PHP, JSP, and CFM.
+In this blog, we will cover the JScript version; however, they all are very similar aside from the language used.
+Figure 1 - China Chopper ASPX Script
+This script is essentially a page where when an HTTP POST request is made to the page, and the script will call the JScript “eval” function to execute the string inside a given POST request variable.
+In the above script, the POST request variable is named “secret”, meaning any JScript contained in the “secret” variable will be executed on the server.
+JScript is implemented as an active scripting engine allowing the language to use ActiveX objects on the client it is running on.
+This can be and is abused by attackers to achieve reverse shells, file management, process execution, and much more.
+After setting up a test IIS server and placing the web shell on the server, we can now test our own payloads against it.
+To do this, we used Python to send HTTP POST requests to the China Chopper page and put our malicious JScript in an HTTP POST “secret” variable.
+Here is our example payload, which starts a command prompt and pings itself.
+This demonstrates the possibility of process execution.
+Figure 2 - JScript Payload 01
+For the attacker, typically a client component of the China Chopper web shell is used on the attacker’s systems.
+This client is a C binary file.
+This client allows the attacker to perform many nefarious tasks such as downloading and uploading files, running a virtual terminal to execute anything you normally could using cmd.exe, modifying file times, executing custom JScript, file browsing, and more.
+All this is made available just from the one line of code running on the server.
+Figure 3 - Custom Script Execution
+Figure 4 - Virtual Terminal
+Figure 5 - File Manager
+To see exactly what the client is sending to the web shell, we captured the HTTP request for executing the following custom JScript:
+This script was expected to be sent as an HTTP POST request from the client to the server, with the custom JScript to be sent in the “secret” POST field.
+The following code is the request which was sent:
+Figure 6 - Custom JScript Response
+We can see that the client encodes the custom JScript in Base64 and uses the markers ->| and <-| to help the client identify the portion of the response relating to the web shell.
+Executing a more complex command such as the virtual terminal and running “ipconfig” yields the same result; however, the base64 encoded command is automatically generated from the client and decodes to the following code:
+Figure 7 - Virtual Terminal ipconfig Response
+This request introduces two new POST variables containing Base64 encoded strings:
+According to this code, the Virtual Terminal feature will start the CMD process silently and execute the command sent from the client.
+The output is then captured and sent back to the client.
+Some of the artifacts found on the compromised IIS servers were DLLs.
+When an ASPX script is seen by the ASP.NET runtime for the first time, the ASPX script is parsed and transformed into a C# or VB.NET class file.
+This class file is then either compiled into its own .NET assembly or, depending on the IIS settings, combined with other converted ASPX scripts to form one larger .NET assembly.
+This .NET assembly is what is served to an end-user rather than the ASPX script itself.
+These .NET DLLs are stored in a temporary location along with an XML file specifically crafted for that .NET DLL called a preservation file.
+Figure 8 - ASP.NET Runtime Flow
+For the China Chopper ASPX file, a .NET Assembly was compiled along with a preservation file and stored in a temporary directory for compiled ASPX files.
+For our IIS server, the locations were:
+The suspicious looking random strings are just hashes of the file names and paths for internal use with the ASP.NET runtime.
+Opening the App_Web_bvbfecjk.dll file in DNSpy, we can see several methods inside of the DLL.
+Only one of these methods contains the C# .NET version of the China Chopper ASPX script, and the other methods are boilerplate code for the ASP.NET Runtime to execute before getting to the compiled ASPX script.
+Figure 9 - C# Converted ASPX Script
+In this method, we can see a strong resemblance to the ASPX China Chopper web shell in a compiled C# .NET assembly format.
+This is what is served to a user when the page is requested.
+Something interesting to note here is the JScript stack frame.
+We can see that two local variables have been pushed onto the JScript stack.
+These variables are “__w” and “parameterContainer”.
+In theory, in the JScript we send to be executed, we should be able to access these variables.
+Figure 10 - JScript Payload 02
+We can see that the JScript was executed successfully and made use of the “__w” variable pushed on the stack to render the text “Hello World” in bold on the page.
+This can be useful for the attacker to render the output of their script.
+The preserve file for the generated assembly is an XML file and has a “.compiled” extension.
+The content in this file is not very interesting.
+It primarily contains metadata for the ASP.NET Runtime to use for identifying if the origin ASPX file needs recompiling as well as to know which assembly file to serve a page request for.
+Figure 11 - Preserve File
+To wrap up, when examining servers for signs of compromise, in addition to ASPX scripts, be aware also of the corresponding DLLs generated by ASP.NET runtime.
+Sign up to receive the latest security news and trends from Trustwave.
+Copyright ©
+                         Trustwave Holdings, Inc. All rights reserved.
+This is a bot-free zone.
+Please check the box to let us know you're human.
+Read complimentary reports and insightful stories in the Trustwave Resource Center
+One of our sales specialists will be in touch shortly.
+Read complimentary reports and insightful stories in the Trustwave Resource Center

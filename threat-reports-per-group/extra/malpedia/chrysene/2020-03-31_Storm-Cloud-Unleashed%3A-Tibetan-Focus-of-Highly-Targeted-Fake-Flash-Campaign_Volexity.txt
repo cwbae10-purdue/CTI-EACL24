@@ -1,0 +1,130 @@
+Beginning in May 2019, Volexity started tracking a new series of strategic web compromises that have been used in highly targeted attacks against Tibetan individuals and organizations by a Chinese advanced persistent threat (APT) actor it tracks as Storm Cloud.
+While this threat activity appears to have started in mid-2019, Storm Cloud has been observed targeting Tibetan organizations since at least 2018.
+The attacks were launched at a very limited subset of visitors to over two dozen different Tibetan websites that Storm Cloud had managed to compromise.
+Kaspersky has noted they uncovered similar targeted attacks dating back to mid-2019.
+Unlike strategic web compromises of the past, this attack activity did not rely on or use exploits.
+Instead, the attackers relied on enticing targeted users to install an "update to Adobe Flash" by way of a JavaScript overlay on top of the legitimate compromised websites.
+While there is no relation between the activities and those of OceanLotus, this type of attack is similar to how OceanLotus was observed launching targeted attacks.
+For the attack to begin, an unsuspecting user must first visit one of the compromised sites that has been put into operation by Storm Cloud.
+These attacks involve adding a new piece of JavaScript to the infected sites with an innocuous looking name, for example “jquery-min.js”.
+The filename used varied between different compromised sites.
+This sample of code is obfuscated using a library called “sojson.v4” which is also used by legitimate developers to protect their intellectual property; you can find the obfuscator here.
+This initial obfuscated code is recognizable due to its opening text:
+An example of the initial JavaScript loaded on compromised pages.
+The purpose of this first script in the chain is to identify if the user in question should receive the second piece of JavaScript.
+The internal IP address is retrieved based on the well-documented WebRTC trick, while the external IP address is retrieved using api.ipify.org.
+This information is then sent to an attacker-owned server used solely for this purpose, which will respond with a success or fail.
+A helper script to de-obfuscate these scripts is provided in Appendix B.
+Success is denoted by a response of “t” from the server.
+If this response is given then a secondary piece of JavaScript is loaded.
+The logic described above is shown in Figure 2.
+A beautified version of the initial script shows the logic that decides whether to load the next JavaScript file.
+The next sample of JavaScript uses sojson.v5, this time using the v5 encryption mechanism, identifiable by appearance as shown in Figure 3.
+The secondary JavaScript which delivers the payload is encrypted with sojson.v5.
+Sojson.v5 RC4 encrypts strings using a unique key for each string.
+These strings can be decoded on a per-script basis in a programmatic way to understand the overall workflow of the code.
+Since this campaign does not use any exploits, the purpose of the second stage code is to convince users to install the malware by altering the web page to show a popup or otherwise manipulating the visited page to alert the user to update Adobe Flash Player.
+In order to create these popups, Storm Cloud installed SweetAlerts on each of the webservers they compromised.
+Since the first time Volexity observed this chain in May 2019, the code that creates this download dialogue has evolved from iteration to iteration.
+In the earliest versions, the attackers had a fairly basic way of displaying and showing the message.
+Over time, this code evolved to support multiple browsers, including mobile devices, with customized messages according to the browser used.
+Despite the support of mobile devices in the code, Volexity has only identified delivery of Windows payloads for this particular aspect of the campaign.
+A comparison of earlier and later versions of the splash screens presented are given in Figure 4.
+Examples of splash screens presented to users visiting compromised sites in order to convince them to download and install malware.
+For most of the campaign, the attackers used GitHub to host the malicious Flash installer.
+Specifically, Volexity has observed the following repositories used to host binaries:
+It's unclear what the rationale for using GitHub was; however, for a user who isn’t familiar with GitHub, a quick search for “GitHub” may help convince them that the download is authentic.
+After the main GitHub account was in use, the attackers switched to hosting their payloads on various Dynamic DNS hosts from changeip.com to host their payloads (these are given in Appendix A).
+In addition to hosting payloads for this campaign, the AlexanderHilton repository also contains a certificate related to Indian telecommunications company BSNL; Volexity does not have any further insight as to the use or origin of this certificate.
+Over time, Volexity was able to observe a wide variety of payloads distributed using the mechanism described above, with the attackers frequently changing the malware they used.
+Below are some of the payloads seen from the live campaigns, and the frequency with which they have been observed:
+On a number of occasions, the attackers employed simple downloaders compiled as NSIS scripts, written in GoLang or compiled with Py2Exe.
+The sole objective of these downloaders is to download and execute a further payload from a remote C2.
+As such, they are not worth describing in detail.
+In some cases, the payload downloaded was GOSLU which is described later.
+This is a plugin-based backdoor written in C++.
+The malware performs an initial check to see if the infected machine is already infected (based on the mutex 'Fourhdsjfhakj').
+The malware also performs initial checks to determine if the infected system is a client, a Windows server that is not a domain controller, or a Windows server that is a domain controller.
+In addition to the system type, the system's hostname and exact Windows version, including the build number, are also collected.
+It connects to a pre-configured C2 to download a plugin which it expects to return an encoded PE file which is decoded by the malware.
+The decoded PE file should be a DLL file with exports matching the following names:
+Assuming this is the case, the malware will then call the "registPlugin" export on the downloaded PE file.
+The downloaded file will never be saved to disk and may exist only in memory (assuming the plugin itself does not save itself to disk).
+Volexity has not been able to recover any plugins at present.
+Stitch is a Python-based malware which is available on GitHub.
+The attackers likely use this as a “throwaway” backdoor which they replace with something custom after identifying a victim of interest.
+Despite its availability on GitHub, this malware is not frequently used in the wild, and most of the samples available on VirusTotal appear to relate to this campaign based on infrastructure analysis.
+GOSLU is a malware family written in GoLang which uses Google Drive for command and control, and it supports a number of commands.
+Volexity has observed versions for both Windows and Linux, but only Windows versions were observed as being dropped by the web compromises.
+The Linux variant has been observed in conjunction with implants dropped on servers by Storm Cloud post-compromise.
+The content within these files is the base64-encoded output of 3DES ECB data using a key stored in the backdoor.
+The encrypted data in the host info file is the hostname, IP address, MAC address, OS version info, and a timestamp of the last time this was updated.
+The core of the C2 used by GOSLU is wrapped around Google Drive using the Go Google Drive library at https://github.com/gdrive-org/gdrive.
+Some information the backdoor needs to authenticate to GDrive is hard coded in the file, including the refresh-token, client_id, and client_secret.
+Volexity has observed this malware in use in other incidents and currently suspects this tool is specific to Storm Cloud at this time.
+BrainDamage is another Python-based malware family which is available on GitHub.
+It supports a wide range of functionality natively but in the same vein as STITCH, i.e., it is used as a throwaway backdoor.
+In addition to these families, there are others which appear to be related based on infrastructure analysis.
+For brevity, and since Volexity has not observed these as being delivered in this way, they have not been included in this write-up.
+While investigating related attack infrastructure, Volexity identified some files which indicate that some aspect of this campaign, or at least the same attackers, have supported for delivery and installation of malware on Android operating systems.
+Specifically, three files submitted to VirusTotal indicate this may be the case.
+The relationship between these and the wider infrastructure is briefly shown in Figure 5:
+APKs that appear related to the delivery of Windows malware.
+All three APKs appear to be variants of the paid-for Android RAT known as 'SpyNote':
+While the timings do not exactly overlap with the related Windows malware using the same IP address for C2, the nature of the third application in the table (which imitates the Tibetan Dictionary app “TibTerm”) indicates that these are likely also related to this campaign.
+The Tibetan community, both within and outside of China, is under constant digital surveillance as they seek to gain an upper hand against those seeking the formation of an independent Tibet.
+This issue has been highlighted by CitizenLab on multiple occasions.
+The nature of this campaign may seem basic, but the resources to continuously update infrastructure, write new malware, and maintain these attacks across more than one platform should not be understated.
+It is a glimpse into the gap in resources between those seeking to identify and prevent these attacks, and those conducting them.
+# use this on a .js file with so_jsonv4 encoded content
+import sys, re, subprocess, os
+def recursive_walk_directory(target_dir):
+'''
+input:
+target_dir (str) : A path to the directory you want to walk
+output:
+files (list) : A list of files in that directory
+'''
+files = []
+for d, s, file_list in os.walk(target_dir):
+for f in file_list:
+files.append(os.path.join(d,f))
+return files
+if os.path.isfile(sys.argv[1]):
+files = [sys.argv[1]]
+else:
+tmp_files = recursive_walk_directory(sys.argv[1])
+files = []
+for fil in tmp_files:
+if fil.endswith(".js"):
+files.append(fil)
+print("Found {0} files with .js extensions to try and parse".format(len(files)))
+for f in files:
+with open(f, 'r') as infile:
+data = infile.read()
+*\['",)
+matches = pattern.findall(data)
+if len(matches) < 1:
+print("File: {0} does not match delivery kit".format(f))
+continue
+for match in matches:
+match_data = match[8:-3] # these are the characters from the match that correspond to the string we need to decode
+continue
+char_code_array = []
+this_element = ""
+for char in match_data:
+try:
+a = int(char)
+this_element += char
+except:
+char_code_array.append(this_element)
+this_element = ""
+out = f + '.decoded'
+print("Writing output to: {0}".format(out))
+out_data = ""
+print(len(char_code_array))
+for cc in char_code_array:
+out_data += chr(int(cc))
+out_data = jsbeautifier.beautify(out_data)
+with open(out, 'w') as outfile:
+outfile.write(out_data)

@@ -1,0 +1,154 @@
+The VMware Carbon Black Threat Analysis Unit (TAU) previously released a blog post documenting the Winnti version 4.0 malware.
+The new command and control (C2) protocol that was implemented in one of the 4.0 samples was completely different from the existing understanding of the 3.0 protocol.
+TAU is providing this analysis as well as the investigation results of discovered C2s or victim hosts infected with the server variants on the Internet.
+The Winnti version 4.0 worker component supports five protocols: TCP, HTTP, HTTPS, TLS and UDP.
+While every protocol handles the same customized packet, there are minor differences between the protocols.
+The following analysis will detail the customized packet format and then the differences between the protocols.
+The customized packet is separated into the header and payload.
+struct struc_custom_header {   __int16 temp_key_seed;   __int16 unk_word; // initial value is 2   __int16 signature; // 0x45DB   int payload_len; };
+The protocol encrypts both the header and payload, except for a temp_key_seed value that is provided in the header.
+The signature value is validated after the decryption on the receiver side.
+struct struc_custom_payload_init {   int payload_type; // request:0xEE775BAA/0x4563CEFA/0x5633CBAD, response:0xFACEB007/0x5633CBAD   int unk_dword; // request:0, response:0xC350/0xC352   GUID guid;   char null_bytes[14];   __int16 seq_num; // starting from 1   __int16 null_word; };
+The initial packet payload contains a payload type, random GUID value, and packet sequence number.
+The payload type should be one of the following values:
+Typically the request payload type will be 0xEE775BAA and the response one will be 0xFACEB007.
+The encryption algorithm is unknown at this time (it appears to be a stream cipher with no constant values), and it requires two kinds of keys:
+The generation algorithm is implemented in Python below:
+Figure 1: key generation from a temp_key_seed value
+The unknown encryption/decryption routine can be emulated by IDA AppCall.
+The routine  will be detailed in the Implementation section below.
+The customized packet data itself is the only information transmitted in the TCP/UDP protocols.
+In the HTTP protocol, this customized packet is sent through a POST request with several HTTP headers, which are depicted in the image below:
+Figure 2: HTTP POST request including the customized packet
+It should be noted that the number “333959650” after the “POST /” is randomly-generated.
+The Cookie value is comprised of 4 dword hex values, which contain information about the customized packet size.
+The size information is embedded as the XOR key.
+A python script was written to parse this data.
+The relevant code and output from the above cookie value are listed below.
+The following image showed the relevant code from the python script, which validates the Cookie value.
+Figure 3: cookie value validation code
+The following shows the output of the python script, and that the customized packet size is 0x34.
+$ python validate_cookie.py 640ABEFB16D2CE36E7E83E1B8BEF31B2500ABEFB dw0=0xfbbe0a64, dw1=0x36ced216, dw2=0x1b3ee8e7, dw3=0xb231ef8b, dw4=0xfbbe0a50 The cookie value validated.
+Prior to the POST request an initial GET request will be made between the client and server, an example of this is shown in the below image.
+Figure 4: HTTP GET request
+The GET request and response do not contain the customized packet, and subsequently the cookie values when decoded will be 0 for the size.
+The output below shows the decoded cookie value from Figure 4.
+$ python validate_cookie.py 420F0DABD80FC8F34050B58A5AB00FCE420F0DAB dw0=0xab0d0f42, dw1=0xf3c80fd8, dw2=0x8ab55040, dw3=0xce0fb05a, dw4=0xab0d0f42 The cookie value validated.
+dword key = 0x0 $ python validate_cookie.py D66EEE1927424A0C7A30387777FC6B9ED66EEE19 dw0=0x19ee6ed6, dw1=0xc4a4227, dw2=0x7738307a, dw3=0x9e6bfc77, dw4=0x19ee6ed6 The cookie value validated.
+The purpose of the GET request seems redundant, but it could be in place as an initial handshake without revealing the custom packets.
+Additionally, the server variant code provides two kinds of HTTP server functions which was determined from the configuration:
+The latter HTTP server is implemented by Windows HTTP Server APIs and appears to be the same as the passive HTTP listening function of PortReuse introduced by ESET.
+However, in this implementation the URL is not fixed but rather specified in the configuration block.
+Figure 5: Reuse HTTP server code
+The customized packet is also encrypted with SSL when the protocol is HTTPS or TLS.
+Outside of the added layer of encryption they are identical with HTTP and TCP.
+Unlike the version 3.0 protocol, the 4.0 one doesn’t utilize a kernel driver intercepting all incoming packets on the infected hosts.
+This means researchers have to hypothesize the open ports used by the threat actors.
+Based on the sample as well as other information reported by ESET and Trendmicro (neither of which referred to the 4.0 protocols), TAU initially decided to focus on the following ports:
+The rough discovery workflow is below.
+In both TCP-based and UDP protocols, ZMap is first utilized to discover open or respondent IP addresses on the Internet.
+HTTP/HTTPS GET requests are sent to the hosts with open TCP ports 80/443, then an additional TCP/TLS custom packet transmission with fixed data will be completed for port 443.
+The TCP/TLS results will be validated by IDA AppCall, based on the decrypted header values (payload size and signature) of the responses.
+The UDP protocol case can be handled in the same way while the result from ZMap will be filtered out to reduce the noise.
+The two scripts were implemented for the discovery.
+One is a stand-alone Python script validating HTTP/HTTPS Set-Cookie header values of responses and getting suspicious respondents to the TCP/TLS customized packets.
+The other is an IDAPython script with the AppCall functions encrypting and decrypting the TCP/TLS/UDP packets.
+Both scripts were tested against the sample where TAU modified configuration values to enable arbitrary server functions.
+The stand-alone script detects not only active hosts returning correct Set-Cookie header values, but also suspicious ones handling different protocols (potential TCP/TLS servers) as below.
+The third case of the above execution examples should be passed to the IDAPython script as the stand-alone script only checks that the response size is the same and the content is different from the data sent to the IP Address.
+The IDAPython script validates values in the respondent’s packet such as header signature and payload size after the decryption.
+[*] selected: protocol = TCP, port = 443
+[DEBUG] client header: unknown word = 0x2, header signature = 0x45db, payload length = 0x2a
+[*] client payload: payload type = 0xee775baa, unknown dword = 0x0, GUID = 0b8212dc-e364-4c18-ac0b-26382beb1387, sequence number = 1
+[DEBUG] plain req pkt:     79 dd 02 00 db 45 2a 00 00 00 aa 5b 77 ee 00 00 00 00 0b 82 12 dc e3 64 4c 18 ac 0b 26 38 2b eb 13 87 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00
+[DEBUG] encrypted req pkt: 79 dd 87 2f f9 7a 79 6b b4 3a 8e 49 82 e9 d0 93 2d 47 c0 8f fc f8 52 20 de e7 66 57 15 21 6c b4 b6 bc 69 ab e4 89 5e 74 2d b2 a0 60 58 56 cb be a1 15 a6 be
+[DEBUG] a request packet sent (52 bytes)
+[DEBUG] a response packet received (52 bytes)
+[DEBUG] encrypted res pkt: 06 84 67 2b 64 8c 3c 8a ea 7d c4 6c b7 f8 76 94 57 60 6e 5b 7e 48 cf 82 94 21 dc 09 af 0f 21 62 29 f8 6e 37 43 07 5f a1 cd 00 ae 28 f4 53 fb d4 da 0e a5 eb
+[DEBUG] decrypted res pkt: 06 84 02 00 db 45 2a 00 00 00 07 b0 ce fa 52 c3 00 00 0b 82 12 dc e3 64 4c 18 ac 0b 26 38 2b eb 13 87 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00
+[DEBUG] server header: unknown word = 0x2, header signature = 0x45db, payload length = 0x2a
+[*] server payload: payload type = 0xfaceb007, unknown dword = 0xc352, GUID = 0b8212dc-e364-4c18-ac0b-26382beb1387, sequence number = 2
+[+] 172.16.24.127: server is active (custom packet validated)
+[+] 1 active servers found
+The response GUID value (0b8212dc-e364-4c18-ac0b-26382beb1387) in TCP/UDP protocols is the same as the one provided in the request.
+Additionally, the TLS/HTTP/HTTPS protocol servers reply to clients with FIN/ACK when receiving the default request payload type (0xee775baa).
+Thus, the script will change the value to another value (0x4563cefa).
+In this condition, the server variant code will create the payload as an initial request packet, where:
+[*] selected: protocol = TLS, port = 443
+[DEBUG] client header: unknown word = 0x2, header signature = 0x45db, payload length = 0x2a
+[*] client payload: payload type = 0x4563cefa, unknown dword = 0x0, GUID = eba0bb71-2123-48ad-9553-4eee4a38d688, sequence number = 1
+[DEBUG] plain req pkt:     23 0d 02 00 db 45 2a 00 00 00 fa ce 63 45 00 00 00 00 eb a0 bb 71 21 23 48 ad 95 53 4e ee 4a 38 d6 88 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00
+[DEBUG] encrypted req pkt: 23 0d 61 02 36 1c 37 8f de 89 06 d5 9d a1 a8 cb 20 74 8b 60 3d 7a 8e b8 db 92 d3 7e 27 58 6f 29 71 08 96 ef a6 0f 6f 06 7e 34 34 b3 5f 3a 9d 40 76 78 ea 1c
+[DEBUG] a request packet sent (52 bytes)
+[DEBUG] a response packet received (52 bytes)
+[DEBUG] encrypted res pkt: 80 29 45 e7 47 7b 4b 51 aa bf 5b e6 b2 c6 32 43 16 77 69 e3 dd f9 b4 b6 3c 46 85 91 97 57 a8 f8 99 f3 fc 02 e8 5e ec 28 5a aa da b9 dd 3f 54 29 f2 16 ae 41
+[DEBUG] decrypted res pkt: 80 29 02 00 db 45 2a 00 00 00 aa 5b 77 ee 00 00 00 00 0e ae 63 59 58 f6 91 4e a4 ae a4 a4 3f 01 43 e0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00
+[DEBUG] server header: unknown word = 0x2, header signature = 0x45db, payload length = 0x2a
+[*] server payload: payload type = 0xee775baa, unknown dword = 0x0, GUID = 0eae6359-58f6-914e-a4ae-a4a43f0143e0, sequence number = 1
+[+] 172.16.24.127: server is active (custom packet validated)
+[+] 1 active servers found
+Strangely, the client code of the sample sends the default request payload type even when utilizing TLS/HTTP/HTTPS.
+This indicates the C2 server will answer to a packet with the default request payload type in TLS/HTTP/HTTPS.
+It is effective to differentiate between C2s and victim hosts infected with server variants.
+The discovery results for the TCP-based protocols is below:
+Table 1: TCP-based protocols result
+In total, six hosts responded to the customized packets correctly.
+Every time they received the packets, they sent back their responses encrypted with different temp_key_seed values and the remaining decrypted data always contained the same values.
+The following output is an example of the discovery against TCP/443.
+[*] selected: protocol = TCP, port = 443
+[DEBUG] client header: unknown word = 0x2, header signature = 0x45db, payload length = 0x2a
+[*] client payload: payload type = 0xee775baa, unknown dword = 0x0, GUID = 346dfd36-a776-4a2e-9765-a0bcc2524fc9, sequence number = 1
+[DEBUG] plain req pkt:     78 93 02 00 db 45 2a 00 00 00 aa 5b 77 ee 00 00 00 00 34 6d fd 36 a7 76 4a 2e 97 65 a0 bc c2 52 4f c9 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00
+[DEBUG] encrypted req pkt: 78 93 ff e1 3a 43 fa 70 a4 ad 2f 2c f8 4d 13 a8 f8 5a 59 bc 14 44 9b 6e 29 9c 0c cd ca f7 d6 a2 05 bd e4 57 5f 98 36 43 45 09 e5 e1 42 87 14 1a a9 75 9e ed
+[DEBUG] a request packet sent (52 bytes)
+[DEBUG] a response packet received (52 bytes)
+[DEBUG] encrypted res pkt: 29 c7 d1 f9 40 50 2d f1 b6 86 f0 aa 31 74 94 af b1 c8 e2 95 2c 25 89 32 f1 2b 51 99 b7 d6 6a 47 dc 24 7e 85 74 2f f8 ea ab 0f 70 a9 04 ea 3a 72 86 e7 43 09
+[DEBUG] decrypted res pkt: 29 c7 02 00 db 45 2a 00 00 00 07 b0 ce fa 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 01 01 33 01 00 00 00 00 00 00 00 00 00 01 00 00 00
+[DEBUG] server header: unknown word = 0x2, header signature = 0x45db, payload length = 0x2a
+[*] server payload: payload type = 0xfaceb007, unknown dword = 0x0, GUID = 00000000-0000-0000-0000-000000000000, sequence number = 1
+[+] 185.161.211.97: server is active (custom packet validated)
+ 50%|█████     | 1/2 [00:00<00:00,  1.42it/s]
+[DEBUG] a request packet sent (52 bytes)
+[DEBUG] a response packet received (52 bytes)
+[DEBUG] encrypted res pkt: a3 07 66 92 08 d2 97 bd 46 c2 05 b6 f7 92 82 bd 16 46 1b eb 05 90 1c dc 58 3e f4 d4 4f 52 3e b6 44 79 be c2 8a 29 a1 a4 22 f2 e6 ee 21 89 78 9c fa 96 a5 5d
+[DEBUG] decrypted res pkt: a3 07 02 00 db 45 2a 00 00 00 07 b0 ce fa 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 01 01 10 01 00 00 00 00 00 00 00 00 00 01 00 00 00
+[DEBUG] server header: unknown word = 0x2, header signature = 0x45db, payload length = 0x2a
+[*] server payload: payload type = 0xfaceb007, unknown dword = 0x0, GUID = 00000000-0000-0000-0000-000000000000, sequence number = 1
+[+] 80.82.67.6: server is active (custom packet validated)
+[+] 2 active servers found
+TAU concluded that the discovered hosts were C2s, and not victim hosts infected with the server variants.
+The response’s custom packet payload was also different from the one generated by its server variant code.
+The discovery result for the UDP protocol is below:
+hosts with size-matched and different response
+Table 2: UDP protocol result
+One C2 responded to UDP/53 customized packets repeatedly.
+Additionally, another host (185.161.211.188) belonging to the same VPS service provider replied to the packet of the ZMap scan, however the host port seemed to be filtered by a firewall already during the follow-up IDAPython scan.
+Therefore, TAU manually validated the host by extracting the encrypted custom packet from the ZMap log then decrypting it with another small AppCall script.
+The result was the same as other active server’s responses.
+[*] binary data loaded from 185.161.211.188.bin
+[DEBUG] validating a customized packet..
+[DEBUG] encrypted res pkt: 30 44 bb fa 35 ac 31 42 c5 96 7c 66 81 af dd 3f 8a 29 b5 91 e7 5d f0 32 ac cf 04 5f a3 94 33 16 51 93 ad e2 0a 60 db 8a 45 2b 9b e0 68 5d ec f0 89 0c f4 37
+[DEBUG] decrypted res pkt: 30 44 02 00 db 45 2a 00 00 00 07 b0 ce fa 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 01 01 21 01 00 00 00 00 00 00 00 00 00 01 00 00 00
+[DEBUG] server header: unknown word = 0x2, header signature = 0x45db, payload length = 0x2a
+[*] server payload: payload type = 0xfaceb007, unknown dword = 0x0, GUID = 00000000-0000-0000-0000-000000000000, sequence number = 1
+After the discovery activity, a subset of C2s seemed to block requests by firewalls.
+This incoherent change indicates a series of possibilities:
+Nine Winnti 4.0 C2 servers with the previously undocumented protocol were found by this research.
+The approach is effective to obtain fresh C2 information if sample (a worker component in the Winnti case) acquisition is hard.
+Even today the actors remain active.
+They set up the new C2 during the research period and most of them are still alive as of the time of this writing.
+TAU already shared the information with relevant organizations through JPCERT/CC to take down the C2s.
+In the future as well, we will continue to monitor their activities carefully.
+For this research, TAU appreciates Tadashi Kobayashi’s insight and advice.
+Kobayashi provided tactics for the scalable implementation and troubleshooting.
+TAU also appreciates JPCERT/CC for sharing our analysis with the appropriate regional organizations.
+discovered on 2019/12/10, current port status: open
+discovered on 2019/12/10, current port status: open
+discovered on 2019/12/15, current port status: filtered
+discovered on 2019/12/15, current port status: closed
+discovered on 2019/12/15, current port status: open
+discovered on 2019/12/15, current port status: filtered
+discovered on 2019/12/23, current port status: filtered
+discovered on 2019/12/23, current port status: filtered
+discovered on 2020/02/17, current port status: open
+0 Comments have been added so far

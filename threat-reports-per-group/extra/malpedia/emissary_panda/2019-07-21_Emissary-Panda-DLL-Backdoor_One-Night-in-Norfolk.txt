@@ -1,0 +1,40 @@
+Last month’s post on this blog examined a backdoor previously thought to be associated with Emissary Panda (APT27).
+Recent reporting has instead shown that the HTTP listener examined is likely affiliated with Turla.
+That post has been updated with the corresponding corrections.
+This post is a granular examination of a payload alluded to in a Palo Alto report that is tied to Emissary Panda with much higher confidence.
+While the payload wasn’t available for analysis in that report, VirusTotal pivoting at the time produced the matching file.
+PreparationIf all three of these files are placed in the same folder with the correct filenames, plugin_host.exe will sideload PYTHON33.dll, which will decrypt and decompress the PYTHON33.hlp file into a DLL.
+The workflow for this is similar to (but not identical to) previous reporting from NCC group regarding an earlier version of this malware.
+This post will thus not go into detail regarding this process, but makes the following recommendation for analyzing these components:1) Patch the PYTHON33.hlp file (which is a block of shellcode) by prepending an infinite loop (EB FE) to the file via a hex editor2) Run plugin_host.exe normally (i.e.
+This will sideload the DLL and load the shellcode, but will hold it in an infinite loop without executing any commands3) Attach a debugger (e.g.
+x96dbg) to this running process and step through until the payload is decoded in memory, as you would any other shellcode samples.
+In this case, a good breakpoint to set is would be at the entry to “CommandLineToArgvW” The breakpoint in step 3 wouldn’t be obvious during the initial examination of this file, but this blog mentions it here as a shortcut to facilitate analysis of this file.
+The DLL can also be dumped at this stage for concurrent static analysis in IDA.PayloadThe Palo Alto report mentions similarities between the loading and decrypting process for this file and the loading and decrypting process for a file previously analyzed (but not provided) by NCC Group.
+NCC Group provided a high-level overview of that payload’s capabilities.
+First, the malware calls GetCommandLineW followed by CommandLineToArgvW.
+If EAX is greater than 3, (i.e.
+if there are more than three command line arguments), the malware will jump to the default case rather than cases 0-4, will return to the calling function, and will terminate without taking any action.
+If EAX is less than or equal to 3, it will jump into one of the available cases:
+As always, right click and open the image in a new tab to enlarge.
+Additional labeling has been added, including string labeling that would be visible during dynamic analysis in a debugger.
+At this stage, we can begin exploring the cases.Case 0A good way to explore these cases to take a snapshot just prior to the EAX comparison, and then set EAX to the value of the case to be examined.
+As this label would suggest, there are two primary subcomponents of this call, labelled below as CreateFileCheck and Process_Injection_Workflow.
+The CreateFileCheck subroutine will use the PathFileExistsW and CreateFileW APIs to check if the malware can open C:\\ProgramData\\plugin_host\\PYTHON33.hlp:
+The parent process will then terminate.
+Case 1 begins with the same string comparison, ensuring that the malware is running from the “C:\\ProgramData\\plugin_host\\” directory.
+This workflow:– Moves the necessary components for the malware to run into the ProgramData\\plugin_host\\ directory– Executes plugin_host.exe using WMICase 1 represents a more flexible workflow for starting the malware for the first time.
+Case 2Case 2 contains three parts, in the following order:– A new call not yet analyzed– The same CreateFile check and ProcessInjection calls– The “core functionality” call discussed in Case 3The new call is actually fairly simple.
+This function performs a permissions check, and takes one of two branches depending on the permissions available:
+With sufficient privileges, the malware will create a new service named plugin_hostvr874u5Pn pointing at the plugin_host.exe executable with a start type of “2” (autoload):
+Otherwise, the malware will create a registry entry under the HKCU CurrentVersion\Run key named  plugin_hostvr874u5Pn pointing to plugin_host.exe with a parameter of –1.
+The function then returns and the injection and core routines are executed.
+Case 3Case 3 contains a single function, referenced above and by NCC Group’s writeup on an earlier version of this malware as the “core functionality” routine.
+Following this, the malware enters its C2 routine.
+The malware uses the PolarSSL library to do this, and communicates with 138.68.154[.
+Concluding ThoughtsHaving looked at each of the cases within the malware, we can compare this sample to the previously reported one, even though that file was never provided.
+– The previous reporting described self-termination and WMI execution for Case 0.
+The WMI functionality appears to have moved to Case 1, and Case 0 now supports process injection.– Case 1 now supports moving the files to the appropriate locations if they are not present, executing these files via WMI, or performing process injection.
+NCC group previously assessed that the malware might be undergoing active development.
+Given these findings from a sample a year later, it appears that was the case.
+There are minor upgrades, cases rearranged, and possibly one case removed.
+Still, based on the higher-level descriptions in that report and how closely they track with this more granular analysis, it would appear that this is the same malware family (with modifications).

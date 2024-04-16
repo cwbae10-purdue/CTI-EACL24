@@ -1,0 +1,63 @@
+These are just unpolished notes.
+The content likely lacks clarity and structure; and the results might not be adequately verified and/or incomplete.
+The malware in this blog post is known as BazarBackdoor, Team9Backdoor, BazDor, BazarLoader and BazaLoader
+For more information about the malware in this blog post see the Malpedia entry on BazarBackdoor.
+This page lists malware URLs that are tagged with BazarLoader.
+You can download bazaloader samples from this page.
+André Tavares sent me a Bazar Loader sample whose Domain Generation Algorithm (DGA) shows some interesting behavior.
+In May, it generates valid domain names with the eponymous top level domain .bazar:
+But as soon as June comes around, some generated domains contain invalid characters:
+And as it gets to July, all domain names are invalid (with very few exceptions):
+The DGA also fails during August and September.
+But when October rolls around, all domains are valid again.
+This continues until next June, when the DGA has problems all over again.
+This short blog post explores what causes the DGA to stop working properly in the summer, of all times.
+I reverse engineered the DGA of the following sample:
+I have unpacked it to the following state:
+The DGA can be easily be located in the unpacked sample based on the .bazar TLD, for example with this Yara rule:
+The rule triggers at the following location, which adds the top level domain to the generated domain (pointed to by rax) at the end of the DGA function:
+Here is how the DGA works:
+BazarLoader divides the letters – except J, which was omitted for unknown reasons – into two character classes:
+The two sets are then combined into all 2⋅6⋅19 ordered pairs that contain one vowel and one consonant: ab, ba, eb, be, ib, bi, ob, bo, …, oz, zo, uz, zu, yz, zy.
+These 228 pairs are then rearranged with a permutation that is hard-coded into the malware.
+The permutation is the seed of the BazarLoader DGA and offers the possibility to generate a different set of domains with the same algorithm.
+The permutation is stored as an array of 228 bytes that represent the one-line notation of the permutation.
+So for example, a permutation of 27, 119, 38, … would place the first pair ab at position 27, the second pair ba at 119, and so on (0 being the first position).
+Four pairs are then picked from the 228 permutated pairs, and strung together to form the 8 letter long second level domain.
+Which pairs are selected depends on the current date.
+The date is formatted as %m%y, where %m is the zero-padded month and %y is the two digit year.
+For example, December 5, 2035 would be 1235.
+The four digits, e.g., 1, 2, 3 and 5, then define which pairs will be selected for the first, second, third and fourth pair respectively.
+The first pair is selected by first splitting the pairs into groups of 19 pairs.
+The first digit derived from the current date then serves as the index of the groups to select.
+Since the first digit can only be 0 or 1, only two groups are possible 1
+BazarLoader then picks a pair at random from the 19 pairs of the given group.
+The second pair is selected like the first pair, except the groups are picked based on the second date digit.
+This digit can be any value from 0 to 9, so ten different groups are possible:
+For the third pair, the groups only have a size of 4 pairs.
+Since the third date digit represents the decade, the same group will be selected for years to come.
+The fourth pair is also picked from groups of 4 pairs, based on the least significant digit of the year.
+The four picked pairs are concatenated into an 8-letter second level domain, and the top level domain .bazar is appended.
+As can be seen from the illustrations above, pairs at higher positions are selected only as a second pair and only during the summer months.
+And that is exactly what causes the bug.
+The DGA is implemented exactly as described above.
+The hard-coded permutation, however, is incorrect:
+For the permutation to be valid, i.e., bijective, it would need to contain all numbers from 0x00 to 0xe3 (227).
+But the largest number in the above list of numbers is only 0x7E (126).
+Possibly the wrong data type was chosen when generating the permutation.
+For example, a signed char to store the numbers 1-228.
+Instead of permuting the pairs, the DGA places them all in the first 127 places.
+Some pairs will therefore be overwritten by another pair placed in the same spot.
+For instance the first pair ab is placed at position 0x57 (first number of the “permutation”) .
+But since 0x57 appears a second time (35th number of the “permutation”), the pair ab will be overwritten.
+Similarly, all spots above 127 are never filled.
+So with the actual “permutation” applied, the illustration for picking the second pair looks as follows, where ?
+All pairs in July, August and September are undefined and will likely result in invalid domains.
+In June, only 13 out of 19 pairs are undefined, hence some domains come out correct.
+All other months are not affected by the bug.
+The following Python script will generate all possible domains for a given date.
+When it is run for months affected by the bug, the resulting domains will contain two ??
+that represent characters from undefined memory.
+The following table summarizes the properties of the BazarLoader DGA when it is working as intended, i.e., October through May.
+note that the letters used in the illustrations are randomly placed and not the actual letter pairs that BazarLoader uses.
+© 2012 - 2021 Johannes Bader, last updated September 13, 2021

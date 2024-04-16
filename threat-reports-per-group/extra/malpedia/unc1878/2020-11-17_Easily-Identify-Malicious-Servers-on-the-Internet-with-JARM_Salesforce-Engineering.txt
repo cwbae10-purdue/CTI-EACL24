@@ -1,0 +1,90 @@
+JARM is an active Transport Layer Security (TLS) server fingerprinting tool.
+Scanning with JARM provides the ability to identify and group malicious servers on the Internet.
+JARM is available here: https://github.com/salesforce/jarm
+Before learning how JARM works, it’s important to understand how TLS works.
+TLS and its predecessor, SSL, are used to encrypt communication for both common applications like Internet browsers, to keep your data secure, and malware, so it can hide in the noise.
+To initiate a TLS session, a client will send a TLS Client Hello message following the TCP 3-way handshake.
+This packet and the way in which it is generated is dependent on packages and methods used when building the client application.
+The server, if accepting TLS connections, will respond with a TLS Server Hello packet.
+TLS servers formulate their Server Hello packet based on the details received in the TLS Client Hello packet.
+The manner in which the Server Hello is formulated for any given Client Hello can vary based on how the application or server was built, including:
+All of these factors lead to each TLS Server responding in a unique way.
+The combinations of factors make it unlikely that servers deployed by different organizations will have the same response.
+Below is an example of a TLS Client Hello and the Server Hello response as viewed in Wireshark.
+JARM works by actively sending 10 TLS Client Hello packets to a target TLS server and capturing specific attributes of the TLS Server Hello responses.
+The aggregated TLS server responses are then hashed in a specific way to produce the JARM fingerprint.
+This is not the first time we’ve worked with TLS fingerprinting.
+In 2017 we developed JA3/S, a passive TLS client/server fingerprinting method now found on most network security tools.
+But where JA3/S is passive, fingerprinting clients and servers by listening to network traffic, JARM is an active server fingerprinting scanner.
+You can find out more about TLS negotiation and JA3/S passive fingerprinting here.
+The 10 TLS Client Hello packets in JARM have been specially crafted to pull out unique responses in TLS servers.
+JARM sends different TLS versions, ciphers, and extensions in varying orders to gather unique responses.
+Does the server support TLS 1.3?
+Will it negotiate TLS 1.3 with 1.2 ciphers?
+If we order ciphers from weakest to strongest, which cipher will it pick?
+These are the types of unusual questions JARM is essentially asking the server to draw out the most unique responses.
+The 10 responses are then hashed to produce the JARM fingerprint.
+The JARM fingerprint hash is a hybrid fuzzy hash, it uses the combination of a reversible and non-reversible hash algorithm to produce a 62 character fingerprint.
+The first 30 characters are made up of the cipher and TLS version chosen by the server for each of the 10 client hello’s sent.
+A “000” denotes that the server refused to negotiate with that client hello.
+The remaining 32 characters are a truncated SHA256 hash of the cumulative extensions sent by the server, ignoring x509 certificate data.
+When comparing JARM fingerprints, if the first 30 characters are the same but the last 32 are different, this would mean that the servers have very similar configurations, accepting the same versions and ciphers, though not exactly the same given the extensions are different.
+After receiving each TLS server hello message, JARM closes the connection gracefully with a FIN as to not leave the sockets open.
+It is important to note that JARM is a high-performance fingerprint function and should not be considered, or confused with, a secure crypto function.
+We designed the JARM fingerprint to be human consumable as much as machine consumable.
+This means it is small enough to eyeball, share, and tweet with enough room for contextual details.
+Malware command and control (C2) and malicious servers are configured by their creators like any other server and then deployed across their fleet.
+These therefore tend to produce unique JARM fingerprints.
+For example, when scanning Trickbot Malware C2s from a list compiled by abuse.ch, 80% of the live IPs on the list produced the same JARM fingerprint.
+When comparing this JARM fingerprint against the Alexa Top 1 Million websites, there was no overlap.
+Continuing to test JARM against common malware and offensive tools found the following:
+With little to no overlap of the Alexa Top 1M Websites, it should be extremely unlikely for a host within an organization to connect to a server with these JARM fingerprints.
+We wanted to dive further, so our friends at SecurityTrails scanned the entire Internet, billions of IPs, over port 443 with JARM and found the following:
+We believe that this scan found most, if not all, Cobalt Strike C2’s listening on the Internet on port 443 at the time of scan.
+We did, however, find false positives in the list.
+It’s inevitable that in the sea of billions of IPs that some legitimate servers somewhere just happen to be configured in exactly the same way as Cobalt Strike.
+In the list we identified that the JARM also matches Burp Collaborator, another security tool used by red teams and threat actors alike, as well as miscellaneous legitimate servers, and a point of sale system.
+(Point of sale systems listening on the Internet is a subject for another blog post…) So while we believe JARM identified most, if not all, Cobalt Strike C2s listening on the Internet, we also had some legitimate servers caught in the net.
+This is like using a large magnet to pull all needles out of a haystack but getting some pieces of hay with them.
+In order to use this as a potential blocklist, we need to filter out the false positives.
+One easy way to differentiate likely legitimate results with malicious ones is just by looking at the server’s history.
+Malicious C2s are generally ephemeral; they’re coming and going quite frequently, while legitimate servers tend to stay the same for long periods of time.
+This is where vendors with Internet historical data really come in handy.
+If the server matching the Cobalt Strike JARM has had its attributes unchanged for over a year, it’s more likely a legitimate false positive, while a server matching the Cobalt Strike JARM that didn’t exist 2 months ago is much more likely to be a malicious true positive.
+Combine that with other server attributes like name, hosting provider, certificate authority, etc.
+and we have ourselves a high quality Proactive Blocklist.
+Historically, the cybersecurity industry has been focused on reactive blocklists of atomic indicators of compromise (IOCs).
+That is, the industry waits until a malware campaign is observed in the wild, analyzes it, then takes the observed IOCs and publishes them for blocklists.
+The problem is that, by the time the IOCs are published, the malware has already been distributed and security engineers are automatically on the defensive, playing damage control.
+JARM Internet scanning, coupled with other metadata and historical analysis, allows for the possibility of proactive IOC identification for new campaigns using existing malware.
+For example, a cybersecurity researcher or company could scan the Internet with JARM, correlate known JARM results with the domain and IP history and reputation along with certificate details to build a high fidelity blocklist.
+This allows the cybersecurity industry to move towards the possibility of programmatically building out high fidelity blocklists before the first piece of malware is even distributed, placing threat actors on the defensive for the first time in a long time.
+One could utilize JARM for detection and response by automatically scanning all destination hosts observed on their network for event enrichment, utilizing a summary table so as to not scan the same hosts multiple times in a given timeframe.
+They could then run queries of known-bad against the JARM list or utilize the list for correlation in response scenarios.
+To simplify the process, one could utilize a security vendor, like SecurityTrails or Shodan, and query their API for destination JARM enrichment.
+Security researchers and vendors are likely to be better suited to maintain historical analysis of TLS servers and can therefore provide greater levels of metadata to utilize in measuring a host’s risk score.
+There is also a lot of potential for security researchers and vendors to utilize JARM with correlation and historical analysis to identify and track malicious servers.
+This data could then be used to build high fidelity proactive blocklists for easy consumption.
+But please note that extra care should be put into these blocklists to ensure minimal false positives.
+A fleet of application servers that are all running the same TLS configuration should have the same JARM fingerprint.
+One could regularly scan the fleet with JARM to confirm that they are the same.
+If a server in the fleet produces a different JARM fingerprint than the rest, then it is not running the same configuration.
+One major financial institution is already planning to use this capability to identify servers that are not running their latest TLS standard.
+For example, if we use JARM to scan all Tor nodes maintained by [username] we find the following:
+This shows that of the 100 Tor nodes the user maintains, 100 of them have the same JARM fingerprint.
+We essentially just ran a configuration drift check on this user’s Tor node deployment and found that they indeed have a well-maintained fleet.
+However, if one host had a different JARM than the others, then it would mean it’s not running the same configuration and may warrant investigation.
+To simulate this, I’ll throw a random IP into the list and run it again:
+JARM fingerprints appear to also be unique to default configurations and patch levels for certain servers and appliances.
+Because of this, it may be possible to associate a JARM fingerprint with a specific version of Apache, for example.
+There has yet to be exhaustive research put into this, but here are some preliminary findings:
+There are certainly a lot of research possibilities with JARM that have yet to be explored so I encourage you to dive in and share what you find!
+JARM has been open sourced and is available here: https://github.com/salesforce/jarm
+JARM was created by:John AlthouseAndrew SmartRJ NunnallyMike Brady
+With special thanks to Caleb Yu for re-writing JARM in Python for operational use.
+If you have any questions or feedback on JARM, please reach out to me (John Althouse) via LinkedIn or on Twitter @4A4133.
+Salesforce Engineering Blog: Go behind the cloud with…
+A leader and serial inventor in cyber security.
+Salesforce Engineering Blog: Go behind the cloud with Salesforce Engineers
+A leader and serial inventor in cyber security.
+Salesforce Engineering Blog: Go behind the cloud with Salesforce Engineers

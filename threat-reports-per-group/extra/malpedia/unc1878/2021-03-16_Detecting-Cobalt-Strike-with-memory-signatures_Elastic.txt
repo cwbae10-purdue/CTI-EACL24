@@ -1,0 +1,66 @@
+Already have an account?Log in
+Workplace, website, and app search
+Unified logs, metrics, and APM data
+SIEM, endpoint, and threat hunting
+ElasticON Global is a wrap!
+Watch all of the content on demand now.
+Our story, teams, Source Code
+Find or become a partner
+Elastic is a search company.
+At Elastic Security, we approach the challenge of threat detection with various methods.
+Traditionally, we have focused on machine learning models and behaviors.
+These two methods are powerful because they can detect never-before-seen malware.
+Historically, we’ve felt that signatures are too easily evaded, but we also recognize that ease of evasion is only one of many factors to consider.
+Performance and false positive rates are also critical in measuring a detection technique's effectiveness.
+Signatures, while unable to detect unknown malware, have false positive rates that approach zero and have associated labels that help prioritize alerts.
+For example, an alert for TrickBot or REvil Ransomware requires more immediate action than a potentially unwanted adware variant.
+Even if we could hypothetically catch only half of known malware with signatures, that is still a huge win when layered with other protections, considering the other benefits.
+Realistically we can do even better.
+One roadblock to creating signatures that provide long-term value is the widespread use of packers and throw-away malware loaders.
+These components rapidly evolve to evade signature detection; however, the final malware payload is eventually decrypted and executed in memory.
+To step around the issue of packers and loaders, we can focus signature detection strategies on in-memory content.
+This effectively extends the shelf life of the signature from days to months.
+In this post, we will use Cobalt Strike as an example for leveraging in-memory signatures.
+Cobalt Strike is a popular framework for conducting red team operations and adversary simulation.
+Presumably due to its ease of use, stability, and stealth features, it is also a favorite tool for bad actors with even more nefarious intentions.
+There have been various techniques for detecting Beacon, Cobalt Strike’s endpoint payload.
+This includes looking for unbacked threads, and, more recently, built-in named pipes.
+However, due to the level of configurability in Beacon, there are usually ways to evade public detection strategies.
+Here we will attempt to use memory signatures as an alternative detection strategy.
+Beacon is typically reflectively loaded into memory and never touches disk in a directly signaturable form.
+Further, Beacon can be configured with a variety of in-memory obfuscation options to hide its payload.
+For example, the obfuscate-and-sleep option attempts to mask portions of the Beacon payload between callbacks to specifically evade signature-based memory scans.
+We will need to consider this option when developing signatures, but it is still easy to signature Beacon even with these advanced stealth features.
+We will start by obtaining a handful of Beacon payloads with the sleep_mask option enabled and disabled with the most recent releases (hashes in reference section).
+Starting with a sample with sleep_mask disabled, after detonation we can locate Beacon in memory with Process Hacker by looking for a thread which calls SleepEx from an unbacked region:
+From there, we can save the associated memory region to disk for analysis:
+The easiest win would be to pick a few unique strings from this region and use those as our signature.
+To demonstrate, will will be writing signatures with yara, an industry standard tool for this purpose:
+This would give us a good base of coverage, but we can do better by looking at the samples with sleep_mask enabled.
+If we look in memory where the MZ/PE header would normally be found, we now see it is obfuscated:
+Quickly looking at this, we can see a lot of repeated bytes (0x80 in this case) where we would actually expect null bytes.
+This can be an indication that Beacon is using a simple one-byte XOR obfuscation.
+To confirm, we can use CyberChef:
+As you can see, the “This program cannot be run in DOS mode” string appears after decoding, confirming our theory.
+Because a single byte XOR is one of the oldest tricks in the book, yara actually supports native detection with the xor modifier:
+We can confirm detection for our yara rules thus far by providing a PID while scanning:
+However, we are not quite done.
+After testing this signature on a sample with the latest version of Beacon (4.2 as of this writing), the obfuscation routine has been improved.
+The routine can be located by following the call stack as shown earlier.
+It now uses a 13-byte XOR key as shown in the following IDA Pro snippet:
+Fortunately, Beacon’s obfuscate-and-sleep option only obfuscates strings and data, leaving the entire code section ripe for signaturing.
+There is the question of which function in the code section we should develop a signature for, but that is worth its own blog post.
+For now, we can just create a signature on the deobfuscation routine, which should work well:
+We can validate that we can detect Beacon even while it is in its stealthy sleep state (both 32- and 64-bit variants):
+To build this into a more robust detection, we could regularly scan all processes on the system (or entire enterprise).
+This could be done with the following powershell one-liner:
+Signature-based detection, while often looked down upon, is a valuable detection strategy — especially when we consider in-memory scanning.
+With only a handful of signatures, we can detect Cobalt Strike regardless of configuration or stealth features enabled with an effective false positive rate of zero.
+Familiarize yourself (if you haven't already) with the powerful protection, detection, and response capabilities of Elastic Agent.
+Start your free 14-day trial (no credit card required) or download our products, free, for your on-prem deployment.
+And take advantage of our Quick Start training to set you up for success.
+Watch all of the content on demand now and take your organization's search, observability, or security capabilities to a whole new level.
+Elasticsearch B.V. All Rights Reserved
+Elasticsearch is a trademark of Elasticsearch B.V., registered in the U.S. and in other countries.
+Apache, Apache Lucene, Apache Hadoop, Hadoop, HDFS and the yellow elephant logo are trademarks of the Apache Software Foundation in the United States and/or other countries.
+Elasticsearch B.V. All Rights Reserved

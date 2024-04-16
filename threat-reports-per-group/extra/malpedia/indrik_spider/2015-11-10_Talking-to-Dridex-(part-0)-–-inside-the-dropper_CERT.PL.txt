@@ -1,0 +1,49 @@
+Dridex mostly comes to us as spam which contains a .doc with some macros, responsible for downloading a dropper.
+One can quickly analyze it using oledump.py and looking through vbscript, or naturally, just try to run it in a sandbox and obtain the dropped files.
+After unpacking the rather mundane packer, lets get into the juicy parts.
+We are presented with a small stage1 dropper, which looks rather basic.
+The purpose of the dropper is to download the main binary from C&C and inject it to explorer, plus some generic initialization stuff.
+First lets take a look how to find C&C addresses.
+In older samples there was a PE section called .sdata and it contained xored xml-document with all of the interesting data,
+About a week ago that changed.
+There is no more .sdata – data sits in plain sight somewhere in memory, structured as follows:
+Using a yara signature like this:
+we can easily locate address where it is used and pull out that data.
+Ok, now we have to find code that calls those addresses.
+After going back-and-forth between references we stumble across this function:
+Here is a little digression, if you don’t know this already: Dridex uses encoded strings and a run-time api resolving to make our life harder.
+Fortunately nothing fancy, a simple xor:
+Despite what’s often reported, the first communication is not encrypted with xor as described in other articles, but with RC4.
+Keys are stored somewhere in binary encoded as any other string.
+They are different per botnet but otherwise don’t seem to change that often.
+For botnet 220 the key is:
+Armed with C&C addresses and key, we can create a message.
+Fortunately, the Dridex authors were kind enough not to use any fancy binary format, just plain xml (sometimes gziped but we got to that part later…) and the message looks something like this:
+where “unique” is a bot name, created as follows:
+“botnet” is a 2 bytes value hidden in config, and the name corresponds to a request we’d like to do.
+The most basic request is `list` which obtains a list of nodes.
+After decrypting the response, using RC4 with the same key, we got something like this, base64-encoded string is copied without decoding and dealt with in the next stage.
+The next command is `bot` and is responsible for downloading main dll
+There is no rocket science here, base64-encoded string is being decoded and loaded into memory, what is interesting in this case is how it is done.
+It is normal in the malware world to apply an extra layer of protection to files stored in the local system.
+For example Tinba additionally xors it’s configuration file with bot id.
+But a non-written rule of how most malware works, is that every code is passed through memory in clear text.
+As one can guess this not the case here.
+Indeed, Dridex’es method of injecting into another process is quite nice.
+It consists of two stub loaders.
+The first is responsible of decoding real payload (again just xor), while the second is used as a simple pe-loader which makes it possible to run PE files without syscalls like LoadLibrary or CreateProcess.
+This is clearly visible in any memory tracer,
+What is important with further analysis is that it relays quite heavily on loader metadata, which is somehow modeled to resemble a legit PE – which obviously it is not, as it missed almost every PE characteristic besides the typical MZ-PE signature.
+Main dll is obviously packed – however I leave that challenge to the reader as a homework, as this is the end of introduction.
+Cya in the next part!
+The CERT Polska team operates within the structures of NASK (Research and Academic Computer Network) — 
+                    a research institute which conducts scientific studies, operates the national .pl domain registry
+                    and provides advanced IT services.
+Kolska 12, PL-01-045 Warsaw, Poland
+                        tel.
+: +48 22 380 82 74
+                        fax: +48 22 380 83 99
+                        ePUAP: /NASK-Instytut/SkrytkaESP
+
+                        E-mail: [email protected]
+                        Incidents: [email protected]

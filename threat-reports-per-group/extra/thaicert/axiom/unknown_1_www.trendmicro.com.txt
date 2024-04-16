@@ -1,0 +1,229 @@
+We discovered a new malware that targets online gambling companies in China via a watering hole attack, in which visitors are tricked into downloading a malware loader disguised as a legitimate installer for well-known apps such as Adobe Flash Player or Microsoft Silverlight.
+By: Joseph C Chen, Kenney Lu, Jaromir Horejsi, Gloria Chen
+		
+			July 09, 2021
+Read time:  ( words)
+We discovered a new malware that targets online gambling companies in China via a watering hole attack, in which visitors are tricked into downloading a malware loader disguised as a legitimate installer for well-known apps such as Adobe Flash Player or Microsoft Silverlight.
+Closer examination of the loader shows that it loads either a Cobalt Strike shellcode or a previously undocumented backdoor written in Python, a new type of malware that we found to be named BIOPASS RAT (remote access trojan).
+BIOPASS RAT possesses basic features found in other malware, such as file system assessment, remote desktop access, file exfiltration, and shell command execution.
+It also has the ability to compromise the private information of its victims by stealing web browser and instant messaging client data.
+What makes BIOPASS RAT particularly interesting is that it can sniff its victim’s screen by abusing the framework of Open Broadcaster Software (OBS) Studio, a popular live streaming and video recording app, to establish live streaming to a cloud service via Real-Time Messaging Protocol (RTMP).
+In addition, the attack misuses the object storage service (OSS) of Alibaba Cloud (Aliyun) to host the BIOPASS RAT Python scripts as well as to store the exfiltrated data from victims.
+We consider BIOPASS RAT as still being actively developed.
+For example, some markers that we discovered during our analysis refer to different versions of RAT code, such as “V2” or “BPSV3”.
+Many of the loaders that we found were used to load Cobalt Strike shellcode by default instead of the BIOPASS RAT malware.
+Furthermore, BIOPASS RAT also creates scheduled tasks to load the Cobalt Strike shellcode during the initialization, indicating that the malicious actor behind the attack still heavily relies on Cobalt Strike.
+We also found several clues that show how the malware might be connected with the Winnti Group(also known as APT41).
+In this blog entry, we will dive deeper into BIOPASS RAT with a detailed technical analysis of the infection chain, the different components of the malware, and any possible associations with Winnti.
+The initial delivery mechanism of BIOPASS RAT uses of a watering hole, a compromised website in which the malicious actors inject their custom JavaScript code to deliver malware.
+In most of the cases that we observed, the attackers usually place their injection script in their target’s online support chat page.
+The injected script will try to scan the affected host by sending HTTP requests to a list of ports.
+If it receives any response with an expected string from these ports, the script will stop.
+This step is likely designed to avoid attacking an already infected victim.
+We found that the BIOPASS RAT has the ability to open an HTTP service running on localhost on a port chosen from a hard-coded list.
+This functionality allows the script to identify whether the victim has already been infected by their malware.
+It conducts this identification by testing whether the port is open or not and then by checking the response.
+If the script confirms that the visitor has not yet been infected, it will then replace the original page content with the attackers’ own content.
+The new page will show an error message with an accompanying instruction telling website visitors to download either a Flash installer or a Silverlight installer, both of which are malicious loaders.
+It is important to note that both Adobe Flash and Microsoft Silverlight have already been deprecated by their respective vendors.
+The legitimate known application is downloaded and executed.
+Authenticode-signed files are either downloaded from the official websites (as seen in sample c47fabc47806961f908bed37d6b1bbbfd183d564a2d01b7cae87bd95c20ff8a5) or are hosted on Alibaba Cloud OSS on the attackers’ account.
+Visual C++ runtime, a legitimate and signed vc_redist.x?
+?.exe, and Python runtime are then downloaded.
+These files are also hosted on Alibaba Cloud OSS on an attacker-controlled account.
+The Python runtime is usually a ZIP file with all required executables, as well as the DLL and Python libraries necessary for running Python scripts on machines where Python is not installed.
+Scheduled tasks that are activated on a new login are created.
+These tasks can run a BPS backdoor or a Cobalt Strike loader.
+We also noticed the path string “ServiceHub”, which is a path to the extracted Python runtime.
+After the hex decoding of the arguments, we get a Python one-liner that downloads additional Python scripts from the cloud.
+We observed a few scheduled tasks being created, with the number dependent on the analyzed sample.
+In the following section, we provide an analysis for each important backdoor module.
+One of the modules used is called “cdaemon”.
+At the time of our research into this threat, only the “print(1)” command is able to be executed.
+An old sample of the module (30ccfbf24b7c8cc15f85541d5ec18feb0e19e75e1e4d2bca9941e6585dad7bc7) is likely a watchdog to check the status of another module that is known as “c1222”.
+The malicious actors can change this behavior by replacing the content of the cdaemon.txt service in the cloud so that when combined with the regular execution of the scheduled task, the cdaemon task can behave like a backdoor.
+The second scheduled task is called “c1222.txt,” which is a Python code run by a previously downloaded Python runtime.
+This code runs an HTTP server that listens on predefined ports.
+If accessed by an HTTP client, it returns a marker value.
+After accessing the infected machine with an HTTP server bound to a predefined port, the module returns the marker value.
+We also observed other markers — such as, “cs_online”, “online”, and “dm_online”.
+The purpose of the HTTP service is to act as a marker for an infected machine to avoid repeated infection, as aforementioned in the infection chain section.
+The most important task of the c1222 script is to download, decode, and execute the Cobalt Strike shellcode.
+Based on the platform, it downloads a file with an encoded shellcode (sc3.txt, x64.txt), and then decodes it (the shellcode is base85 and hex-encoded).
+The third scheduled task —is called “big.txt”— is responsible for implementing the BIOPASS RAT malware.
+This is a Python-based backdoor that is distributed in plain text or compiled with Nuitka or PyArmor and PyInstaller.
+When the malware starts, it checks whether the file with the hard-coded name “%PUBLIC%/20200318” exists.
+This file is a marker to determine if the scheduled task of the backdoor has been installed.
+If the file (that is, the marker) is not found, the backdoor creates a new one and writes the current timestamp onto it.
+The malware will then delete the scheduled tasks added by the loader and add two new scheduled tasks that are listed in Table 1.
+Executes Python with a parameter that is the Python script to download and execute Cobalt Strike loader script “c1222” module
+Executes Python with a parameter that is the Python script to download and execute BIOPASS RAT script “big” module
+The BIOPASS RAT malware loads a Python script, “online.txt” that will open an HTTP server that listens on one of the following port numbers: 43990, 43992, 53990, 33990, 33890, 48990, 12880, 22880, 32880, 42880, 52880, or 62880.
+The HTTP server does nothing but returns string “BPSV3” to request.
+A second HTTP server will also be created to listen on one of the aforementioned port numbers.
+The second HTTP server behaves the same as the first but returns a string, “dm_online”, instead.
+These are the markers of infection as previously mentioned.
+After the servers are established and running, the backdoor creates an execution root directory in the folder “%PUBLIC%/BPS/V3/”.
+If the malware finds that the system username is “vbccsb”, it will stop.
+It must be noted that “vbccsb” is the default username on ThreatBook Cloud Sandbox, a popular alternative to VirusTotal in China.
+If the backdoor finds that the file “debug” present inside the root directory, it will wait for 130 seconds and then continue with execution.
+Next, the backdoor will try to read the file “bps.key” inside the root directory.
+This file contains the victim ID assigned by the command-and-control (C&C) server.
+If the file hasn’t been created, it will set the victim ID to a null value until the C&C server assigns it.
+At the end of initialization, it collects the information of the victim’s system and initializes values in the global config variable that contains important configuration information.
+This includes the backdoor version (we observed V2 and V3), access keys, endpoint address, the bucket name for Alibaba Cloud OSS, and a URL for downloading the utility sc.exe that is used for taking screenshots.
+The backdoor communicates with the C&C server using the Socket.io protocol.
+The C&C communication is encrypted with AES ECB algorithm using a hard-coded password, ZLIB compression, and base85 encoding.
+Figures 18 and 19 show how the malware sends the “join” event to initialize C&C communication and attach the victim’s encrypted data.
+The BIOPASS RAT malware registers three custom Socket.io event handlers:
+The “notice” handler is used for checking the connection with the C&C server.
+The backdoor regularly sends a “notice” event to the server and records the timestamp if it also receives a “notice” event as the response.
+If the malware doesn’t receive any “notice” event within a hard-coded threshold period, it will restart.
+The “set key” handler is used for accepting the victim ID, a random string with six characters, assigned by the C&C server.
+It will be attached in each of commands sent from the server and will also be used as the folder name on a cloud storage service to save the stolen data.
+The victim ID will be stored in the “bps.key” file.
+The “accept task” handler is the main handler used to process the command sent from the C&C server and to return the execution result.
+We share more details of each command in the next section.
+The BIOPASS RAT malware implements multiple commands, most of which are self-explanatory.
+A summary of commands is listed in Table 2, while additional details of some commands are explained in the following section.
+Compresses specified files or directories to a ZIP archive
+Extracts files from a specified ZIP archive
+Creates a scheduled task for persistence
+Kills the Everything process with the command “TASKKILL /F /IM Everything.exe”
+Downloads and runs Everything from voidtools
+Kills the FFmpeg process with the command “TASKKILL /F /IM ffmpeg.exe”
+Downloads and runs FFmpeg (for screen video capture)
+Deletes files or directories at specified locations
+Creates a directory at a specified location
+Gets the disk partition or lists a specified directory with detailed information, including file name, file path, size, create time, and time of modification
+Downloads a URL and saves the file to a specified location
+Uploads the victim’s files to cloud storage
+Kills the BIOPASS RAT process and deletes installed files.
+Kills the OBS process with command “TASKKILL /F /IM obs64.exe”
+Downloads OBS Studio and starts live streaming
+Lists processes on the victim’s environment and their process identifier (PID)
+Kills the process specified by PID with the TASKKILL command
+Takes a screenshot and uploads it to cloud storage
+Executes commands or scripts (subcommands with prefixes
+subprocess, python, noreturn, getversion, restart)
+Lists QQ, WeChat, and Aliwangwang directories
+Downloads and installs the tcpdump tool
+Compresses and uploads Telegram's “tdata” directory to cloud storage
+Kills frpc process with command “TASKKILL /F /IM frpc.exe”
+Downloads and installs the frp proxy client in the “%PUBLIC%” folder
+Downloads and installs jsmpeg-vnc tool in the “%PUBLIC%/vnc/” folder
+Kills the VNC process with the command “TASKKILL /F /IM vdwm.exe”
+Decrypts the cookie file of the browser and uploads it to cloud storage
+Decrypts the login file of the browser and uploads it to cloud storage
+Uploads the history file of the browser to cloud storage
+Uploads the bookmark file of the browser to cloud storage
+The malware downloads “Everything” files if the “Everything” binary is not found in the “%TEMP%” folder.
+It then changes the port number of the HTTP server inside the configuration file and starts the Everything process, which will open an HTTP server to allow the threat actor to access the file system of the victim.
+The malware downloads FFmpeg files if they are not found on the victim’s machine.
+Next, it starts the FFmpeg process to monitor the victim’s desktop via RTMP live streaming to the cloud.
+The malicious actor can then connect to the relevant RTMP address to watch the streaming.
+The malware downloads OBS Studio files if the OBS folder and config file are not found in the root directory.
+It writes the basic config and RTMP config of OBS and then starts the OBS process to monitor the victim’s desktop using RTMP live streaming to the cloud.
+The malicious actor can connect to the relevant RTMP address to watch the streaming.
+The malware downloads the screenshot-cmd tool if it is not found in the root directory.
+It takes a screenshot of the victim’s screen with the tool and saves it as a PNG file with a random number as the file name.
+The malware will then upload the screenshot files to cloud storage.
+The malware uses a number of methods to execute the shell command or script.
+The “Shell” command instructs the malware to execute a command using the Python function “win32api.ShellExecute” and to return the result to a C&C server, applying a 60-second timeout for command execution.
+If the command has one of the following prefixes, it will perform a specific behavior:
+“subprocess”: executes a system command using the Python function “subprocess.Popen”.
+“python”: executes a Python script delivered with the command.
+“noreturn”: executes a system command using the Python function “win32api.ShellExecute” without waiting for the result.
+“getversion”: returns the string “20200202”.
+“restart”: kills the process itself and restarts it via scheduled malicious tasks.
+The command will list the installation directory of several popular instant messaging applications including WeChat, QQ, and Aliwangwang and return this information to the C&C server.
+Figures 21 and 22 show the result of running “SnsInfo” command to enumerate messengers.
+None of the Chinese messenger applications has been installed on our testing machine, which explains the result seen in the images.
+This command is designed to steal cookie information from browsers.
+It will read the “Local State” file to grab the AES secret key of Google Chrome-based browsers.
+Depending on the different argument “type” delivered with the command, it performs different behaviors.
+If the value of the “type” argument is “Chrome”, it will use the AES secret key or DPAPI (for Chrome versions before 80) to decrypt the cookie file.
+The decrypted result will be sent to the C&C server.
+If the value of the “type” argument is “File”, it will directly upload the cookie file to cloud storage.
+The command that we received showed that the targeted browsers include Google Chrome, Microsoft Edge Beta, 360 Chrome, QQ Browser, 2345 Explorer, Sogou Explorer, and 360 Safe Browser.
+This command has a nearly identical function to “GetBrowsersCookies”, although it targets a browser’s “Login Data” files instead.
+Additional Findings on BIOPASS RAT
+Although these are not implemented inside the BIOPASS RAT malware, we have observed two additional plug-ins that are written in Python (“getwechatdb” and “xss_spoof”) and were deployed by the threat actor to a victim who had been infected with Cobalt Strike.
+The script “getwechatdb” is used for exfiltrating the chat history from the WeChat Windows client.
+The script will detect the version of the installed WeChat client and grab the decryption key and the user ID.
+The predefined list of offsets is used to locate where the decryption key and the user ID are embedded.
+The list supports 36 different versions of memory offsets for the message client.
+The script will then upload database files inside the WeChat folder including “MicroMsg.db” to cloud storage.
+These database files are used for saving the chat history.
+Finally, the script will print out the client ID and the decryption key that allows the malicious actors to decrypt the stolen database files of the chat history.
+The other plug-in, “xss_spoof”, is an archive that contains multiple Python scripts.
+The scripts are designed for web server infection via a cross-site scripting (XSS) attack.
+This plug-in can inject malicious scripts into the response of the victim’s web server by leveraging the WinDivert package, which is used to sniff and manipulate the network traffic on Windows.
+The scripts intercept HTTP GET requests that are sent to port 80.
+An “ignore” list is used to filter the file extensions of URLs to avoid manipulating resources that are not JavaScript or HTML.
+The script then modifies the original JavaScript or HTML content and delivers it to website visitors.
+The delivered script is almost the same as the malicious script previously discussed in the section on the watering hole attack.
+The script performs checks by scanning localhost to determine if the machine is infected by BIOPASS RAT while showing the fake updated webpages.
+It is likely that the malicious actors compromised the web servers first and then ran “xss_spoof” for propagation.
+We have found several connections between BIOPASS RAT and the Winnti Group:
+We discovered that many BIOPASS RAT loader binaries were signed with two valid certificates.
+However, these certificates are likely stolen from game studios from South Korea and Taiwan.
+It is well known that the Winnti Group has previously used stolen certificates from game studios to sign its malware.
+12:00 a.m.,  Jan. 2, 2019
+12:00 a.m., Sept. 6, 2018
+11:59 p.m., Oct. 5, 2021
+While checking the stolen certificates, we found a server-side variant of the Derusbi malware sample (e5fdb754c1a7c36c288c46765c9258bb2c7f38fa2a99188a623182f877da3783) that was signed with the same stolen certificate.
+Derusbi is known to be used by multiple advanced persistent threat (APT) groups.
+The server-side variant has also been noted to be used as a malware loader by the Winnti Group.
+We found an interesting Cobalt Strike loader (a7e9e2bec3ad283a9a0b130034e822c8b6dfd26dda855f883a3a4ff785514f97) that embeds a URL that leads to the BIOPASS RAT loader.
+However, the URL is unused and was likely left inside the loader as a mistake.
+This file has also been mentioned in a recent report that connects it to an attack on a major certification authority (CA) in Mongolia.
+The Cobalt Strike loader, which has a PDB string “C:\Users\test\Desktop\fishmaster\x64\Release\fishmaster.pdb”, connects to the C&C server “download[.]google-images[.]ml”.
+The domains and the PDB string have been mentioned in a recent report and have been attributed to the Winnti Group.
+While these connections allow us to link the malware to the Winnti Group, the different targets between BIOPASS RAT and the current operations by Winnti’s that we are tracking makes associating the two more difficult.
+BIOPASS RAT is a sophisticated type of malware that is implemented as Python scripts.
+It possesses many features, such as the ability to use scheduled tasks as a method of maintaining persistence in the infected system.
+The malware abuses publicly available tools and cloud services for its malicious behavior.
+Notably, a large number of features were implemented to target and steal the private data of popular web browsers and instant mes\sengers that are primarily used in Mainland China.
+Given that the malware loader was delivered as an executable disguised as a legitimate update installer on a compromised website, we advise users to be careful  with regard to the applications that they download.
+As much as possible, it is recommended to download apps only from trusted sources and official websites to avoid being compromised by attacks such as the one discussed here.
+Organizations can also help protect their end users by implementing security solutions that provide  a multilayered defense system that helps with detecting, scanning, and blocking malicious URLs.
+Note that we’ve submitted an abuse report to Alibaba, but we have yet to receive feedback at the time of publication.
+BIOPASS RAT Python Script (Version 3)
+BIOPASS RAT Python Script (C1222 module)
+BIOPASS RAT Python Script (C1222 module)
+BIOPASS RAT Python Script (C1222 module)
+BIOPASS RAT Python Script (C1222 module)
+BIOPASS RAT Python Script (C1222 module)
+BIOPASS RAT Python Script (Cdaemon module)
+BIOPASS RAT Python Script (Cdaemon module)
+BIOPASS RAT Python Script (Cdaemon module)
+BIOPASS RAT encoded Cobalt Strike shellcode
+BIOPASS RAT encoded Cobalt Strike shellcode
+BIOPASS RAT encoded Cobalt Strike shellcode
+Python script of Cobalt Strike shellcode loader
+LUA script of Cobalt Strike shellcode loader
+BIOPASS RAT Python Script (local online server)
+BIOPASS RAT Python Script (getwechatdb plugin script)
+BIOPASS RAT Python Script (getwechatdb plugin script)
+BIOPASS RAT Python Script (xss_spoof plugin package)
+XSS watering hole attack script
+Cloud storage bucket used to host BIOPASS RAT loaders
+Cloud storage bucket used to host BIOPASS RAT loaders
+Cloud storage bucket used to host BIOPASS RAT modules and stolen data
+Cloud storage bucket used to host Cobalt Strike loader scripts
+Cloud storage bucket used for RTMP live streaming
+Cloud storage bucket used for storing stolen WeChat data
+BIOPASS RAT loader download URL
+BIOPASS RAT loader download URL
+BIOPASS RAT loader download URL
+BIOPASS RAT script download URL
+BIOPASS RAT script download URL
+Python runtime package download URL
+Python runtime package download URL
+c1222 module script download URL
+Cobalt Strike Python loader download URL
+Cobalt Strike Lua loader download URL
+Cobalt Strike shellcode download URL
+Cobalt Strike shellcode download URL
+Cobalt Strike shellcode download URL

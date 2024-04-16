@@ -1,0 +1,152 @@
+Contributors: Oleg Boyarchuk (T-Rex), Jason Zhang (NSBU TAU), Giovanni Vigna (NSBU TAU)
+Dridex is a banking Trojan.
+After almost a decade since it was first discovered, the threat is still active.
+According to a report published by Check Point [1], Dridex was one of the most prevalent malware in 2020.
+In this blog post, we first examine the recent Dridex attack by looking into some of VMware’s NSX Advanced Threat Prevention telemetry, which showcases the magnitude of the campaign.
+We then present the analysis for the most distinctive aspects of the attack, from the techniques leveraged by the XLSM downloader to the main functionality of the DLL payloads.
+Finally, we provide a comparison to some other Dridex variants seen in the past, which leads to the conclusion that the Dridex variant from the January 2021 campaign is very different from previous variants.
+The chart below shows the detection timeline of the campaign that affected some of our customers in the APAC region, mostly universities.
+As we can see, the campaign started on January 11, and peaked on January 21 before fading away.
+Detection timeline of the campaign that affected some of our customers in the APAC region.
+To entice potential victims to activate a malicious payload, attackers often use social engineering techniques in spam emails.
+Typical examples include using logistics invoices and online order confirmations as lures.
+In the recent Dridex campaign, the malspam appears to come from the customer service department of a logistic company, with subject lines saying that new invoices are available to be viewed.
+The screenshot below shows the email sender names, subject lines, and attachment filenames of some typical emails from the campaign we detected.
+Examples of typical email header and attachment names from the Dridex campaign.
+The email attachments are weaponized XLSM spreadsheet documents, which serve as the Dridex downloaders in the campaign, as discussed in the following section.
+To better understand the attack, we analyzed one of the XLSM samples from the campaign, as shown in the table below:
+The properties of a typical XLSM sample from the campaign.
+Like typical weaponized Office documents, this document uses social engineering to ask for enabling macro execution upon opening the file:
+The opening page of the XLSM sample.
+The VBA macro is locked (as shown above).
+Protecting a VBA macro is not necessarily malicious, but this feature is seldom used in benign documents.
+For this reason, NSX catches this suspicious behavior as follows:
+NSX detection: VBA Project is not viewable.
+Exploring the embedded macro reveals that it leverages URLDownloadToFileA to download a DLL payload.
+Calling URLDownloadToFileA takes into account both 32-bit and 64-bit operating systems:
+Leveraging the API function URLDownloadToFileA to download a DLL payload.
+NSX detects the network traffic attempting to download the payload:
+NSX detection: attempting to download an executable file.
+The payload is saved to the system’s %TEMP% directory upon successful download, which NSX detects as suspicious behavior:
+NSX detection: dropping an executable file.
+The downloaded DLL is then loaded with regsvr32.exe, which is detected by NSX as malicious behavior:
+NSX detection: document is executing regsvr32.exe.
+The downloaded DLL (swwwbudo.dll) has the following basic properties:
+The properties of the downloaded DLL (swwwbudo.dll).
+The code inside the DLL is obfuscated with multiple arithmetic operations using arbitrary integers, which makes static analysis challenging.
+The obfuscated code is shown below:
+Code obfuscation with multiple arithmetic operations using arbitrary integers.
+The payload performs several steps:
+More details are discussed below.
+The first–stage shellcode is stored in encrypted form in the .rdata section of the DLL.
+There are two functions responsible for the shellcode decryption:
+The decryption takes ~30 seconds, generating an unusually high CPU load.
+The decrypted shellcode contains another encrypted layer.
+There is a short code at the beginning of the shellcode that loops through the bytes and decrypts the XOR-encrypted code:
+Decryption loop to decrypt the inner encrypted code.
+After the decryption, the shellcode finds the address of VirtualAlloc.
+It does so via a module list traversal taken from the PEB:
+This is a known technique widely used by malware.
+NSX detects this technique as well:
+NSX detection: presence of position independent code (shellcode).
+Instead of comparing strings of function names character–by–character, the DLL implements a string hashing algorithm, as shown below:
+This is a known API hashing algorithm used in packers, which was also seen in the Ursnif downloaders.
+This implies that the API hashing algorithm has been reused by both Ursnif and Dridex (code reuse by different malware writers is common.)
+NSX identifies this specific technique:
+NSX detection: makes use of a known API hashing algorithm.
+After successfully finding the address of VirtualAlloc, the shellcode then runs the second stage:
+It’s worth pausing on the obfuscated offset used to access the shellcode’s memory.
+Instead of having zero as an offset, like a benign code would normally have, an extremely large offset 0x658871 was subtracted from the EBX register before retrieving the addresses of the functions stored in shellcode’s memory.
+A large offset is used to access shellcode’s memory.
+The shellcode remembers that it has already been decrypted (a decryption flag has been set to True after the decryption in the first stage discussed above) before jumping into the second copy.
+Therefore, this time the code skips the decryption routine.
+The shellcode has an embedded DLL, which is termed core DLL herein.
+With VirtualAlloc the shellcode allocates memory for the core DLL.
+VirtualProtect helps assign the correct memory access protection to each allocated memory region.
+LoadLibraryExA and GetProcAddress help find the functions to be imported.
+The core DLL we dumped from memory has the following checksum (SHA1):
+The DLL might contain some trash bytes introduced by the memory dump process, which means the hash of the DLL shown above could be different from the one for the actual core DLL.
+The DLL imports only Sleep and OutputDebugStringA.
+The addresses of other functions are obtained dynamically via two functions:
+These functions implement a standard function retrieval mechanism via the FS register, similar to the hash-based technique that was described previously.
+Whenever the DLL needs to call another function, it retrieves an address dynamically and then makes a corresponding API call without storing pointers anywhere.
+Calling API functions via the INT3-RET instruction pair.
+In the example shown in the screenshot above, the code in the DLL performs a call to RegEnumKeyA (a Windows API function for enumerating the subkeys of an open registry key) via the INT3-RET instruction pair.
+More specifically, the function call process can be summarized as follows:
+Return address points to instruction “test eax, eax” after RET instruction.
+The trick here is that, prior to the function call, the DLL registers a VEH handler.
+The handler is called when the CPU raises an exception for INT 3.
+This is the prototype of a VEH handler:
+The prototype of a VEH handler.
+A handler is registered by calling AddVectoredExceptionHandler.
+The process performs the following steps if the exception handler gets called with STATUS_BREAKPOINT (0x80000003):
+The multi-step process after the exception handler is called with STATUS_BREAKPOINT.
+If one is not familiar with the technique, it can be confusing to see a lot of __debugbreak() across the code:
+_debugbreak() is called in the code.
+_debugbreak() is an intrinsic command of the Microsoft compiler which directly translates to the INT 3 assembly instruction.
+Whenever an INT 3 instruction is called, it raises an exception.
+In addition to the challenging static analysis described above, the debugger pops up every time INT 3 executes.
+Suppressing the STATUS_BREAKPOINT exception can be done in debugger settings, and it doesn’t affect the debugging process:
+Debugger works well by ignoring the INT 3 exceptions.
+The DLL has four IP:port pairs of C&C servers, through which it iterates:
+C&C server and port pairs.
+The DLL feeds IP address and port to InternetConnectW during a connection attempt.
+After that, HttpOpenRequestW is called to initiate a POST request to the root folder of a web server.
+It provides the following flags to HttpOpenRequestW:
+ Combining the flags of INTERNET_FLAG_SECURE and INTERNET_FLAG_IGNORE_CERT_XXX makes the connection secure and forces wininet.dll to ignore problems with server-side SSL certificates.
+As soon as the connection is established, the DLL calls HttpSendRequestW to transfer ~5 KB of encrypted data about the target environment:
+Data collected from the victim’s machine is encrypted prior to exfiltration.
+NSX detects the network traffic to the Dridex C&C server:
+NSX detection: network traffic to a Dridex C&C server.
+To find out how the TTPs used by the samples from the recent campaign differ from Dridex samples seen in the past, we performed a comparison study.
+The table below lists some typical samples collected from previous Dridex campaigns:
+Dridex samples from past campaigns.
+Based on our analysis, we make the following observations:
+A detailed comparative analysis can be found in the Appendix.
+In this report, we analyzed some samples from a recent wave of Dridex infections.
+As usual, the infection process starts with a spam campaign using social engineering emails with malicious attachments (XLSM in this case).
+The attack comprises two main stages.
+The first stage is to leverage malicious VBA macros embedded in the XLSM file to download the initial Dridex payload.
+In the second stage, the payload runs an embedded DLL from memory, which then exfiltrates data collected from the infected system.
+Our analysis demonstrates that the malware writer used various TTPs in the attack, including downloading a DLL payload via URLDownloadToFileA, using an API hashing algorithm to locate function names, and registering a VEH handler to complicate analysis.
+In addition, we also compared the new samples from the recent wave to some previous samples collected since April 2020.
+Our comparison analysis shows that tricks such as using the VEH handler and code obfuscation used in the new samples were also seen in some past samples.
+However, to a large extent, the new samples are very different from the old Dridex variants.
+VMware’s NSX Advanced Threat Prevention offering for the NSX Service-defined Firewall delivers the broadest set of threat detection capabilities that span network IDS/IPS and behavior-based network traffic analysis.
+This also includes VMware NSX Advanced Threat Analyzer™, a sandbox offering based on a full-system emulation technology that has visibility into every malware  action.
+VMware NSX is purpose-built to protect data center traffic with the industry’s highest fidelity insights into advanced threats.
+XLS (2020.4) – sha1: c2c873baf147aa74843382a1e2dae33659bd49d5
+This file also leverages social engineering techniques to display content related to a logistic invoice, but it looks completely different from the new XLSM sample.
+The opening page of the XLS sample.
+The embedded VBA macro code in the sample looks plain, and it doesn’t run regsvr32.dll:
+Embedded VBA macro code in the XLS sample.
+This implies that this sample is different from the new XLSM sample.
+DLL (2020.4) – sha1: 1c3bd35dd430c10a4dd2e188ebad12cc85b6fa63
+This DLL doesn’t have DllRegisterServer in the exports.
+DllEntry is not obfuscated, and it uses normal API calls such as GetWindowsDirectoryA, CreateSemaphoreA and GetCurrentDirectoryA.
+The sample doesn’t look similar to the new swwwbudo.dll.
+DLL (2020.4) – sha1: 0554438b88e9463f6c8f040ba2370359ed42d80c
+This is a 64-bit DLL, unlike the new one, which is 32-bit.
+The code inside the DLL is not obfuscated.
+The DLL doesn’t have DllRegisterServer in exports.
+It imports 4 functions: AddVectoredExceptionHandler, GetComputerNameW, ExitProcess, GetExitCodeProcess.
+It is worth noting that the VEH handler used in the DLL is very similar to the one used by the new sample described above:
+The VEH handler used in the DLL.
+However, the DLL doesn’t implement the INT 3 technique described above.
+Though the sample doesn’t look similar to the new swwwbudo.dll, the code for VEH handler used to manipulate registers is identical to the code found in the new swwwbudo.dll, which led us to believe that both samples were coming from the same author.
+DLL (2020.11) – sha1: 1c6dfce105f9af04358901c46a50a8f419b621fb
+The DLL doesn’t have DllRegisterServer in exports.
+List of imports used by the DLL.
+The main function looks completely different from the new swwwbudo.dll:
+The main function in the DLL.
+The inner code also looks very different:
+The inner code in the DLL.
+The code difference shows that this sample is not similar to the new swwwbudo.dll.
+DLL (2020.12) – sha1: d240ad10acf8f15e8ac29fa8bee58796900bc55a
+There are two DllRegisterServer and DllUnregisterServer functions in the export table, similar to the new swwwbudo.dll.
+The code obfuscation also looks similar:
+Obfuscated code in the DLL, which is similar to the new swwwbudo.dll.
+There is a third function in the export table with a random name.
+The way strings are passed to function calls in this function is similar to the method implemented in the new swwwbudo.dll.
+This implies that the sample is very similar to the new swwwbudo.dll.
+0 Comments have been added so far

@@ -1,0 +1,133 @@
+Meet SparklingGoblin, a member of the Winnti family
+ESET researchers have recently discovered a new undocumented modular backdoor, SideWalk, being used by an APT group we’ve named SparklingGoblin; this backdoor was used during one of SparklingGoblin’s recent campaigns that targeted a computer retail company based in the USA.
+This backdoor shares multiple similarities with another backdoor used by the group: CROSSWALK.
+SideWalk is a modular backdoor that can dynamically load additional modules sent from its C&C server, makes use of Google Docs as a dead drop resolver, and uses Cloudflare workers as a C&C server.
+It can also properly handle communication behind a proxy.
+In November 2019, we discovered a Winnti Group campaign targeting several Hong Kong universities; it had started at the end of October 2019, and we published a blogpost about it.
+During that campaign the attackers mostly made use of the ShadowPad backdoor and the Winnti malware, but also the Spyder backdoor and a backdoor based on DarkShell (an open source RAT) that we named Doraemon.
+Even though that campaign exhibited links to Winnti Group, the modus operandi was quite different, and we started tracking it as a separate threat actor.
+Following this (second) Hong Kong university compromise, we observed multiple compromises against organizations around the world using similar toolsets and TTPs.
+Considering those particular TTPs and to avoid adding to the general confusion around the “Winnti Group” label, we decided to document this cluster of activity as a new group, which we have named SparklingGoblin, and that we believe is connected to Winnti Group while exhibiting some differences.
+Days before the intended publication of this blogpost, Trend Micro published a report about a group its researchers track as Earth Baku and a campaign using malware they call the ScrambleCross backdoor.
+These correspond to the group we track as SparklingGoblin and the SideWalk backdoor documented here.
+Since mid 2020, according to our telemetry, SparklingGoblin has been very active and remains so in 2021.
+Even though the group targets mostly East and Southeast Asia, we have seen SparklingGoblin targeting a broad range of organizations and verticals around the world, with a particular focus on the academic sector, but including:
+Geographic distribution of SparklingGoblin targets
+SideWalk staging is summarized in Figure 2.
+The SideWalk backdoor is ChaCha20-encrypted shellcode that is loaded from disk by SparklingGoblin’s InstallUtil-based .NET loaders.
+Also, as we will show below, the SideWalk backdoor shares multiple similiarities with CROSSWALK, which is a modular backdoor attributed to APT41 by FireEye and publicly documented by Carbon Black.
+SideWalk’s shellcode is deployed encrypted on disk under the name Microsoft.WebService.targets and loaded using SparklingGoblin’s InstallUtil-based .NET loader obfuscated with a modified ConfuserEx, an open source protector for .NET applications that is frequently used by the group.
+SparklingGoblin’s .NET loaders persist via a scheduled task using one of the following filenames:
+It executes the loader using the InstallUtil.exe utility using the following command:
+where InstallWebService.sql is the malicious .NET loader.
+When started with the /U flag, as here, the Uninstall method from the USCInstaller class in the UPrivate namespace method of the .NET loader is called (see Figure 3).
+Hierarchy of an InstallUtil-based loader
+A deobfuscated version of the RunShellcode method called by the Uninstall method is shown in Figure 4.
+.NET loader method called by the Uninstall method and that decrypts and injects the shellcode.
+As we can see, the loader is responsible for reading the encrypted shellcode from disk, decrypting it and injecting it into a legitimate process using the process hollowing technique.
+Note that the decryption algorithm used varies across samples.
+Additionally, note that SparklingGoblin uses a variety of different shellcode loaders such as the Motnug loader and ChaCha20-based loaders.
+Motnug is a pretty simple shellcode loader that is frequently used to load the CROSSWALK backdoor, while the ChaCha20-based loaders, as their names suggest, are used to decrypt and load shellcode encrypted with the ChaCha20 algorithm.
+The ChaCha20 implementation used in this loader is the same one used in the SideWalk backdoor described below.
+This implementation is counter based (CTR mode), using a 12-byte nonce and 32-byte key with a counter value of 11, leading to the following initial state:
+The 0x0000000B counter value differs from the usual ChaCha20 implementation, where it’s usually set to 0.
+Note that these ChaCha20-based loaders were previously documented in a blogpost from Positive Technologies.
+Similar to CROSSWALK, the SideWalk shellcode uses a main structure to store strings, variables, the Import Address Table (IAT), and its configuration data.
+This structure is then passed as an argument to all functions that need it.
+During SideWalk’s initialization, first the strings are decrypted and added to the structure, then the part of the structure responsible for storing the IAT is populated, and finally SideWalk’s configuration is decrypted.
+At the very beginning of its execution, the data section at the end of the shellcode is decrypted using an XOR loop and this 16-byte key: B0 1D 1E 4B 68 76 FF 2E 49 16 EB 2B 74 4C BB 3A.
+This section, once decrypted, contains the strings that will be used by SideWalk, including:
+The decrypted string pool is listed in Figure 5 below.
+Decrypted configuration strings from SideWalk
+Note that similar to SideWalk, CROSSWALK also starts its execution by decrypting a string pool using an XOR loop and a 16-byte key.
+After decrypting the data section at the end of the shellcode, SideWalk then proceeds to decrypt the rest of its instructions (starting at offset 0x528) by using the same XOR loop with a different 16-byte key: 26 74 94 78 36 60 C1 0C 41 56 0E 60 B1 54 D7 31.
+Once it has decrypted its data and code, SideWalk proceeds to verify its integrity by computing a 32-bit checksum, rotating the result to the right by 13 bits at every 32-bit word and comparing the hash value with a reference one corresponding to the untampered shellcode.
+If the hash is different from the reference value, it exits.
+This allows the shellcode to detect breakpoints or patches to its code and to avoid execution in such cases.
+The corresponding decompiled code is shown in Figure 6.
+Decompiled code of SideWalk’s anti-tampering procedure
+In addition to the string pool, the decoded data also contains the names of the DLLs, as well as the hashes of the names of the functions, to be loaded.
+Contrary to CROSSWALK, where the string representation of the hashes is used, the hashes are stored directly in their raw binary representation.
+The corresponding part of the main structure, after having resolved import addresses, is shown in Figure 7.
+The names of the DLLs to be loaded are highlighted in grey, the hash of the Windows API function names to be imported are in purple and the addresses of the imported functions are in green.
+SideWalk iterates over the exports of each of the DLLs listed in the decoded data and hashes them with a custom hashing algorithm and then compares them to the hashes of the function names to be imported.
+Once a match is found, the address of the matching function is added to the main structure.
+Once the IAT is populated, SideWalk proceeds to decrypt its configuration.
+The configuration is encrypted using the ChaCha20 algorithm and the decryption key is part of the string pool mentioned above.
+The ChaCha20 implementation is the same one used for the ChaCha20-based loader.
+The decrypted configuration contains values used by SideWalk for proper operation, as well as the update.facebookint.workers[.
+]dev C&C server, and the URL of the Google Docs document that is later used as a dead-drop resolver.
+]dev domain is a Cloudflare worker that lets the malware operators customize the server, running on a widely used, public web service.
+During that campaign, SparklingGoblin also used a Cloudflare worker domain with Cobalt Strike: cdn.cloudfiare.workers[.
+One feature of SideWalk is to check whether a proxy configuration is present before starting to communicate with the C&C server.
+To do so, it tries two techniques:
+If a proxy is found, SideWalk will use it to communicate with the C&C server.
+This behavior is very similar to the way proxies are handled by CROSSWALK.
+SideWalk attempts to obtain the proxy configuration of the current user session by stealing the user token from explorer.exe (the process name to search for is in the configuration) and calling the Windows API WinHttpGetIEProxyConfigForCurrentUser.
+Note that SideWalk has the necessary permissions to impersonate logged-on users because it is loaded by the InstallUtil-based .NET loader, which persists as a scheduled task, and so runs under the SYSTEM account.
+Interestingly, the same procedure to get the explorer.exe token is described on this Chinese language blog.
+The decompiled procedure is shown in Figure 8.
+Decompiled code responsible for user impersonation before retrieving the proxy configuration
+The Google Docs page used by SideWalk as a dead-drop resolver is shown in the following screenshot (Figure 9), and at the time of writing, it is still up.
+Note that anyone can edit this page.
+Google Docs document used by SideWalk as dead-drop resolver
+The string present on this page has the format depicted in Figure 10.
+Format of the string hosted on the Google Docs document
+This string is composed of:
+To facilitate the potential future usage of that formatting, we have provided a script in our GitHub repository.
+The decrypted IP address is 80.85.155[.]80.
+That C&C server uses a self-signed certificate for the facebookint[.
+This domain has been attributed to BARIUM by Microsoft, which partially overlaps with what we define as Winnti Group.
+As this IP address is not the first one to be used by the malware, it is considered to be the fallback one.
+The communication protocol used by SideWalk to communicate with its C&C server is HTTPS and the format of the POST request headers sent to the C&C can be seen in Figure 11.
+Example of a POST request used by SideWalk
+Both the URL and the values of the gtsid and gtuvid parameters are randomly generated.
+The Host field is either the IP fetched from Google Docs, or is set to update.facebookint.workers[.]dev.
+The data of the POST request is an encrypted payload.
+The format used by this request is the communication format used by SideWalk operators between C&C server and infected machines, e.g., requests and responses.
+The format of the POST request data is shown in Figure 12.
+Format of the POST request data
+Note that this format is used for both the request and the response, meaning that when SideWalk handles the data sent back from the C&C server, it parses it according to the same format.
+There is no particular similarity in the C&C server communication side between CROSSWALK and SideWalk.
+In this format, the fields are:
+Header Buffer and Data Buffer are encrypted using the corresponding keys.
+The first one stands for the metadata to identify the machine that was compromised, and the second buffer corresponds to the actual data shared between the C&C server and the malware.
+The details of these fields shown in Figure 12, are visible once decrypted.
+When we started analyzing SideWalk, as its C&C server was already down, some of the possible actions were not fully understandable without knowing the data sent by the C&C server, yet most of the capabilities of the malware are documented in the following table.
+C&C commands supported by SideWalk
+Note: As we didn’t retrieve any plug-ins from the C&C server, it’s difficult to assess SideWalk’s full capabilities.
+Even though the SideWalk and CROSSWALK code is different, both families share multiple architectural similarities, with a similar anti-tampering technique, threading model and data layout, and the way this data is handled throughout execution.
+Feature-wise, both backdoors are modular and able to handle proxies to communicate properly with their C&C servers.
+These similarities are described below and summarized in a table at the end of this section.
+Considering all these similarities, we believe SideWalk and CROSSWALK are most likely coded by the same developers.
+The threading model is very similar between SideWalk and CROSSWALK.
+The authors split tasks between threads and use PostThreadMessage Windows API calls to communicate between them.
+For example, one thread is responsible for making a request, and once it gets the response, it transfers it to the appropriate thread.
+The programming style is also very similar; a functional approach is used.
+A data structure stores the configuration, strings, and imports, and it is passed as an argument to all the functions that need it.
+For example, here are a few function prototypes:
+Both SideWalk and CROSSWALK are modular backdoors that can load additional modules sent by the C&C server.
+The SideWalk module handling is implemented in a manner similar to CROSSWALK.
+Some of the possible module operations are execution, installation, and uninstallation.
+Like CROSSWALK, during its initialization, SideWalk computes a 32-bit hash value of the shellcode at the very beginning of its execution using a ROR4 loop.
+CROSSWALK and SideWalk gather similar artifacts; among them:
+Proxy handling is the same in both CROSSWALK and SideWalk.
+Both use common, legitimate URLs (such as https://www.google.com or https://www.twitter.com) and a WinHttpGetIEProxyConfigForCurrentUser Windows API call to retrieve the proxy configuration.
+SideWalk and CROSSWALK follow the same shellcode layout, with instructions followed by strings, IAT, and encrypted configuration data.
+SideWalk and CROSSWALK each process the data at the end of the shellcode in the same way:
+Summary of the similarities between SideWalk and CROSSWALK
+SideWalk is a previously undocumented backdoor used by the SparklingGoblin APT group.
+It was most likely produced by the same developers as those behind CROSSWALK, with which it shares many design structures and implementation details.
+SparklingGoblin is a group with some level of connection to Winnti Group.
+It was very active in 2020 and the first half of 2021, compromising multiple organizations over a wide range of verticals around the world and with a particular focus on the academic sector and East Asia.
+ESET Research is now offering a private APT intelligence report and data feed.
+For any inquiries about this new service, or research published on WLS, contact us at threatintel@eset.com.
+A comprehensive list of Indicators of Compromise and samples can be found in our GitHub repository.
+Note that the SideWalk sample referenced below is not the one on which our analysis is based; the actual sample used during the compromise is the one discussed in detail in the text of this blogpost.
+C:\Windows\System32\Tasks\Microsoft\Windows\WindowsUpdate\WebService
+C:\windows\system32\tasks\Microsoft\Windows\Ras\RasTaskStart
+iislog.tmp
+mscorsecimpl.tlb
+C_25749.NLS
+Microsoft.WebService.targets
+This table was built using version 9 of the MITRE ATT&CK framework.

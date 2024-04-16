@@ -1,0 +1,216 @@
+
+
+    Our research, tools, and writing, are supported by “Friends of Objective-See”
+    
+    Today’s blog post is brought to you by:
+    
+
+
+
+      CleanMy Mac X
+      
+
+
+
+
+
+
+      Malwarebytes
+      
+
+
+
+
+      Airo AV
+      
+
+
+
+
+
+Become a Friend!
+📝 👾 Want to play along?
+I’ve shared the OSX.AppleJeus sample (password: infect3d)
+On Friday @malwrhunterteam tweeted about some interesting malware:
+
+So, in short: anyone installed this "JMT Trader" recently (or anytime?
+- others will probably have the time to dig and find out...), got some APT's malware with it too... pic.twitter.com/tEYJZEYxAq— MalwareHunterTeam (@malwrhunterteam) October 11, 2019
+So, in short: anyone installed this "JMT Trader" recently (or anytime?
+- others will probably have the time to dig and find out...), got some APT's malware with it too... pic.twitter.com/tEYJZEYxAq
+At the time of said tweet, the sample was undetected by 0 engines on VirusTotal:
+If that highlighted not says anything to you... then look here in what malware it was seen before: https://t.co/xSfDulILh0cc @craiu pic.twitter.com/g2CyU87aLr
+Read Kaspersky’s excellent write up on a previous (albeit closely related) malware specimen: “Operation AppleJeus: Lazarus hits cryptocurrency exchange with fake installer and macOS malware“
+As we’ll see, though related to the previously analyzed specimen, the sample we’re looking at today, is also rather unique!
+In Kaspersky’s original writeup, they detailed an interesting attack whereas the Lazarus APT group targeted various cryptocurrency exchanges “with a fake installer and macOS malware”.
+One of the more interesting aspects of this operation, is that the APT group actually fabricated an entire fake company (“Celas Trade Pro”) and website in order to increase the realism of the attack.
+“The victim had been infected with the help of a trojanized cryptocurrency trading application, which had been recommended to the company over email.
+It turned out that an unsuspecting employee of the company had willingly downloaded a third-party application from a legitimate looking website”
+As part of my recent RSA presentation I highlighted this attack as well:
+The sample we’re looking at today, appears to follow an identical approach to infect macOS targets.
+First, a “new” company was created: “JMT Trading” (hosted at: https://www.jmttrading.org/):
+Following the “Download from Github” link, takes us to: https://github.com/jmttrading/JMTTrader/releases, which contains various files for download.
+As noted in another recent tweet, the attackers appeared to have already updated the hosted files, replacing the malicious ones with pristine versions.
+I’ve shared the infected macOS disk image containing the AppleJeus malware (password: infect3d).
+Here we’ll comprehensively examine the JMTTrader_Mac.dmg disk image (sha1: 74390fba9445188f2489959cb289e73c6fbe58e4):
+Mounting the disk image reveals a single file: JMTTrader.pkg
+
+
+
+$ hdiutil attach JMTTrader_Mac.dmg
+expected   CRC32 $500E981E
+...
+/dev/disk3s1  41504653-0000-11AA-AA11-0030654 /Volumes/JMTTrader
+
+$ ls /Volumes/JMTTrader/
+JMTTrader.pkg
+My favorite tools for statically analyzing .pkg files is an application, aptly named, Suspicious Package (available for download  here).
+Via this app, let’s take a peek at the JMTTrader.pkg:
+As can be seen, the package is not signed and contains a postinstall script (which contains the actual installation instructions).
+Using the Suspicious Package app, we can view the contents of this install file:
+In short, this install script:
+Note that this requires administrative privileges, but the malware will kindly ask for such privileges during installation:
+Both the daemon’s plist and binary are (originally) embedded into an application, JMTTrader.app found within the .pkg.
+Specifically they’re hidden files found in the /Resources directory; Resources/.org.jmttrading.plist and Resources/.CrashReporter:
+Using the “Suspicious Package” app we can extract both these file for analysis.
+First, let’s look at the launch daemon plist (org.jmttrading.plist):
+As expected, it references the daemon /Library/JMTTrader/CrashReporter (in the ProgramArguments array).
+As the RunAtLoad is set to true macOS will automatically (re)start the daemon every time the system is rebooted.
+Now on to the CrashReporter binary.
+Via the file command, we can determine its file type (Mach-O 64-bit):
+
+
+$ file ~/Downloads/.CrashReporter 
+~/Downloads/.CrashReporter: Mach-O 64-bit executable x86_64
+Using my WhatsYourSign utility, we can easily ascertain it’s code-signing status.
+Though signed, it’s signed ad-hoc:
+Running the strings command, affords us valuable insight into the (likely) functionality of the binary.
+Always run the strings command with the -a flag to instruct it to scan the entire file for printable strings!
+From the output of the strings command, we can see some interesting, well, strings!
+beastgoc.com, https://%s/grepmonux.php
+likely a download or C&C server?
+Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ...
+the binary’s user-agent (perhaps useful as an IOC)?
+X,%\`PMk--Jj8s+6=
+perhaps an encryption or decryption key?
+Now, it’s time to dive in and tear apart the CrashReporter binary!
+Let’s pop over to a virtual machine and start a detailed analysis.
+The binary’s main function is actual rather simple, and due to named functions, rather informative:
+From the above decompilation, we can ascertain the following:
+The malware expects to be executed with a single commandline argument: Maintain 
+(Recall that when the malware was persisted, this argument is passed in via the launch daemon plist).
+After generating a (random) token, the malware enters a loop.
+The loop invokes a function named conn_to_base.
+If the conn_to_base function succeeds, it invokes a function named listen_message.
+We can start the malware in a debugger (lldb), making sure to set the required argument:
+First, we’ll set a breakpoint on the conn_to_base function (address: 0x0000000100001fd7).
+After allocating two buffers, the conn_to_base function initializes one of the buffers with the (randomly) generated token, the binary’s version (_g_version), and the process’s pid.
+The version, is found at 0x0000000100003414, and is set to 0x1 (likely indicating this is version 1.0 of the binary).
+The conn_to_base function then invokes a function named send_to_base (we’ll get to this shortly).
+If that function returns exactly three bytes, set to the string 200 the conn_to_base will return a 0, indicating success.
+(Recall the main function is sitting in a loop, wait for upon this success will invoke the listen_message() function).
+What does the send_to_base function do?
+If you guessed “connect to a C&C server” you’re correct!
+Though the function is rather long, it’s logic can be summarized as follows:
+Construct the URL of the C&C server: https://beastgoc.com/grepmonux.php 
+
+
+CrashReporter`send_to_base:
+->  0x100001895 <+1050>: callq  sprintf
+    
+Target 0: (CrashReporter) stopped.
+(lldb) x/s $rsi
+0x100002c0d: "https://%s/grepmonux.php"
+(lldb) x/s $rdx
+0x100002c00: "beastgoc.com"
+
+ 
+Note this URL resolved to 185.228.83.32 and at the time of analysis was still up and responsive.
+Encrypt any passed in data (such as the generated token, the binary’s version (_g_version), and the process id).
+That’s the data (token, version, pid), that was xor encrypted!
+In a callback block (set via: [r12 dataTaskWithRequest:r13 completionHandler:&callback]), parse the response from the C&ampC server.
+Specifically the length of the response is checked, and if it’s non-zero, the bytes of the response are extracted: 
+1if ([r14 length] != 0x0) {
+2    rax = [r14 length];
+3    *(int32_t *)*(r12 + 0x30) = rax;
+4    
+5    [r14 getBytes:*(r12 + 0x38) length:rax];
+6}
+The first time the send_to_base function is invoked (via the conn_to_base function), it succeeds: the C&C server returns three bytes containing the string 200:
+Recall that when the code returns back up into the main function, the listen_message function will now be executed:
+1while (conn_to_base() != 0x0) {
+2    sleep(0x5);
+3}
+4usleep(0x186a0);
+5rax = listen_message();
+The listen_message function (re)invokes the send_to_base function and parses an encrypted response from the C&C server.
+Depending on the response, it performs various actions.
+In other words, it’s expecting tasking from the remote server!
+Unfortunately during analysis, the C&C server did not return any tasking.
+However, via static analysis, we can fairly easily ascertain the malware’s capabilities.
+If the malware receives the up command, it appears to contain logic to open then write to a a file (i.e.
+upload a file from the C&C server to an infected host):
+Other commands, will cause the malware to invoke a function named: proc_cmd:
+The ability to remotely execute commands, clearly gives a remote attacker full and extensible control over the infected macOS system!
+As noted, a closely-related sample was previously analyzed by Kaspersky in their writeup titled: “Operation AppleJeus: Lazarus hits cryptocurrency exchange with fake installer and macOS malware“
+The question arises, is this sample related and how?
+This is actually a fairly easy question to conclusively: “yes”.
+Here we highlight several undeniable similarities and identicalities:
+The infection mechanism is essentially identical 
+In both attacks, the APT group created a legitimately looking cryptocurrency company that hosted the malware.
+The .pkgs from both attacks share a similar layout.
+Specifically an postinstall script will persistently install the malware as a launch daemon, extracting a hidden plist from the applications’ /Resources directory.
+Though both samples are signed, neither are signed with a Apple developer ID.
+Both malware samples are persisted as launch daemons that require a single commandline argument in order to execute.
+Comparing the two samples, though the logic is inverted (likely due to compiler differences), the following code snippets illustrate this similarity:
+Kaspersky (in their original analysis) of another Lazarus backdoor stated:
+“Apparently the command-line argument is the way to prevent the detection of its malicious functionality via sandboxes or even reverse engineering.
+We have previously seen this technique adopted by Lazarus group in 2016 in attacks against banks.
+As of 2018, it is still using this in almost every attack we investigated.”
+IMHO, without a doubt, both malware specimen’s where written by the APT group: Lazarus.
+However, though both malware samples are written by the same APT group, the samples are not the same.
+First, as noted by Kaspersky in their writeup on the previous Lazarus backdoor, that backdoor was “implemented using a cross-platform QT framework.” The sample we looked at today, is solely created for macOS (there is no cross-platform code).
+The previous backdoor also “collects basic system information … such as host name, OS type and version, System architecture, OS kernel type and version” Today’s specimen does not appear to contain this functionality.
+Finally the commands supported by today’s sample, appear to be be unique to this sample.
+That is to say, the command strings (“exit”, “up”, “kcon”) do not appear in the specimen previously analyzed by Kaspersky.
+Recall also that the malware we analyzed today contained a version 1.0 string:
+…perhaps our sample is a precursor to the more comprehensive sample uncovered and analyzed by Kaspersky?
+Or perhaps its a completely separate Lazarus backdoor.
+As this malware is not particularly sophisticated, it’s actually fairly easy to detect.
+Unfortunately at the time of analysis, no engines on VirusTotal detected the malware:
+
+
+It should be noted that for any particular AV engine (on VirusTotal), said engine may only be one (small?)
+piece of a more complete security product.
+That is to say, a company’s comprehensive security product may also include a behavior-based engine (not included on VirusTotal) that perhaps could generically detect this new threat.
+It should be noted that for any particular AV engine (on VirusTotal), said engine may only be one (small?)
+piece of a more complete security product.
+That is to say, a company’s comprehensive security product may also include a behavior-based engine (not included on VirusTotal) that perhaps could generically detect this new threat.
+Of course, behavior-based tools have no problem detecting the malware’s malicious activity (even with no a priori knowledge of the malware).
+First, BlockBlock will alert when the malware attempts to persist as a launch daemon:
+
+
+Similarly, a system scanned with KnockKnock will show the malware as a persistent launch daemon:
+If LuLu is installed, it will generate an alert when the malware attempts to connect out to it’s C&C server for tasking:
+And finally, Netiquette (which enumerates active network connections), will show the malware connection to its remote C&C server (185.228.83.32):
+In terms of manual detection (IOCs), the following should suffice:
+The malware’s launch daemon plist file: /Library/LaunchDaemons/org.jmttrading.plist
+The malware’s persistent binary, installed at /Library/JMTTrader/CrashReporter or running:
+
+
+$ ps aux | grep JMTTrader/CrashReporter 
+root  /Library/JMTTrader/CrashReporter Maintain
+It’s not everyday we get a new macOS malware specimen to tear apart, especially one written by a reasonably sophisticated APT group.
+(Mahalo again to @malwrhunterteam for uncovering this sample and bringing it to my attention!)
+Today, we analyzed a (new?)
+Lazarus backdoor that affords a remote attacker complete command and control over infected macOS systems.
+Do you have to worry about getting infected?
+Probably not, unless you’re an employee working at a crypto-currency exchange.
+But either way, our free (largely) open-source security tools can generically provide protection against this and other macOS threats!
+🥳
+
+
+❤️ Love these blog posts and/or want to support my research and tools?
+You can support them via my Patreon page!
+
+❤️ Love these blog posts and/or want to support my research and tools?
+You can support them via my Patreon page!

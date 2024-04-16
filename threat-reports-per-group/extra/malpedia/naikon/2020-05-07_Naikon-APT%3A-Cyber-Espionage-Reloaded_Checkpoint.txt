@@ -1,0 +1,92 @@
+Recently Check Point Research discovered new evidence of an ongoing cyber espionage operation against several national government entities in the Asia Pacific (APAC) region.
+This operation, which we were able to attribute to the Naikon APT group, used a new backdoor named Aria-body, in order to take control of the victims’ networks.
+In 2015, an extensive report by ThreatConnect and Defense Group revealed the APT group’s infrastructure and even exposed one of the group’s members.
+Since this report, no new evidence has come to light of further activity by the group, suggesting that they had either gone silent, increased their emphasis on stealth, or drastically changed their methodology of operations.
+In the following report, we will describe the tactics, techniques, procedures and infrastructure that have been used by the Naikon APT group over the 5 years since the last report, and offer some insight into how they were able to remain under the radar.
+By comparing with previously reported activity, we can conclude that the Naikon APT group has been persistently targeting the same region in the last decade.
+In operations following the original 2015 report, we have observed the use of a backdoor named Aria-body against several national governments, including Australia, Indonesia, the Philippines, Vietnam, Thailand, Myanmar and Brunei.
+The targeted government entities include ministries of foreign affairs, science and technology ministries, as well as government-owned companies.
+Interestingly, the group has been observed expanding its footholds on the various governments within APAC by launching attacks from one government entity that has already been breached, to try and infect another.
+In one case, a foreign embassy unknowingly sent malware-infected documents to the government of its host country, showing how the hackers are exploiting trusted, known contacts and using those them to infiltrate new organizations and extend their espionage network.
+Given the characteristics of the victims and capabilities presented by the group, it is evident that the group’s purpose is to gather intelligence and spy on the countries whose Governments it has targeted.
+This includes not only locating and collecting specific documents from infected computers and networks within government departments, but also extracting data from removable drives, taking screenshots and keylogging, and of course harvesting the stolen data for espionage.
+And if that wasn’t enough, to evade detection when accessing remote servers through sensitive governmental networks, the group compromised and used servers within the infected ministries as command and control servers to collect, relay and route the stolen data.
+Throughout our research, we witnessed several different infection chains being used to deliver the Aria-body backdoor.
+Our investigation started when we observed a malicious email sent from a government embassy in APAC to an Australian state government, named The Indians Way.doc.
+This RTF file, which was infected (weaponized) with the RoyalRoad exploit builder, drops a loader named intel.wll into the target PC’s Word startup folder.
+The loader in turn tries to download and execute the next stage payload from spool.jtjewifyn[.
+This is not the first time we have encountered this version of the RoyalRoad malware which drops a filename named intel.wll – the Vicious Panda APT group, whose activities we reviewed in March 2020, utilizes a very similar variant.
+Overall, during our investigation we observed several different infection methods:
+In recent operations, the attackers used the same hosting and DNS services for most of their C&C servers: GoDaddy as the registrar and Alibaba for hosting the infrastructure.
+On several occasions, the attackers even reused the same IP address with more than one domain:
+A full view of the entire infrastructure is available here.
+In order to get a clearer picture of how the attackers operated their infrastructure throughout the years, we have plotted the various malicious domains, according to the ASN they were hosted on, based on periodic passive DNS information.
+The results are presented in the figure below:
+In addition, one of the more interesting infrastructure properties we observed, is the possible use of hacked government infrastructures as C&C servers.
+In one of the samples we analyzed, outllib.dll (63d64cd53f6da3fd6c5065b2902a0162), there is a backup C&C server which is configured as 202.90.141[.
+]25 – an IP which belongs to the Philippines department of science and technology.
+In the following section, we will dive into the technical analysis of the Aria-body backdoor, utilized throughout the observed activity, as well as an analysis of the loader executable that comes before it.
+Utilizing the loader at an early stage of an infection allows the attackers to establish a persistent presence on the target’s network, as well as perform basic reconnaissance, before using their more advanced tools.
+While we observed Aria-body backdoor variants being compiled as early as 2018, we have observed Aria-body’s loaders going back to 2017.
+The functionality of the Aria-body loader has not changed significantly since 2017, but the implementation varied from version to version.
+This loader appears to be specifically created for the Aria-body backdoor.
+Overall, the loader is responsible for the following tasks:
+The loader configuration comes encrypted and contains the following information: C&C domain, port, user-agent and a seed for the Domain Generation Algorithm (DGA).
+In case seed is not zero, the loader uses a DGA method to generate its C&C domain, based on the seed and the calendar day of the communication.
+The configuration of the loader is decrypted using the following algorithm:
+The DGA method is fully described in Appendix B.
+After getting the C&C domain, the loader contacts it to download the next and final stage of the infection chain.
+Although it sounds simple, the attackers operate the C&C server in a limited daily window, going online only for a few hours each day, making it harder to gain access to the advanced parts of the infection chain.
+At the next and final stage of the loader, the downloaded RAT is decrypted using a single byte XOR key, received from the C&C.
+Once the RAT’s DLL is downloaded and decrypted, the DLL is loaded into the memory.
+The loader will then check the exported function against a hardcoded djb2 hash value, and will call it upon a match.
+The downloaded payload is a custom RAT dubbed Aria-body, based on the name given by the authors: aria-body-dllX86.dll.Although the below analysis is of the 32bit variant malware, we have observed a 64bit variant as well, with similar functionality.
+The RAT includes rather common capabilities of a backdoor, including:
+Some of Aria-body variations also included other modules such as:
+All the supported functionality of the backdoor is described in the table of Appendix A.
+In the following section, we go over some of the techniques by which the backdoor was implemented, and highlight the characteristics that might help other researchers recognize this backdoor and correlate it with other samples.
+As previously mentioned, the backdoor contains an exported function, which the previous loader calls after loading the payload into the memory.
+Upon executing the backdoor, it initializes a struct named MyDerived and several structs used for HTTP and TCP connection.
+Aria-body starts with gathering data on the victim’s machine, including:Host-name, computer-name, username, domain name, windows version, processor ~MHz, MachineGuid, 64bit or not, and public IP (using checkip.amazonaws.com).
+This data is gathered into an information structure which the RAT zips with an 8 bytes random generated password, which is then XORed with one byte.
+The communication to the C&C server is available by either HTTP or TCP protocols.
+The malware decides which protocol to use by a flag in the configuration of the loader.
+The collected data is sent to the C&C domain along with the XORed password, and the XOR key in the following format:
+Whether the message is sent by TCP or HTTP, the payload format is the same.
+However, when HTTP is selected, the following GET request format is used:https://%s:%d/list.html?q=<random string>
+After the initial request to the C&C server, the backdoor then keeps listening to additional commands from the server.
+When a command is received, it is matched against a list of commands, and executed accordingly.
+A full list of supported commands is available in Appendix A.
+During our research we have found another, quite a unique variant of Aria-body, uploaded to VirusTotal from the Philippines.
+This variant’s DLL was named outllib.dll, and it was part of a RAR archive named Office.rar.
+It utilized a DLL side-loading technique, abusing an old Outlook executable.
+What was unusual in this variant was the fact that there has no loader as part of the infection chain, unlike all the other versions of Aria-body.
+As a result, it did not get any configuration from the loader, and included hardcoded configuration within it.
+The payload has two different C&C domains:
+This variant also has some extra features that the main variant of Aria-body does not include, such as a USB-monitor module.
+On the other hand, this variant is missing the keylogger component and the reverse-socks module, observed with the main Aria-body variants.
+This evidence suggests that this is an out of scope variant of the backdoor, tailored for a specific operation.
+Moreover, we have seen that Aria-body’s main variant has a version that was compiled sometime after outlib.dll variant was, and some strings within this variant could suggest that it was a test variant of this special version:
+Finally, this version of Aria-body includes the following string: c:\users\bruce\desktop\20190813\arn\agents\verinfo.h, with the “ar” in “arn” possibly standing for “Aria”.
+We were able to attribute our campaign to the Naikon APT group using several similarities we observed to the previously disclosed information about Naikon’s activity by Kaspersky in 2015: 1, 2.
+In this original operation, the Naikon APT group utilized a backdoor against different government institutions in APAC.
+Going forward, we will refer to the backdoor analyzed by Kaspersky as XsFunction due to PDB path found in one of its samples:g:\MyProjects\xsFunction\Release\DLL.pdb
+XsFunction is a full featured backdoor which supports 48 different commands.
+It allows the attacker to gain full control on the victim computer, perform file and process operations, shell commands execution, as well as to upload and download data and additional plugins.
+We were able to find several similarities to previous operations (besides the obvious overlap in targeting), as well as specific similarities to the XsFunction backdoor.
+Aria-body backdoor has several debug strings that describe the functionality of the malware.
+Some of these exact debug strings, can also be found in the XsFunction backdoor:
+Both XsFunction and Aria-body loaders utilize the same hashing algorithm djb2 to find which exported function should be run.
+In XsFunction the name of that function is XS02 and in Aria-body it is AzManager.
+Some functions in the Aria-body backdoor are identical to functions used in the old XsFunction backdoor.
+One example is the function which gathers information about the installed software on the PC:
+Four of our C&C servers shared IPs with mopo3[.
+]net domain, this domain resolves to the same IP as the domain mentioned in Kaspersky’s report: myanmartech.vicp[.
+In this campaign, we uncovered the latest iteration of what seems to be a long-running Chinese-based operation against various government entities in APAC.
+This specific campaign leveraged both common toolsets like RoyalRoad RTF weaponizer, as well as a specially crafted backdoor named Aria-body.
+While the Naikon APT group has kept under the radar for the past 5 years, it appears that they have not been idle.
+In fact, quite the opposite.
+By utilizing new server infrastructure, ever-changing loader variants, in-memory fileless loading, as well as a new backdoor – the Naikon APT group was able to prevent analysts from tracing their activity back to them.
+Check Point SandBlast Agent protects against such APT attacks, and is capable of preventing them from the very first step.
+© 1994 Check Point Software Technologies LTD. All rights reserved.
+Property of CheckPoint.com | Privacy Policy

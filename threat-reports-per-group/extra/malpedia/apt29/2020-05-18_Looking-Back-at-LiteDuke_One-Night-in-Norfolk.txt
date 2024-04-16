@@ -1,0 +1,41 @@
+Last October (2019), ESET published extensive research regarding additional tooling from the “Dukes” adversary, which analysts have traditionally aligned with [APT29/Cozy Bear] operations.
+While conducting some unrelated research, I came across a LiteDuke sample and decided to take a deeper dive into the mechanics of its loader and its malware.
+The original ESET publication covers the key details at a high level; in addition, this malware is old and has likely been discontinued for several years.
+This blog post is intended to document some additional lower-level details for operational comparison purposes and general learning.
+Loading StructureThe loading structure identified by this blog is similar to the one described by ESET (differences may be attributable to a different variant of the malware being examined or more likely just a different analytic perspective).
+This DLL allocates a segment of virtual memory and decodes content from a .bmp resource.
+The SetLibrary export from the top component (#1) performs the following actions:1) Creates a directory at C:\ProgramData\User\2) Writes a file named NTUSER.DAT here.
+Setup RoutineAs part of its setup, the malware creates a mutex named “NtUserRegistryService” and terminates the process if the mutex already exists.
+The malware then calls three functions.
+The first of these creates the encryption key for a local database, the second creates this database (written to the same ProgramData\User folder with the name NTUSER.DAT.BAK), and the third assigns a User Agent used for HTTP communication.
+The SQL database contains three tables: config, modules, and objects.
+The config table contains information for the C2 routine and can be updated (as this post will later show).
+The modules field appears to allow for additional code execution (although, as ESET noted, none have been publicly documented).
+The purpose of the objects field is less clear; a handful of functions in the binary suggest it could be used to hold files, although the phrase “object” itself has a distinct meaning in object databases.
+To select a User Agent, the malware uses the AssocStringQuery API to search the root registry for the default program associated with the “http” extension.
+In practical terms, this returns the default browser, which is checked against a hardcoded list.
+The malware assigns a User Agent corresponding to the default browser and also moves a value into the EAX register based on which browser was chosen.
+If this check sets the EAX value to either 2 or 5 (Firefox and Opera respectively), the malware will also attempt to retrieve and use proxy configuration information stored in the browser settings.
+The first image below shows the browser/User Agent association function.
+The second image below shows the parent function that calls both this User Agent function and the proxy function.
+This second image corresponds with the “BowserCheck_ProxyDecide” label in the setup routine image above.
+Finally, the malware takes two additional setup steps.First, the malware creates a persistence mechanism.
+As ESET previously noted, this takes the form of a .lnk file.
+In this case, the file is named NTUSER.DAT.lnk and placed inside of the same ProgramData\User\ directory as the database and loader.
+The .lnk file calls rundll32.exe, passing the .DAT file and the LoadRegistry DLL, forcing the application to run at login.
+Presumably, these are plugins transmitted by the C2 that are then executed when the malware first loads, although this is unconfirmed due the previously mentioned absence of such data.
+Command and ControlThe malware has an initial C2 check-in that serves an unclear purpose; however, the primary two C2 workflows are described below.
+These factors (and traditional C2 routines discussed below) point towards file transmission, but this remains hypothetical.
+“Lower” WorkflowWhen the malware enters the “lower” command structure (based on the 0x15 check above), it can execute one of a large number of possible commands.
+The initial intent of this research was to identify as many commands as possible.
+– Terminate a process (specified by PID).– Terminate a process (via CreateToolhelp32Snapshot and Process32First/Next).– Set working directory to user’s profile (“C:\Users\[User]\”).– Set working directory to the Temp path.
+– Retrieve drive and disk space information.
+The number of features are extensive.
+Most notably, several of these commands perform the same or similar functions.
+For example, there are multiple supported operations for deleting a file that use different APIs.
+Several commands change the working directory.
+From a development standpoint, however, this can become cumbersome: every possible operator action would require a new entry into the malware.
+One additional note includes the “ZWQSI_Mutex” mutex.
+This blog has not yet identified a process associated with this specific value.
+It may refer to an additional executable or plugin used by the attacker; however, given that this malware has likely not been in use for five years, that data may never be recovered.
+While this workflow has several advantages – most notably, unique but predictable database encryption keys as well as plugin support – it also requires the implementation of several redundant commands.

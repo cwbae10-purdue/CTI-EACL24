@@ -1,0 +1,90 @@
+Critical infrastructure on the frontline
+Stop being an easy target
+Can your security keep up with you?
+Take control of your ERP security
+Vulnerability and compliance management system.
+Advanced sandbox with customizable virtual environments
+Full-featured SIEM for mid-sized IT infrastructures.
+Knows your infrastructure, delivers pinpoint detection.
+Cyberthreat detection and incident response in ICS.
+Multilayered protection against malware attacks.
+Intelligent protection of business applications.
+NDR system to detect attacks on the perimeter and inside the network.
+Full Range of ICS-specific Security Services
+Security Analysis and Compliance Audit
+Independent Expert Analysis of Your Source Code
+Black Box and White Box Analysis
+Secure Application Development at Your Organization
+Upgrade Your View of Perimeter Security
+
+	At the end of July 2019, we encountered an interesting piece of malware distributed by the TA505 group, and on July 22, 2019 uploaded it into ANY.RUN to put it through a dynamic analysis.
+Viewing the results, two anomalies attracted our attention—in addition to the tags usually displayed for TA505 ServHelper, the "netsupport" tag also appeared; additionally, the NetSupport RAT was listed among network signature events.
+
+	This might seem strange at first glance, since the ServHelper backdoor already provides attackers with a significant amount of control over their victims' computers.
+To get a better understanding of what's going on, let's take a closer look at how the malware functions.
+
+	The executable PE file that begins our analysis is an installer on the Nullsoft Scriptable Install System (NSIS) platform.
+This NSIS script, which is responsible for installation, extracts and runs a nested PowerShell script:
+
+	The PowerShell script that is run contains a Base64-encoded buffer (truncated in the image below for clarity), which, after decoding, is decrypted by the Triple DES (3DES) algorithm in CBC mode:
+
+	The first segment of the script defines a function called heller, which raises system privileges and allows UAC defenses to be bypassed.
+Two techniques are implemented to this end:
+
+	Technique 1 — using the SilentCleanup task in the Task Scheduler:
+
+	Technique 2 — using the sysprep.exe system utility and DLL side-loading:
+
+	The script contains a large number of comments, an unused Test-Administrator function, and uninitialized variables.
+This indicates that the code was copied directly without concern for conciseness.
+
+	Once the script has been run with the necessary privileges, the second segment is executed.
+At this stage, the target payloads are decoded:
+
+	As a result, the following files will be created in the system:
+
+	Once the payload bas been extracted and written, the script configures its components:
+
+	One result of the droppers is a DLL called hlp12.dat, which is a malware ServHelper.
+Both x86 and x64 versions can be created, depending on the OS bit depth (there are no fundamental differences between the two).
+Both are written in Delphi; one is packaged in UPX 3.95 (x64) and the other in PeCompact 2.20 (x86).
+The distribution and operation of this backdoor have already been analyzed by researchers at Proofpoint and Trend Micro.
+Our particular case does not differ significantly in its capabilities from previously investigated instances.
+In particular, it is worth noting that the algorithm for decrypting the strings has not changed (a Vigenère cipher is used):
+
+	Interestingly, not all strings are encrypted.
+For instance, domains and web links are left in their unencrypted format:
+
+	Following one of these links (hxxp://letitbe.icu/2.txt) triggers the download of an encrypted file (MD5: 0528104f496dd13438dd764e747d0778).
+It is worth nothing that the byte value 0x09 is repeated frequently at the end of this file:
+
+	Duplicate bytes are frequently a sign of encryption using a single-byte XOR.
+In this case, the code confirms this hypothesis:
+
+	After decryption we get a ZIP archive with the following contents:
+
+	All these files are legitimate software for PC remote control using NetSupport Manager — a product which has been repeatedly exploited by hackers.
+
+	One of the files (client32.ini) is a configuration file specifying the address of the intermediary gateway through which the victim's PC connects with attackers:
+
+	This option makes sense if the victim is behind a firewall and their internet access is restricted by ports.
+At least two ports—80 (HTTP) and 443 (HTTPS)—must be accessible for the internet to work properly.
+Thus, this technique increases the chance of a successful connection.
+
+	In September 2019 we found several more, similar instances of ServHelper, albeit with significantly limited capabilities.
+For instance, take this case (MD5: 5b79a0c06aec6126364ce1d5cbfedf66), in which a similar pattern of repeating bytes was found among the encrypted data of an executable PE file:
+
+	Once again, we have a ZIP archive that has been XOR-encrypted using a single byte.
+It contains the same NetSupport Manager components as in our previous example, albeit with a different intermediary gateway: 179[.
+
+	This article has examined how the TA505 group utilizes ServHelper to distribute and implement backdoor malware.
+The main component of the malware is proceeded by interesting features—UAC is bypassed and privileges are raised.
+However, even more interestingly, the malware's main backdoor contains compelling variations.
+Its basic functionality (data theft, spying, and execution of commands) is supplemented with another tool that is embedded for remote management of the victim's PC—namely, NetSupport RAT.
+What is more, newer versions of ServHelper no longer contain all the key features of a full-fledged backdoor.
+Rather, they serve the restricted roll of an intermediary dropper with the sole aim of installing NetSupport RAT.
+It is likely that the attackers find this approach more efficient to develop and more difficult to detect.
+This is not the last of the group's tools and techniques to provide fodder for our investigation.
+The next installment will be forthcoming.
+
+Author: Alexey Vishnyakov, Positive Technologies

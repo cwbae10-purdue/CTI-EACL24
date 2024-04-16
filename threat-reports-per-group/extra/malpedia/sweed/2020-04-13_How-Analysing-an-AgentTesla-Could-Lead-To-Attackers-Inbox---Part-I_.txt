@@ -1,0 +1,69 @@
+If you’d read my previous articles I assured that I’ll be releasing some article every week but now that seems nearly impossible due to some time constraints.
+I would have shared some things from my real life and new interesting security related things I come across but I don’t think that will happen too coz I think it will decrease the quality of the blog somehow If i begin to post my random findings which may seem boring to some other readers.
+What is the thing I love most about Security in general is the research part.. How we can get to real low level to find vulns.
+And this can happen only if we spend weeks.. maybe months reading and testing it out to give a detailed explanation.Anyways if you have any suggestion/advice regarding this you can always comment and let me know.
+So as I promised previously this one is going to be .NET.PS This is my first post on analysing a live malware sample and I’m not experienced in this field.
+This is a live malware and I don’t want anyone to maliciously use the attacker’s credentials, so obviously I would not give out this sample’s hash and will be redacting a few things as well.
+To start with, I found this sample on Malware Bazaar and it is tagged as a COVID19 malware spead through spearphishing.Luckily this sample doesn’t have any anti-debug/vm techniques implemented.
+Also I’ve not setup my Sniffer VM with inetsim etc.
+I found it to be fileless.
+It has a Virustotal Score of 22/71 at time of writing this.
+I started off with DIE and observed that its .NET based.
+Also DIE shows that its Packed as its entropy is basically greater than 7.
+Next we can check for some strings in the binary, ANSI doesn’t show anything usually and its same in this case too.
+Observing the UNICODE strings it looks like this was basically based on a photo manager or something.
+But wait if we scroll down we find something interesting…Yeah It looks similar to base32 encoded string and below it we can see some Game related strings such as frmGameOver, You win!, etc.
+Cool It starts with the MZ Header and this confirms that its base32 encoded.Unfortunately we can’t copy the whole string here but we can just view it in hexdump by right clicking it in DIE.
+Now we have the coolest part of running it in a sandbox environment.
+I used any.run and selected a Win7 32 bit VM (Basic plan) and noticed its execution.Hmmm..
+So Its silent and doesn’t do any activity on the screen.
+So, Any.run has this feature of mapping MITRE Techniques it notices through the malware activity.
+We observe that its basically a credential stealer and tries to communicate with a C&C server.
+It accesses over 72 files and is basically looking for browsers, ftp clients etc.
+So Any.run has 2 additional browsers I know of ie.
+And Firefox for instance requires logins.json and key4.db for the passwords which it accesses obviously.
+We can also view the connection requests and looks like its sending data over smtp with smtp.yandex.com and sends some data which includes User-PC.
+I also downloaded and analysed the pcap file from any.run but it doesn’t look suspicious as I don’t think the browsers in any.run had some saved passwords.
+So to check what it does under the hood we can use dnspy and get on with debugging stuff.I moved over to my setup of Victim VM for which I use Win7 x64.
+PS I also tried unpac.me for the first time and I am very much impressed with it.
+For this sample it resulted in 3 children.
+Lets see how far can we make it manually.Hmm..
+It doesn’t look quite obfuscated right now.
+Also It doesn’t have any constructor, So we just place a breakpoint on its Entrypoint and run it.
+Nice, We end up in frmMain and then we can just step in InitializeComponent.
+I noticed that class2 looked suspicious and setup a breakpoint there.
+Ahh actually the base32 encoded payload was used here.
+So this is the first level of unpacking where it simply invokes a function named f20  with arguments as Class1.Myproperty & _2048.
+Now I place a breakpoint on return in InvokeMember and just continue.
+Now stepping in we find some interesting locals and the payload file is a dll named DefenderProtect.dll.
+Also It has another methods as well which are used in f20.
+So f20 is basically used to unpack another file
+The array has the final decrypted 2nd payload file so we can dump it using Memory Window too.
+But whats the fun in doing that, instead we can try to understand the unpacking algo.
+Hmm.. the resource from _2048 named ABHqTRJFnsWBEzLtXeCZ is used in this process.
+detroit1 just returns that resource as a handle to a bitmap image.
+The main algo resides in fcn detroit1 and detroitdetroit1 adds a pixel’s rgb value to a list when it is non-black.
+Then detroit does a repeating key xor on the list returned by detroit0where the key is first 16 bytes of the list.
+So I just saved the bitmap image and wrote a python script to test the algo as well.
+Now this boy looks obfuscated.
+But it just starts a thread and I was unable to debug it.Also that isn’t a big deal as this was mainly invoking a method from another file it just unpacked.. ¯\_(ツ)_/¯
+Now finally we will be analysing the last and third file which resulted in unpacme.
+We step in and are currently in zdb method.
+Now when I stepped in the above line to get value for text I observed that a function is called repeatedly.
+Hmm.. Maybe It is used for some deobfuscation or decryption of suspicious.
+We step into that suspicious function obfuscated as \u206E and at first It looks like assigning a list of objects from \uFEFF
+The object array looks like the following in the locals window and contains integer arrays.
+So we setup a normal breakpoint at the function return.
+It passes the beginning 32 bytes of the string as key and the next 16 bytes as the IV to the Decryption function.
+And Now execution is passed over to Rijndael(AES) decryption function and we can clearly see that it isn’t obfuscated and has variable names as key & IV, and looks like CBC mode ezpz :)
+We can just place a Breakpoint at return text  in CreateStringFromEncoding and we will get the decoded string in the locals window and we’d get to know whenever this decryption func is invoked as well.
+So this time it returns “None” due to exception but sometimes the same gives “WinMgmt:”.
+Also we can now rename it to decStr() for our ease.
+It access/creates some environment variables.
+Now I thought of decrypting all of the strings with python.
+Then I tried to implement the algo in python and coz of my weird workaround for dumping it, the script resulted in some errors.
+But I noticed that the error arised due to the values in list strEnds(below) and they were pretty common at the string end and I used them to split the dump and get a single string.
+I think this was because of the uint[] initialization in the object array.Anyways It finally worked and there were around 865 enc strings.
+PS The Key and IV for every cipher is different and is taken from the encoded string as well.
+Some of the decrypted strings are as follows :
+So Now I guess Its enough for Part-1, Head over here for the 2nd Part.

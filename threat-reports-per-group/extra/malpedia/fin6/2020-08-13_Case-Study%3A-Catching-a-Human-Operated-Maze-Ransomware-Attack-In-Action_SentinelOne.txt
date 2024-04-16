@@ -1,0 +1,52 @@
+Maze ransomware has been used extensively in the last year or so as the final payload by many different actors around the world.
+This year, Maze operators notoriously began extorting companies not just by encrypting files but also through threatening to publish exfiltrated files online.
+We recently caught one Maze affiliate at the early stage of attempting to spread through a network belonging to one of our clients.
+In this post, we share details about the methods used by this Maze affiliate in order to shed light on their tactics and to help security teams hunt for similar IOCs in their own networks.
+As previously reported in other Maze incidents, the attackers used RDP to gain access to an internet-facing machine, probably by brute-forcing the Administrator’s password.
+One of the attacks against a US company began on Saturday the 4th of July, a date obviously chosen in the hope that many people – particularly security staff – might not be at work that day.
+The attackers connected using RDP and uploaded their beacon payload, disguised as a known Microsoft binary named netplwiz.exe.
+Their payload had the same icon and description as the genuine binary of the same name and was also signed, most likely with a stolen certificate.
+Sysinternals’ sigcheck.exe on original netplwiz.exe:
+In the malicious netplwiz.exe, we can see the stolen certificate:
+A closer look at the certificate:
+This executable is a simple packer that loads Cobalt Strike’s Beacon version 4.
+This packer is pretty simple, and does the following:
+The decoding function looks like this:
+We dumped the beacon from memory and parsed its configuration:
+Although the entry method is pretty common, the attackers displayed great creativity in their persistence methods, which were tailor-made to the machine they found themselves on.
+For example, one host was running a SolarWinds Orion instance.
+This Orion product uses RabbitMQ as the internal messaging component and is installed with the product.
+RabbitMQ is written in Erlang, and therefore uses the Erlang runtime service (erlsrv.exe) to run.
+The attackers relied on this dependency chain to spawn themselves in this erlsrv.exe process and to gain persistence on the host, as the RabbitMQ service is running erlsrv.exe.
+We could see this when the attackers dropped two DLLs containing their beacon stager to disk and then began interfering with the RabbitMQ service:
+The DLL that was hijacked is version.dll, which is normally loaded from the system32 folder.
+By dropping it in the same folder as erlsrv.exe, it loaded their version.dll, and it loaded acluapi.dll containing the beacon.
+After restarting the RabbitMQ service, a Cobalt Strike Beacon started communicating to the same domain as the one from netplwiz, but this time from erlsrv.exe and SYSTEM integrity level.
+In another case showing similar adaptation to the local environment, the attackers targeted the Java Updater which runs when the computer starts and dropped a DLL that is loaded by jusched.exe when it starts.
+After installing persistency, the attackers did some domain reconnaissance and uploaded ngrok to C:Windowsdwm.exe and used it for tunneling.
+The UI0Detect, like the name implies, detects and alerts the user if a program in session 0 tries to interact with the desktop.
+It’s important for them to disable this service in order to avoid alerting the user in case they accidentally pop a message box or starting a GUI application while running as SYSTEM.
+When they found an interesting server they wanted to laterally move to, they used sc.exe and deployed a tool that gave them an online shell on that target.
+Specifically, they ran this command (IP changed):
+They used mshta to run an HTA payload that was hosted on their site.
+We believe the HTA is their way of working online on remote computers before deploying their Cobalt Strike Beacon, if they believe it’s worth it.
+The HTA payload is a somewhat sophisticated and automatically obfuscated code that we believe is self-made (as we’ve found no evidence of it online).
+You can see the obfuscated and our de-obfuscated version here.
+When ran, it first sends some basic information of the computer, such as OS Version, routing info, Domain Controller name (if the computer is member of a domain) and more:
+The payload contains a variable that is empty when it is first run.
+In this case, it runs another HTA from the server using mshta.exe, which is identical to itself except that the variable now contains the value “prfx” instead of being empty.
+Consequently, it enters a loop of running HTAs from the server.
+The simplified code looks as follows:
+The payload is interesting because it has some unique behavior:
+Also worth noting from a hunting perspective is that it runs net1.exe directly, instead of net.exe, probably to evade EDR and command-line based detection methods.
+All of the above shows that these are very capable attackers.
+Although they used mostly known methods, they also showed some creativity to compromise targets successfully and move laterally inside them with ease and speed.
+However, they were still caught and mitigated by the SentinelOne agent before any harm was done.
+As their HTA-serving server is still online, and since this campaign is still going strong, we recommend security teams to check for the following IOCs in their EDR data or SIEM and quickly mitigate any that are found to prevent the ransomware being deployed.
+Other Tools Usedngrok.exeCertificate signer: “Clubessential, LLC.”
+Get notified when we post new content.
+Keep an eye out for new content!
+In the era of interconnectivity, when markets, geographies, and jurisdictions merge in the melting pot of the digital domain, the perils of the threat ecosystem become unparalleled.
+Crimeware families achieve an unparalleled level of technical sophistication, APT groups are competing in fully-fledged cyber warfare, while once decentralized and scattered threat actors are forming adamant alliances of operating as elite corporate espionage teams.
+Get notified when we post new content.
+Keep an eye out for new content!

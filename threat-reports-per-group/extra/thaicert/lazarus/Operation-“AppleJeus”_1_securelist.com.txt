@@ -1,0 +1,389 @@
+Lazarus has been a major threat actor in the APT arena for several years.
+Alongside goals like cyberespionage and cybersabotage, the attacker has been targeting banks and other financial companies around the globe.
+Over the last few months, Lazarus has successfully compromised several banks and infiltrated a number of global cryptocurrency exchanges and fintech companies.
+Kaspersky Lab has been assisting with incident response efforts.
+While investigating a cryptocurrency exchange attacked by Lazarus, we made an unexpected discovery.
+The victim had been infected with the help of a trojanized cryptocurrency trading application, which had been recommended to the company over email.
+It turned out that an unsuspecting employee of the company had willingly downloaded a third-party application from a legitimate looking website and their computer had been infected with malware known as Fallchill, an old tool that Lazarus has recently switched back to.
+There have been multiple reports on the reappearance of Fallchill, including one from US-CERT.
+To ensure that the OS platform was not an obstacle to infecting targets, it seems the attackers went the extra mile and developed malware for other platforms, including for macOS.
+A version for Linux is apparently coming soon, according to the website.
+It’s probably the first time we see this APT group using malware for macOS.
+The fact that the Lazarus group has expanded its list of targeted operating systems should be a wake-up call for users of non-Windows platforms.
+Thanks to Kaspersky Lab’s malicious-behavior detection technology, implemented in its endpoint security software, we were able to reassemble the stages of infection and trace them back to their origin.
+This helped us understand that one of Lazarus’ victims was infected with malware after installing a cryptocurrency trading program.
+We also confirmed that the user installed this program via a download link delivered over email.
+Including malicious code into distributed software and putting that on a website would be too obvious.
+Instead, the attackers went for a more elaborate scheme: the trojan code was pushed out in the form of an update for a trading application.
+A legitimate-looking application called Celas Trade Pro from Celas Limited showed no signs of malicious behaviour and looked genuine.
+This application is an all-in-one style cryptocurrency trading program developed by Celas.
+Screenshot of Celas Trade Pro
+When we started this research, any user could download the trading application from the Celas website.
+Checking the installation package downloaded from the website confirmed the presence of a very suspicious updater.
+We have analyzed the following Windows version of the installation package:
+MD5: 9e740241ca2acdc79f30ad2c3f50990a
+File name: celastradepro_win_installer_1.00.00.msi
+File type: MSI installer
+Creation time: 2018-06-29 01:16:00 UTC
+At the end of the installation process, the installer immediately runs the Updater.exe module with the “CheckUpdate” parameter.
+This file looks like a regular tool and most likely will not arouse the suspicion of system administrators.
+After all, it even contains a valid digital signature, which belongs to the same vendor.
+But the devil is in the detail, as usual.
+The code writer developed this project under the codename “jeus”, which was discovered in a PDB path included in the updater and used as unique HTTP multipart message data separator string.
+Because of this, and the fact that the attacked platforms include Apple macOS, we decided to call this Operation AppleJeus.
+Properties of the shady updater tool included in the package are:
+MD5: b054a7382adf6b774b15f52d971f3799
+File Type: PE32 executable (GUI) Intel 80386, for MS Windows
+Known file name: %Program Files%\CelasTradePro\Updater.exe
+Link Time: 2018-06-15 10:56:27 UTC
+Build path: Z:\jeus\downloader\downloader_exe_vs2010\Release\dloader.pdb
+The main purpose of Updater.exe is to collect the victim’s host information and send it back to the server.
+Upon launch, the malware creates a unique string with the format string template “%09d-%05d” based on random values, which is used as a unique identifier of the infected host.
+This malware collects process lists, excluding “[System Process]” and “System” processes and gets the exact OS version from the registry value at “HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion”.
+It seems that such values only exist from Windows 10, so we assume that the author developed and tested it on Windows 10.
+The code encrypts the collected information with the hardcoded XOR key (“Moz&Wie;#t/6T!2y“) before uploading it to the server.
+The code sends the victim’s information to a webserver using HTTP and the following URL:
+www.celasllc[.
+The server is a legitimate looking website owned by the developer of the program: Celas LLC.
+At this point we were not able to conclude with high confidence whether the server was compromised by the threat actor or had belonged to the threat actor from the beginning.
+To learn more about the server, please read the “Infrastructure” section below.
+The malware used a hardcoded User-Agent string “Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.1; Trident/6.0)” and fixed a multipart form data separator string “jeus“.
+Communication with the C2 server
+After successfully uploading data, the updater checks the server response.
+If the server responds with HTTP code 300, it means the updater should keep quiet and take no action.
+However, if the response is HTTP code 200, it extracts the payload with base64 and decrypts it using RC4 with another hardcoded key (“W29ab@ad%Df324V$Yd“).
+The decrypted data is an executable file that is prepended with the “MAX_PATHjeusD” string.
+During our research, we found other similar files.
+One was created on August 3rd and another on August 11th.
+The PDB path shows that the author keeps improving this updater tool, apparently forked from some stable version released on July 2, 2018 according to the internal directory name.
+Note the TManager directory in the PDB path from the table.
+It will pop up again in another unexpected place later.
+For macOS users, Celas LLC also provided a native version of its trading app.
+A hidden “autoupdater” module is installed in the background to start immediately after installation, and after each system reboot.
+It keeps contacting the command and control (C2) server in order to download and run an additional executable from the server.
+The communication conforms to the Windows version of the updater and is disguised as an image file upload and download, while carrying encrypted data inside.
+We have analyzed the following installation file:
+MD5: 48ded52752de9f9b73c6bf9ae81cb429
+File Size: 15,020,544 bytes
+File Type: DMG disk image
+Known file name: celastradepro_mac_installer_1.00.00.dmg
+Date of creation: 13 July 2018
+Once the Cellas Trade Pro app is installed on macOS, it starts the Updater application on the system load via a file named “.com.celastradepro.plist” (note that it starts with a dot symbol, which makes it unlisted in the Finder app or default Terminal directory listing).
+The “Updater” file is passed the “CheckUpdate” parameter on start.
+Celas Trade Pro app plist file (Apple Property List)
+The command-line argument “CheckUpdate” looks redundant from a code analysis perspective: there is no other argument that the application expects.
+In the absence of all arguments, it doesn’t do anything and quits.
+This may or may not be way to trick sandboxes that could automatically execute this trojan updater, with no suspicious activity produced without such a “secret” extra argument.
+The choice of a benign string such as “CheckUpdate” helps it to hide in plain sight of any user or administrator looking into running processes.
+The trojanized updater works similar to the Windows version in many ways.
+Both applications are implemented using a cross-platform QT framework.
+Upon launch, the downloader creates a unique identifier for the infected host using a “%09d-%06d” format string template.
+Next, the app collects basic system information, which for macOS is done via dedicated QT classes:
+The process of encrypting and transferring data is the same as in the Windows version.
+This information is XOR-encrypted with hardcoded 16-byte static key “Moz&Wie;#t/6T!2y”, prepended with GIF89a header and uploaded to the C2 server via HTTP POST and the following URL:
+HTTP response code 300 indicates that the server has no task for the updater and the application terminates immediately.
+If the HTTP response is code 200, then the updater gets the data in the response, decodes it from base64 encoding and decrypts it using RC4 with the hardcoded static key “W29ab@ad%Df324V$Yd“.
+It calculates the MD5 of the decoded and decrypted data, which is compared to a value stored inside, to verify the integrity of the transferred file.
+After that, the payload is extracted and saved to a hardcoded file location “/var/zdiffsec“, sets executable permissions for all users and starts the app with another secret hardcoded command-line argument “bf6a0c760cc642“.
+Apparently the command-line argument is the way to prevent the detection of its malicious functionality via sandboxes or even reverse engineering.
+We have previously seen this technique adopted by Lazarus group in 2016 in attacks against banks.
+As of 2018, it is still using this in almost every attack we investigated.
+Downloaded payload
+According to data from Kaspersky Security Network, the threat actor delivered the malicious payload using one of the shadowy updaters described above.
+We found a malicious file created at the same host:
+MD5: 0a15a33844c9df11f12a4889ae7b7e4b
+File Size: 104,898,560 bytes
+File Type: PE32+ executable (GUI) x86-64, for MS Windows
+Known file name: C:\Recovery\msn.exe
+Link time: 2018-04-19 13:30:19
+Note the unusually large size for an executable file.
+We believe that it was inflated with junk data on purpose to prevent easy download or transfer over the internet.
+Searching for the reason for the malware’s appearance on the system revealed that there was an additional process responsible for producing several files before this malware was launched, suggesting a trojan dropper in action.
+The main function of this malware is to implant the Fallchill backdoor loader linked to several files.
+Upon launch, the malware checks one of the command-line arguments passed to it.
+The malware chooses one of the service names located in the following registry value as a disguise:
+HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost\netsvcs
+This value includes a list of several dozen standard system service names.
+The randomly chosen service name is used to name the dropped file and newly registered Windows service.
+Let’s refer to this randomly chosen service name as [service].
+A more detailed procedure for technical specialists is as follows:
+
+Check whether the command-line argument points to a file of 16 byte size.
+Read the file passed via the command-line argument.
+The contents of this file contains a crypto key, which we will call the main key.
+Open the msncf.dat file (configuration file).
+If the file size equals 192 bytes, read the content of the file.
+Open msndll.tmp file and decrypt it using the main key.
+Create the [service]svc.dll file and fill it with pseudo-random data.
+The malware fills the file with 10,240 bytes of pseudo-random data, and iterates (rand() % 10 + 10240) times.
+This is why it produces files which are at least 104,851,000 bytes.
+Copy the 16-byte main key at the end of the [service]svc.dll file.
+Encrypt the [service].dat file name with the main key and append it at the end of [service]svc.dll.
+Overwrite the beginning of [service]svc.dll with data decrypted from msndll.tmp.
+Move msndll.dat file to [service].dat.
+Delete temporary files: msndll.tmp, msncf.dat, msndll.log.
+Timestamp [service]svc.dll and [service].dat files.
+Register [service]svc.dll as a Windows service.
+Save a copy of data from msncf.dat file in the following registry value
+HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\TaskConfigs\Description.
+The first 16 bytes of this 276-byte data are used as a decryption key, and the remaining 260 bytes contain the encrypted file path used by the backdoor.
+Data at the end of the loader module
+After decryption of the last 260-bytes, the malware retrieves the name or path of the file that contains the actual backdoor body in encrypted form.
+Decrypted file name in the end of loader module
+The malware reads the specified file and decrypts it using the same decryption routine.
+This is how the executable code of the backdoor is produced in memory and executed by the loader.
+]226
+
+This is a full-featured backdoor that contains enough functions to fully control the infected host.
+Some of its network protocol commands are described below.
+This set of capabilities is very common for many Lazarus backdoors, which have been seen in other attacks against banks and financial industry in the past years.
+Infrastructure
+While working on the incident of the cryptocurrency company’s breach, we were curious about the legal status of the Celas LLC company that developed this trojanized trading application.
+The website had a valid SSL certificate issued by Comodo CA.
+However, note that the certificate from this webserver mentions “Domain Control Validated”, which is a weak security verification level for a webserver.
+It does not mean validation of the identity of the website’s owner, nor of the actual existence of the business.
+When certification authorities issue this kind of certificate they only check that the owner has a certain control over the domain name, which can be abused in certain ways.
+The domain name was registered by an individual named “John Broox” with registrant email address “johnbroox200@gmail[.]com”.
+Registrant Name: John Broox
+Registrant Organization: 
+Registrant Street: 2141 S Archer Ave   
+Registrant City: Chicago
+Registrant State/Province: Illinois
+Registrant Postal Code: 60601
+Registrant Country: US
+Registrant Phone: +1.8133205751
+Registrant Email: johnbroox200@gmail[.
+]com…..Name Server: 1a7ea920.bitcoin-dns.hostingName Server: a8332f3a.bitcoin-dns.hostingName Server: ad636824.bitcoin-dns.hostingName Server: c358ea2d.bitcoin-dns.hosting
+
+
+
+
+The same name of “John Broox” was used inside the installation package of the macOS version of the trading application.
+The domain celasllc.com was the only domain registered with this email address and was exclusively used for domain registration.
+The registrant used the Domain4Bitcoins service to register this domain, apparently paying with cryptocurrency.
+According to open-source intelligence, the address of the WHOIS information is fake, unless it’s the owner of a ramen shop running a cryptocurrency exchange software development studio on the side.
+View of the location referred in the WHOIS record.
+The server hosting celasllc.com (185.142.236.213) belongs to the Blackhost ISP in the Netherlands.
+WHOIS record of cellasllc.com server
+Coincidentally, the Fallchill malware authors also preferred to use the same hosting company to host their C2 server.
+Moreover, the Celas LLC web server and one of the C2 servers of the Fallchill malware are located in the same network segment of this ISP:
+
+Celas LLC infrastructure:
+
+185.142.236.213: Netherlands Blackhost Ltd. AS174 COGENT-174 
+
+
+Fallchill malware C2 server:
+
+196.38.48[.
+]121: South Africa Internet Solutions AS3741
+185.142.236[.
+]226: Netherlands Blackhost Ltd. AS174 COGENT-174 
+
+
+Additional attacker’s server from telemetry
+
+80.82.64[.
+]91: Seychelles Incrediserve Ltd AS29073
+185.142.239[.
+]173: Netherlands Blackhost Ltd. AS174 COGENT-174 
+
+
+
+However, when you look into Celas Trading Pro application’s digital signature, including its “Updater”, you will find that this certificate was also issued by Comodo CA, which refers to a company address in the United States.
+Location of Cellas LLC, according to its digital certificate
+Real estate history of that address
+Pivoting the infrastructure a little further brings up some more suspicious things.
+It appears that the domain referred to two IPs, one of which was linked to a few other suspicious domains, according to PassiveDNS.
+Cellas LLC linked infrastructure
+The owners of the linked infrastructural elements preferred to use several interesting services for hosting domain registration.
+All these service providers offer a certain level of anonymity to their customers.
+Most of them accept Bitcoins as a main payment method to keep their customers anonymous.
+This is very uncommon for companies running a legitimate business.
+Of course, these facts alone would not be enough to accuse Celas LLC of committing a crime.
+Attribution
+Kaspersky Lab has previously attributed the Fallchill malware cluster to Lazarus group when it attacked the financial sector around the world.
+It was also confirmed by other security vendors, and the national CERT of US.
+RC4 key from the older Fallchill
+Fallchill malware uses a RC4 algorithm with a 16-byte key to protect its communications.
+The key extracted from the Fallchill variant used in the current attack is DA E1 61 FF 0C 27 95 87 17 57 A4 D6 EA E3 82 2B.
+Current RC4 key of Fallchill
+We were able to confirm that some of older Fallchill malware variants used exactly the same RC4 key.
+Below are Fallchill malware samples that used the same key (the compilation timestamp may indicate the date of malware creation).
+]226) used in this attack have been used by the older variant of Fallchill.
+According to Kaspersky Security Network, Fallchill was not the only malware used in this attack.
+There was another backdoor that was used by the threat actor.
+We omit a full description of this backdoor in the current report to keep the write-up to an acceptable length, but we would like to highlight two important things discovered in it.
+The Accept-Language HTTP header string revealed a language code associated with North Korea.
+In our experience, this is something we normally don’t see in malware.
+Accept-Language: ko-kp,ko-kr;q=0.8,ko;q=0.6,en-us;q=0.4,en;q=0.2
+Accept-Language HTTP header value in the body of the backdoor
+Conclusions
+The Lazarus APT group’s continuous attacks on the financial sector are not much of a surprise to anyone.
+A lot of research has been done and published about such attacks.
+However, we think this case makes a difference.
+Recent investigation shows how aggressive the group is and how its strategies may evolve in the future.
+First of all, Lazarus group has entered a new platform: macOS.
+There is steadily growing interest in macOS from ordinary users, especially in IT companies.
+Many developers and engineers are switching to using macOS.
+Apparently, in the chase after advanced users, software developers from supply chains and some high profile targets, threat actors are forced to have macOS malware tools.
+We believe that in the future Lazarus is going to support all platforms that software developers are using as a base platform, because compromising developers opens many doors at once.
+We cannot say with full certainty whether Celas LLC was compromised and the threat actor abused it to push malware through an update mechanism.
+However, the multiple successful Lazarus attempts to compromise supply chain companies suggest that it will keep exploring this infection method.
+From all angles, the Celas LLC story looks like the threat actor has found an elaborate way to create a legitimate looking business and inject a malicious payload into a “legitimate looking” software update mechanism.
+Sounds logical: if one cannot compromise a supply chain, why not to make fake one?
+This should be a lesson to all of us and a wake-up call to businesses relying on third-party software.
+Do not automatically trust the code running on your systems.
+Neither good looking website, nor solid company profile nor the digital certificates guarantee the absence of backdoors.
+Trust has to be earned and proven.
+]com/checkupdate.php (malware distribution URL)
+196.38.48[.
+The module relies on a hardcoded User-Agent string for macOS:
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/66.0.3359.139 Safari/537.36
+Once the server replies, it checks the HTTP response code.
+HTTP response code 300 indicates that the server has no task for the updater and the application terminates immediately.
+If the HTTP response is code 200, then the updater gets the data in the response, decodes it from base64 encoding and decrypts it using RC4 with the hardcoded static key “W29ab@ad%Df324V$Yd“.
+It calculates the MD5 of the decoded and decrypted data, which is compared to a value stored inside, to verify the integrity of the transferred file.
+After that, the payload is extracted and saved to a hardcoded file location “/var/zdiffsec“, sets executable permissions for all users and starts the app with another secret hardcoded command-line argument “bf6a0c760cc642“.
+Apparently the command-line argument is the way to prevent the detection of its malicious functionality via sandboxes or even reverse engineering.
+We have previously seen this technique adopted by Lazarus group in 2016 in attacks against banks.
+As of 2018, it is still using this in almost every attack we investigated.
+According to data from Kaspersky Security Network, the threat actor delivered the malicious payload using one of the shadowy updaters described above.
+We found a malicious file created at the same host:
+MD5: 0a15a33844c9df11f12a4889ae7b7e4b
+File Size: 104,898,560 bytes
+File Type: PE32+ executable (GUI) x86-64, for MS Windows
+Known file name: C:\Recovery\msn.exe
+Link time: 2018-04-19 13:30:19
+Note the unusually large size for an executable file.
+We believe that it was inflated with junk data on purpose to prevent easy download or transfer over the internet.
+Searching for the reason for the malware’s appearance on the system revealed that there was an additional process responsible for producing several files before this malware was launched, suggesting a trojan dropper in action.
+The main function of this malware is to implant the Fallchill backdoor loader linked to several files.
+Upon launch, the malware checks one of the command-line arguments passed to it.
+The malware chooses one of the service names located in the following registry value as a disguise:
+This value includes a list of several dozen standard system service names.
+The randomly chosen service name is used to name the dropped file and newly registered Windows service.
+Let’s refer to this randomly chosen service name as [service].
+The malware contains references to several files inside:
+A mix of the above-mentioned files produces the final backdoor known as Fallchill.
+A more detailed procedure for technical specialists is as follows:
+We confirmed that the following malware was created on the infected host using the method described above:
+MD5: e1ed584a672cab33af29114576ad6cce
+File Size: 104,878,356 bytes
+File Type: PE32+ executable (DLL) (console) x86-64, for MS Windows
+Known file name: C:\Windows\system32\uploadmgrsvc.dll
+Link time: 2018-01-18 01:56:32
+MD5: d8484469587756ce0d10a09027044808
+File Size: 143,872 bytes
+File Type: encrypted data
+Known file name: C:\Windows\system32\uploadmgr.dat
+Upon starting, uploadmgrsvc.dll reads 276 bytes from the end of its own executable file.
+The first 16 bytes of this 276-byte data are used as a decryption key, and the remaining 260 bytes contain the encrypted file path used by the backdoor.
+Data at the end of the loader module
+After decryption of the last 260-bytes, the malware retrieves the name or path of the file that contains the actual backdoor body in encrypted form.
+Decrypted file name in the end of loader module
+The malware reads the specified file and decrypts it using the same decryption routine.
+This is how the executable code of the backdoor is produced in memory and executed by the loader.
+Below is the meta information about the decrypted final payload in memory:
+MD5: d7089e6bc8bd137a7241a7ad297f975d
+File Size: 143,872 bytes
+File Type: PE32+ executable (DLL) (GUI) x86-64, for MS Windows
+Link Time: 2018-03-16 07:15:31
+We can summarize the Fallchill backdoor loading process as follows:
+As mentioned previously, the final payload belongs to a Fallchill malware cluster formerly attributed to the Lazarus APT group.
+Upon launching, this malware resolves the API function addresses at runtime, and reads the C2 server address from the registry value created during the installation stage:
+HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\TaskConfigs\Description
+If there is no configuration value, the malware falls back to a default C2 server address.
+This is a full-featured backdoor that contains enough functions to fully control the infected host.
+Some of its network protocol commands are described below.
+This set of capabilities is very common for many Lazarus backdoors, which have been seen in other attacks against banks and financial industry in the past years.
+While working on the incident of the cryptocurrency company’s breach, we were curious about the legal status of the Celas LLC company that developed this trojanized trading application.
+The website had a valid SSL certificate issued by Comodo CA.
+However, note that the certificate from this webserver mentions “Domain Control Validated”, which is a weak security verification level for a webserver.
+It does not mean validation of the identity of the website’s owner, nor of the actual existence of the business.
+When certification authorities issue this kind of certificate they only check that the owner has a certain control over the domain name, which can be abused in certain ways.
+Below is the WHOIS record of the “celasllc.com” domain.
+The domain name was registered by an individual named “John Broox” with registrant email address “johnbroox200@gmail[.
+The same name of “John Broox” was used inside the installation package of the macOS version of the trading application.
+The Info.plist properties file describes the package as follows:
+It looks at first sight like a legitimate WHOIS record, but something doesn’t really add up here.
+The domain celasllc.com was the only domain registered with this email address and was exclusively used for domain registration.
+The registrant used the Domain4Bitcoins service to register this domain, apparently paying with cryptocurrency.
+According to open-source intelligence, the address of the WHOIS information is fake, unless it’s the owner of a ramen shop running a cryptocurrency exchange software development studio on the side.
+View of the location referred in the WHOIS record.
+The server hosting celasllc.com (185.142.236.213) belongs to the Blackhost ISP in the Netherlands.
+WHOIS record of cellasllc.com server
+Coincidentally, the Fallchill malware authors also preferred to use the same hosting company to host their C2 server.
+Moreover, the Celas LLC web server and one of the C2 servers of the Fallchill malware are located in the same network segment of this ISP:
+However, when you look into Celas Trading Pro application’s digital signature, including its “Updater”, you will find that this certificate was also issued by Comodo CA, which refers to a company address in the United States.
+According to open-source data, this address doesn’t belong to a real business, and looks on maps like a meadow with a small forest and small real estate offering nearby.
+Location of Cellas LLC, according to its digital certificate
+Real estate history of that address
+Pivoting the infrastructure a little further brings up some more suspicious things.
+It appears that the domain referred to two IPs, one of which was linked to a few other suspicious domains, according to PassiveDNS.
+The owners of the linked infrastructural elements preferred to use several interesting services for hosting domain registration.
+All these service providers offer a certain level of anonymity to their customers.
+Most of them accept Bitcoins as a main payment method to keep their customers anonymous.
+This is very uncommon for companies running a legitimate business.
+Hosting services linked to Celas LLC:
+Domain registration services linked to Celas LLC:
+All the facts above can make the more sceptical among us doubt the intentions of Celas LLC and the legitimacy of this business.
+Of course, these facts alone would not be enough to accuse Celas LLC of committing a crime.
+Kaspersky Lab has previously attributed the Fallchill malware cluster to Lazarus group when it attacked the financial sector around the world.
+It was also confirmed by other security vendors, and the national CERT of US.
+Fallchill malware uses a RC4 algorithm with a 16-byte key to protect its communications.
+The key extracted from the Fallchill variant used in the current attack is DA E1 61 FF 0C 27 95 87 17 57 A4 D6 EA E3 82 2B.
+Current RC4 key of Fallchill
+We were able to confirm that some of older Fallchill malware variants used exactly the same RC4 key.
+Below are Fallchill malware samples that used the same key (the compilation timestamp may indicate the date of malware creation).
+We have confirmed that the C2 server addresses (196.38.48[.
+]226) used in this attack have been used by the older variant of Fallchill.
+Apparently, the attackers using the Fallchill malware continue to reuse code and C2 server infrastructure over and over again.
+According to Kaspersky Security Network, Fallchill was not the only malware used in this attack.
+There was another backdoor that was used by the threat actor.
+We omit a full description of this backdoor in the current report to keep the write-up to an acceptable length, but we would like to highlight two important things discovered in it.
+First, this backdoor was created on 2018-07-12 and revealed an already familiar directory, “TManager”, which we previously saw in the Updater.exe application from the Cellas Trading Pro suite:
+Second, what is probably one of the most interesting findings to come from this additional backdoor was discovered hidden in hardcoded headers used to communicate with C2 server.
+The Accept-Language HTTP header string revealed a language code associated with North Korea.
+In our experience, this is something we normally don’t see in malware.
+Accept-Language HTTP header value in the body of the backdoor
+The Lazarus APT group’s continuous attacks on the financial sector are not much of a surprise to anyone.
+A lot of research has been done and published about such attacks.
+However, we think this case makes a difference.
+Recent investigation shows how aggressive the group is and how its strategies may evolve in the future.
+First of all, Lazarus group has entered a new platform: macOS.
+There is steadily growing interest in macOS from ordinary users, especially in IT companies.
+Many developers and engineers are switching to using macOS.
+Apparently, in the chase after advanced users, software developers from supply chains and some high profile targets, threat actors are forced to have macOS malware tools.
+We believe that in the future Lazarus is going to support all platforms that software developers are using as a base platform, because compromising developers opens many doors at once.
+We cannot say with full certainty whether Celas LLC was compromised and the threat actor abused it to push malware through an update mechanism.
+However, the multiple successful Lazarus attempts to compromise supply chain companies suggest that it will keep exploring this infection method.
+From all angles, the Celas LLC story looks like the threat actor has found an elaborate way to create a legitimate looking business and inject a malicious payload into a “legitimate looking” software update mechanism.
+Sounds logical: if one cannot compromise a supply chain, why not to make fake one?
+This should be a lesson to all of us and a wake-up call to businesses relying on third-party software.
+Do not automatically trust the code running on your systems.
+Neither good looking website, nor solid company profile nor the digital certificates guarantee the absence of backdoors.
+Trust has to be earned and proven.
+C:\Recovery\msn.exe
+C:\Recovery\msndll.log
+C:\Windows\msn.exe
+C:\WINDOWS\system32\uploadmgrsvc.dll
+C:\WINDOWS\system32\uploadmgr.dat
+]com/checkupdate.php (malware distribution URL)
+196.38.48[.
+Operation AppleJeus: Lazarus hits cryptocurrency exchange with fake installer and macOS malware
+Your email address will not be published.
+Required fields are marked *
+ Save my name, email, and website in this browser for the next time I comment.
+Notify me when new comments are added.
+The hottest research right in your inbox
+While investigating a recent rise of attacks against Exchange servers, we noticed a recurring cluster of activity that appeared in several distinct compromised networks.
+With a long-standing operation, high profile victims, advanced toolset and no affinity to a known threat actor, we decided to dub the cluster GhostEmperor.
+We discovered a campaign delivering the Tomiris backdoor that shows a number of similarities with the Sunshuttle malware distributed by DarkHalo APT and target overlaps with Kazuar.
+This is our latest summary of advanced persistent threat (APT) activity, focusing on significant events that we observed during Q2 2021: attacks against Microsoft Exchange servers, APT29 and APT31 activities, targeting campaigns, etc.
+We recently came across unusual APT activity that was detected in high volumes, albeit most likely aimed at a few targets of interest.
+Further analysis revealed that the actor, which we dubbed LuminousMoth, shows an affinity to the HoneyMyte group, otherwise known as Mustang Panda.
+The hottest research right in your inbox
+© 2021 AO Kaspersky Lab.
+Registered trademarks and service marks are the property of their respective owners.
+The hottest research right in your inbox

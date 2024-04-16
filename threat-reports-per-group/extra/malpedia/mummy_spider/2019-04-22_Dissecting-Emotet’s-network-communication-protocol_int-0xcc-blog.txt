@@ -1,0 +1,52 @@
+Communication protocol for any malware lies at the core of its functionality .
+It is the essential way for any malware to communicate and receive further commands .
+Emotet has a complex communication format .
+Its peculiarities are the way the protocol is built and sent across the network .
+Knowing internal details of its communication format is essential to keep tabs on it .
+In this post we are going to analyze Emotet communication format .
+ we will be skipping the unpacking and reconstruction part , as it is irrelevant to this topic of discussion .
+In this post , we will be specifically looking for areas of interest in the binary , there will be some parts that are analyzed preemptively .
+An unpacked emotet sample has around ~100 functions , as populated by IDA .
+Going through each of them to look for communication subroutines would be “A short in the dark” .
+The easiest way would be to look for network API calls and xrefs would sort out most of the dirty work for us
+Luckily in emotet., there is only one xref to this API call , which perhaps would be the subroutine where the communication to c2 server happens .
+This subroutine receives an encrypted and compressed packet with parameters like c2 server, port and sends it out .
+Xrefing back few subroutines would land us to the place where the packet is formulated .
+For comprehension , let’s name this subroutine as ConnectAndSend
+Tracking back xfrefs , we finally reach to the subroutine where the packet is generated .
+And , based on API calls and variables used , we can easily name few local variables and subroutines used , for example Botid, crc32, etc
+Based on how stack variable are set , we get an idea that a struct is formulated .
+The definition of the structure would be as following
+This structure is passed on to a function that calculates total round size based on some bit shifts  .
+This shifting gives us a clue about the format of the packet .
+Lets look at these patterns
+Translating it to a code snippet would roughly be equivalent to
+This code encodes an integer to LEB128 or Little Endian Base 128 format (VARINT).
+And one of the serialized buffer formats that support it is the google protobuf format , this clue again makes the reversing equation easy for us .
+Some old emotet analysis blogs support our assumption .
+Emotet has two packets one being encapsulated in the other .
+The inner layer lets call it base packet.
+Base packet fundamentally is a group of entries with metadata information .
+Metadata includes type of data and an index number particular to the entry .
+Entries have a simple structure , but varies according to the type of entry
+Emotet’s base packet has three type of data entries, and are marked by numbers in the metadata
+Type of element and type of data entry is specified in the metadata field
+so, the complete definition of base packet would be something like this
+MetaData is a bitfield data type , which consists of 
+**  0-3 bits - Type of data field **
+**3-7 bits - Index Number of Data field **
+Where index is a incremental number and type is an enum
+The code to add an entry in base packet can be defined in python as
+Later on , base packet is compressed and further more encapsulated in another packet
+The definition of the final packet is almost the same as the base packet , but the only subtle difference is that it only has one field , which is the encapsulated base packet
+This data is sent to c2 server immediately after encrypting the final packet .
+Response data from c2 from received is decompressed , and the plain text data is supplied to a subroutine for deserialization  .
+The response data field uses the same variable length integer encoding and is almost structured in the same way .
+Response format is complex and tentative for each type of request and bot configuration .
+Similarly like base request packet, this structure consists of a type and number bitfield , which determines which type of data field is it .
+In case of response , it has three of them
+1 : Main module packet *
+*2 : Binary update data
+3 : Deliverables data
+Use of Heavens Gate technique for switching between 32bit and 64bit Packed file is compressed and encrypted using several layers , discussing that would be irreverent here .
+At one point of time the a DLL is extracted which is actually... Continue →

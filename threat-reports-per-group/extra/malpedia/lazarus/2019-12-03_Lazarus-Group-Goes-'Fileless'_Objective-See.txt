@@ -1,0 +1,143 @@
+
+
+    Our research, tools, and writing, are supported by “Friends of Objective-See” such as:
+    
+
+
+
+      CleanMy Mac X
+      
+
+
+
+
+
+
+      Malwarebytes
+      
+
+
+
+
+      Airo AV
+      
+
+
+
+
+
+Become a Friend!
+📝 👾 Want to play along?
+I’ve added the sample (‘OSX.AppleJeus.C’) to our malware collection (password: infect3d)
+Today, Dinesh_Devadoss posted a tweet about another Lazarus group macOS trojan:
+
+Another #Lazarus #macOS #trojan md5: 6588d262529dc372c400bef8478c2eechxxps://unioncrypto.vip/Contains code: Loads Mach-O from memory and execute it /  Writes to a file and execute it@patrickwardle @thomasareed pic.twitter.com/Mpru8FHELi— Dinesh_Devadoss (@dineshdina04) December 3, 2019
+Another #Lazarus #macOS #trojan md5: 6588d262529dc372c400bef8478c2eechxxps://unioncrypto.vip/Contains code: Loads Mach-O from memory and execute it /  Writes to a file and execute it@patrickwardle @thomasareed pic.twitter.com/Mpru8FHELi
+As I’d recently written about a Lazarus group first stage implant (see: “Pass the AppleJeus”), I was intrigued to analyze this sample!
+We’ll see while there are some clear overlaps, this (new) sample contains a rather sophisticated capabilities, which I’ve never seen before in (public) macOS malware!
+The Lazarus Group has recently been quite active in the macOS space.
+To read more about their past activity, see:
+“Operation AppleJeus: Lazarus hits cryptocurrency exchange w/ fake installer & macOS malware”
+“Mac Malware that Spoofs Trading App Steals User Information, Uploads it to Website”
+“Detecting macOS.GMERA Malware Through Behavioral Inspection”
+In his tweet, Dinesh kindly provided an MD5 hash: 6588d262529dc372c400bef8478c2eec which allows us to locate the sample (UnionCryptoTrader.dmg) on VirusTotal, where it’s only flagged as malicious by two of the engines.
+From the URL provided in Dinesh’s tweet, (https://unioncrypto.vip/) and spelunking around on VirusTotal, we can gain an understanding of the infection mechanism.
+Lazarus Group has a propensity for targeting users or administrators of crypto-currency exchanges.
+And their de facto method of infecting such targets is via fake crypto-currency company and trading applications.
+As part of my recent RSA presentation I highlighted their attack vector:
+In this specific attack, Lazarus group created a new website, unioncrypto.vip:
+Pinging this site reveals that it’s still online, and resolving to 104.168.167.16:
+
+
+$ ping unioncrypto.vip
+PING unioncrypto.vip (104.168.167.16): 56 data bytes
+64 bytes from 104.168.167.16: icmp_seq=0 ttl=112 time=91.483 ms
+Querying VirusTotal with this IP address, we find a URL request that triggered a download of the malicious application (https://www.unioncrypto.vip/download/W6c2dq8By7luMhCmya2v97YeN):
+It seems reasonable to assume that Lazarus Group is sticking with its successful attack vector (of targeting employees of crypto-currency exchanges with trojanized trading applications) …for now!
+Let’s begin analysis of the trojanzied application.
+Said application is delivered via a disk image, named UnionCryptoTrader.dmg
+We can mount this disk image, via the hdiutil attach command:
+It contains a single package: UnionCryptoTrader.pkg:
+Via our “WhatsYourSign” application, it’s easy to see the UnionCryptoTrader.pkg package is unsigned:
+…which means macOS will warn the user, if they attempt to open it:
+Taking a peek at the package, uncovers a postinstall script that will be executed at the end of the installation process:
+The purpose of this script is to persistently install a launch daemon.
+move a hidden plist (.vip.unioncrypto.plist) from the application’s Resources directory into /Library/LaunchDaemons
+set it to be owned by root
+move a hidden binary (.unioncryptoupdater) from the application’s Resources directory into /Library/UnionCrypto/
+set it to be executable
+We can passively observe this part of the installation via either our File or Process monitors:
+Though installing a launch daemon requires root access, the installer will prompt the user for their credentials:
+Once the installer completes, the binary unioncryptoupdater will both currently executing, and persistently installed:
+Of course, BlockBlock will detect the launch daemon persistence attempt:
+As noted, persistence is achieved via the vip.unioncrypto.plist launch daemon:
+As the RunAtLoad key is set to true this instruct macOS to automatically launch the binary specified in the ProgramArguments array each time the infected system is rebooted.
+As such /Library/UnionCrypto/unioncryptoupdater will be automatically (re) executed.
+Installing a launch daemon (who’s plist and binary were both stored hidden in the application’s resource directory) again matches Lazarus groups modus operandi.
+See Kaspersky’s writeup: “Operation AppleJeus: Lazarus hits cryptocurrency exchange with fake installer and macOS malware”
+Ok, time to analyze the persisted unioncryptoupdater binary.
+Via the file command we can ascertain its a standard macOS (64bit) binary:
+The codesign utility shows us both it identifier (macloader-55554944ee2cb96a1f5132ce8788c3fe0dfe7392) and the fact that it’s not signed with a valid code signing id, but rather adhoc (Signature=adhoc):
+Running the strings utility (with the -a flag) reveals some interesting strings:
+Strings such as IOPlatformSerialNumber and reference to the SystemVersion.plist likely indicate basic survey capabilities (to gather information about the infected system).
+The reference to libcurl API (curl_easy_perform) and embedded url https://unioncrypto.vip/update indicate networking and/or command and control capabilities.
+Opening a the binary (unioncryptoupdater) in a disassembler, shows the main function simply invoking a function named onRun:
+Though rather long and involved we can break down its logic.
+Builds a string consisting of the time and hardcode value (key?
+): 12GWAPCT1F0I1S14
+
+1sprintf(&var_130, "%ld", time(0x0));
+2rax = sprintf(&var_1B0, "%s%s", &var_130, "12GWAPCT1F0I1S14");
+Ok, so we’ve got a fairly standard persistent 1st-stage implant which beacons to a remote server for (likely) a 2nd-stage fully-featured implant.
+At this time, while the remote command & control server remains online, it simply it responding with a “0”, meaning no payload is provided :(
+As such, we must rely on static analysis methods for the remainder of our analysis.
+However, the is one rather unique aspect of this 1st-stage implant: the ability to execute the received payload, directly from memory!
+Looks take a closer look at how the malware implements this stealthy capability.
+Recall that if the server responds with payload (and not a string "0"), the malware invokes the processUpdate function.
+First the processUpdate decrypts said payload (via aes_decrypt_cbc), then invokes a function named load_from_memory.
+The load_from_memory function first mmaps some memory (with protections: PROT_READ | PROT_WRITE | PROT_EXEC).
+Then copies the decrypted payload into this memory region, before invoking a function named memory_exec2:
+The memory_exec2 function invokes the Apple API NSCreateObjectFileImageFromMemory to create an “object file image” from a memory buffer (of a mach-O file).
+Following this, the NSLinkModule method is called to link the “object file image”.
+As the layout of an in-memory process image is different from its on disk-in image, one cannot simply copy a file into memory and directly execute it.
+Instead, one must invoke APIs such as NSCreateObjectFileImageFromMemory and NSLinkModule (which take care of preparing the in-memory mapping and linking).
+Once the malware has mapped and linked the downloaded payload, it invokes a function named find_macho which appears to search the memory mapping for MH_MAGIC_64, the 64-bit “mach magic number” in the mach_header_64 structure (0xfeedfacf):
+Once the find_macho method returns, the malware begins parsing the in-memory mach-O file.
+It appears to be looking for the address of LC_MAIN load command (0x80000028):
+1if (*(int32_t *)rcx == 0x80000028) goto loc_100006ac7;
+For an in-depth technical discussion of parsing mach-O files, see: “Parsing Mach-O Files”.
+The LC_MAIN load command contains information such as the entry point of the mach-O binary (for example, offset 18177 for the unioncryptoupdater binary):
+The malware then retrieves the offset of the entry point (found at offset 0x8 within the LC_MAIN load command), sets up some arguments, then jumps to this address:
+1//rcx points to the `LC_MAIN` load command
+2r8 = r8 + *(rcx + 0x8);
+3...
+4
+5//invoke payload's entry point!
+6rax = (r8)(0x2, &var_40, &var_48, &var_50, r8);
+Pure in-memory execution of a remotely downloaded payload.
+In 2015, at BlackHat I discussed this method of in-memory file execution as a means to increase stealth and complicate forensics (See: “Writing Bad @$$ Malware for OS X”):
+…kinda neat to see it (finally) show up in macOS malware in the wild!
+For more details on in-memory code execution in macOS, see:
+@prsecurity_ tweeted also just tweeted about creating a simple PoC:
+
+If you want to play with in-memory loading of Mach-Os based on this method, I put together a simple PoC: https://t.co/IP3JhRyf7h, just run make.credit @objective_see and Apple OpenSource— prsecurity_ (@prsecurity_) December 4, 2019
+If you want to play with in-memory loading of Mach-Os based on this method, I put together a simple PoC: https://t.co/IP3JhRyf7h, just run make.credit @objective_see and Apple OpenSource
+Former #OBTS speaker Felix Seele (@c1truz_) noted that the (in)famous InstallCore adware also (ab)used the NSCreateObjectFileImageFromMemory and NSLinkModule APIs to achieve in-memory execution.
+Interestingly, the malware has a “backup” plan if the in-memory code execution fails.
+Specifically if load_from_memory does not return 0 (success) it will write out the received payload to /tmp/updater and then execute it via a call to system:
+Always good to handle error conditions and have a plan B!
+Lazarus group continues to target macOS users with ever evolving capabilities.
+Today, we analyzed a new sample with the ability to remotely download and execute payloads directly from memory!
+The good news is the average Mac user doesn’t have to worry about being targeted by APT groups such as Lazarus.
+Moreover, as the installer package, UnionCryptoTrader.pkg is unsigned, macOS will warn any users if they attempt to open it:
+However, if you do want to manually check if you’re infected, the following IoCs should help:
+Or a tool such as KnockKnock can also uncover the infection:
+
+
+❤️ Love these blog posts and/or want to support my research and tools?
+You can support them via my Patreon page!
+…or better sign up for our “The Art of Mac Malware Analysis” class at Objective by the Sea v3.0!
+
+❤️ Love these blog posts and/or want to support my research and tools?
+You can support them via my Patreon page!
+…or better sign up for our “The Art of Mac Malware Analysis” class at Objective by the Sea v3.0!

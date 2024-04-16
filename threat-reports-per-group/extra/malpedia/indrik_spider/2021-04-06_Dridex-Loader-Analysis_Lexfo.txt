@@ -1,0 +1,121 @@
+Tue 06 April 2021 by Lexfo in Malware.
+ Dridex  Loader  Trojan  Banking  Ida  Reverse  Malware
+Dridex is an old banking Trojan that appeared in 2014 and is still very active today.
+This is mainly due to its evolution and its complex design/architecture based on proxy layers to hide the main command and control (C&C).
+This article is a detailed analysis of the Dridex loader found in the wild earlier this year (2021).
+The first part is about anti-debug bypass and string/API recovery and the second part is more focused on the loader functionality.
+At the beginning of the Dridex loader code, a function is registered using the native API RtlAddVectoredExceptionHandler to handle all the exceptions raised by the "int 3" instructions placed everywhere in the loader:
+This instruction is always followed by the "ret" instruction, preceded by push instructions and a function that takes two DWORDs.
+This function is actually a custom "GetProcAddress" API and int 3 is a trampoline to execute the previously resolved API via the registered exception handler.
+The handler checks if the Exception Code is EXCEPTION_BREAKPOINT and modifies the ESP register in the PCONTEXT structure accordingly for the next ret instruction to execute the real API:
+To get a better control flow graph and to avoid having your debugger break for each API, a small IDA script can be made to find and patch at runtime all the int 3; ret instructions by call eax:
+As usual, all the API names are obfuscated and as mentioned earlier, addresses are resolved without using the classical GetProcAddress.
+Instead, loaded libraries are parsed and functions names are enumerated from the PE export directory header until the CRC32 of the name XORed with a hard-coded key match:
+Before resolving the API, the loader checks if the module is loaded using the PEB and PEB_LDR_DATA structures:
+Once again, it uses a combination of CRC32 and XOR with the same hard-coded key to check the module name.
+If the module is not loaded, it enumerates DLLs in the Windows directory using the GetSystemWow64DirectoryW and FindFirstFileExW/FindNextFileW APIs and loads it using LdrLoadDLL:
+The following Python script can be used to find which DLL and API are resolved:
+Strings are decrypted using a function that takes 3 parameters (char *output, char *enc_strings, int string_index):
+This function decrypts the enc_strings buffer using the RC4 algorithm with a key located in the first 0x28 bytes (in reverse order).
+Then the index selects the strings to return in the output: SOFTWARE/TrendMicro/Vizor\x00\\VizorUniclientLibrary.DLL\x00ProductPath\x00\x00
+The algorithm can be summed up to the following Python script:
+Very early in the code, a function is in charge of gathering information about the infected system.
+This information is stored in a global structure and used when needed for other operations.
+Below are more details on the gathered information:
+The build number, the Windows version and the product type are collected through the GetVersionExW function:
+The current process architecture is obtained using IsWow64Process:
+The Dridex loader checks his privilege level by comparing the current process token group SID to the local administrator SID (S-1-5-32-544).
+It uses the GetTokenInformation API with TokenGroups as Token Information:
+Finally, Dridex allocates the local administrator SID using AllocateAndInitializeSid and compares it using EqualSid:
+Dridex checks in the registry SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System the values EnableLUA, ConsentPromptBehaviorAdmin, PromptOnSecureDesktop and attributes a level from 0 to 5 based on the results:
+Using OpenProcessToken and GetTokenInformation with the parameter TokenElevation, Dridex checks if the current process has elevated privileges:
+Dridex also gets the Terminal Services session ID associated with the current process:
+Similarly, Dridex get the process integrity level using GetTokenInformation with the parameter TokenIntegrityLevel, then attributes a level from 1 to 7 based on the results:
+Finally, Dridex calls GetSystemInfo to get information on:
+At the end of the function, we get the following structure:
+The Dridex loader talks to its C&Cs to download the core module and the node list.
+The communication is encrypted using RC4 and the protocol used is HTTPS.
+Below is a more detailed explanation of how the function does this job.
+First, it takes a hash in its parameters that will later identify the request type:
+By parsing the .data section, it builds a structure with the bot ID and a list of hard-coded IPs:
+Bot_Id: [7f 27 00 00] -> 10111
+Then, it starts building the requests to be sent to the C&Cs in binary format using previously gathered information.
+The request looks like this:
+From left to right, the fields are the following:
+The unique_account field is the concatenation of the Computer Name and the MD5 hash of the following expression: md5(computer_name + user_name + \x00 + \x00\x00 + installdate + \x00\x00).
+The unique_system_hash is also an MD5 hash: md5(serial volume + install date + arch + \x00\x00).
+The sys_info field is built using the following code:
+The command field is the command name CRC32 code (e.g.
+"bot" == 0x11041f01) and it is given as a parameter.
+The following commands were found in the loader:
+The process_installed field is extracted from the following registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall
+The envs field is generated using the GetEnvironmentStringsW API.
+Before sending the request, the payload is encrypted using RC4 (the key comes from the recovered strings) and prepended by its CRC32 code:
+The request is sent in a POST message using the WinINet library (InternetOpenA, InternetConnectW, HttpOpenRequestW, HttpSendRequestW):
+The answer is read by calling the InternetReadFile function and if the response code is 200 or 404, the content is decrypted using RC4 with the same RC4 key as for encrypting the payload:
+The response always starts with a CRC32 code of the content, followed by the content itself, which is RC4-encrypted with the same key as for sending the command.
+Once decrypted, the "bot" command response reveals an RSA signature (0x80 bytes long) and the Dridex "core" DLL at offset 0x80:
+This signature is in the PKCS#1 v1.5 SHA1withRSA format.
+It can be used to verify the payload content using an RSA1024 public key found in the decrypted strings from the core DLL:
+The decrypted "list" command response is not as easy as the "bot" command to understand:
+The format is as follows:
+The structure looks like this:
+After checking that the first 4 bytes are the CRC32 code, it extracts the first RC4 key in 0x84:0x94 just after the RSA signature (128 bytes).
+With this key, it can decrypt the next four bytes [8c a2 75 54] to 00 00 00 70.
+Then, the second RC4 key can be extracted (0x98:0xa8) to decrypt the remaining data:
+Indeed, the content is gzip-encoded and the first 4 decrypted bytes (00 00 00 70) are the content size:
+The first field is a marker (0x10), the second is the node list size and the rest is the list of nodes.
+Because the decryption is not done in the loader but in the core DLL, it needs a way to share the answer content of the list command.
+This is why the loader uses the Windows registry Software\Microsoft\Windows\CurrentVersion\Explorer\CLSID\%s\shellfolder where %s is a CLISD built from the unique_account hashes with the hard-coded number 0x1c:
+The saved data contains the bot ID (7f 27], the node list size, the node list and the scheduled tasks URI (details in the next parts):
+Before writing the registry value, the original response content of the "list" command and its length are encrypted using RC4 with two random keys (0x10-byte-long) and the CRC32 code of the content is prepended:
+From left to right, the fields are the following:
+And finally, it is RC4-encrypted again using the previous generated unique_account hashes with the hard-coded number 0x1c and set using RegSetValueExA:
+The Dridex core DLL can now access the content.
+Below are functions that can be used to parse, validate and decrypt the "list" and "bot" command output:
+Dridex copies a random legitimate program from C:\Windows\System32 to a new directory in %AppData% (randomly named) and the Dridex core DLL is copied to the same folder and renamed to one of the DLLs imported by the legitimate program.
+Later on, a scheduled task will run the legitimate binary and one of its DLLs will be hijacked by the Dridex core DLL.
+Below is a more detailed description of how this is done.
+First, Dridex scans *.exe files in C:\Windows\System32\ and selects one binary that does not have the property to AutoElevated.
+It also enumerates imported DLLs in the binary and checks if the name of one of them matches a CRC32 whitelist:
+Below are the corresponding DLLs based on the CRC32 whitelist:
+When a binary with a matching imported DLL is found, the legitimate DLL export directory content replaces the missing one in the core DLL:
+The core DLL is copied to a new directory (randomly named) in AppData\Roaming and the DLL filename is borrowed from the legitimate one.
+The selected legitimate binary is also copied in the same directory:
+Everything is set up for the scheduled task.
+Depending on the process privilege, one or two scheduled tasks are registered.
+The function which registers the scheduled task uses a COM object and the task properties are set using the XML format.
+Important properties are set dynamically by the following tags:
+With administrator privileges, two scheduled tasks are set.
+In both cases, the task URI is located in a random dir in C:\Windows\System32\Tasks\Microsoft\Windows\:
+The difference starts with the URI filename.
+In the first task, the URI takes a legitimate task file and appends the user SID (e.g.
+The <author> element is hard-coded <Author>$(@%systemroot%\system32\wininet.DLL,-16000)</Author>.
+The <exec><command> is the path to the binary with the hijacked DLL as seen previously in the AppData\Roaming dir: <Exec><Command>C:\Users\YYYYYYYYYYYY\AppData\Roaming\Xsbzewcltzyxfl\rstrui.exe</Command></Exec>
+On the second scheduled task, the <URI> starts with the randomly selected dir and the filename is built with a pseudo-random algorithm based on the previously seen unique_account hashes.
+Basically, it generates MD5 hashes and picks only ASCII letters to build a string until it is long enough:
+The <author> element is a field copy from the randomly selected task in the C:\Windows\System32\Tasks\Microsoft\Windows\.
+To get the value, it scans the XML task file until it finds the <author> tags using the traditional CRC32 code methods:
+In the second task, the <exec><command> is a random dir in C:\Windows\System32 that does not exist at that moment.
+It is still unclear what the purpose of this scheduled task is:
+To register the task, Dridex uses a COM Object by calling CoCreateInstance to create a TaskService instance:
+The Connect, getfolder, NewTask and RegisterTaskDefinition methods are called to register the task.
+Both tasks are launched at the opening session and every 30 minutes:
+The full permission is granted to the task file:
+The differences with normal privileges are the following:
+Before and after the scheduled task is registered, the loader checks the presence of a mutex.
+If the mutex is found, it means that the core DLL has been successfully started by the scheduled task and the core DLL is already injected in the explorer.exe process.
+Otherwise, it tries to reschedule a task.
+The mutex name is generated using the same technique as the unique_account with a hard-coded number (md5(computer_name + user_name + \x00 + \x02\x00 + installdate + \x00\x00)) and formatted as a CLSID.
+The following script can be used to check if your computer is infected.
+Output on an uncompromised system:
+Output on a compromised system:
+Dridex loader techniques are common and do not integrate any novel features.
+The string and API obfuscating mechanisms are very standard but the anti-debug technique using Vector Exception Handler can be very painful without any sort of bypass, because it is on every API call.
+The network communication with the C&C combines HTTPS with RC4.
+Moreover, the binary format makes it very hard to understand without any sort of reverse engineering.
+Finally, the persistence mechanism using the scheduled task is also common, but the use of DLL hijacking makes it very effective.
+5, rue Drouot 75009 PARIS, FRANCE
+contact [at] lexfo [dot] fr
++33 1 40 17 91 28
+© LEXFO 2020 - All rights reserved

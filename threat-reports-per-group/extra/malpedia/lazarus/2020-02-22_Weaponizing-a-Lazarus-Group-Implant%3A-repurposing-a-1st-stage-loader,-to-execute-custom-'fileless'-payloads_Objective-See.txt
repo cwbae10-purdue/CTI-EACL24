@@ -1,0 +1,148 @@
+I’ve added the sample (‘OSX.AppleJeus.C’) to our malware collection (password: infect3d)
+Recently a new piece of macOS malware was discovered:
+Another #Lazarus #macOS #trojan md5: 6588d262529dc372c400bef8478c2eechxxps://unioncrypto.vip/Contains code: Loads Mach-O from memory and execute it /  Writes to a file and execute it@patrickwardle @thomasareed pic.twitter.com/Mpru8FHELi
+In a previous blog post I analyzed this intriguing specimen (internally named macloader), created by the (in)famous Lazarus group.
+Command and Control (C&C) Server:
+
+https://unioncrypto.vip/update
+Capabilities:
+
+The in-memory execution of a remotely downloaded payloads.
+For a full technical analysis of the sample, read my writeup: “Lazarus Group Goes ‘Fileless’”
+While many aspects of the malware, such as its (launch daemon) persistence mechanism are quite prosaic, its ability to directly execute downloaded (“2nd-stage”) payloads directly from memory is rather unique.
+Besides increasing stealth and complicating forensics analysis of said payloads (as they never touch the file-system), it’s just plain sexy!
+It also makes for the perfect candidate for “repurposing”, which is what we’ll walk-thru today.
+At DefCon #27, I gave a talk titled, “Harnessing Weapons of Mac Destruction", which detailed the process of repurposing (or “recycling”) other peoples’ Mac malware:
+In a nutshell, the idea is take existing malware and reconfigure (“repurpose” or “recycle”) it for your own surreptitious purposes (i.e.
+testing, red-teaming, offensive cyber-operations, etc):
+…IMHO, it’s a lovely idea 😇
+To view the full slides from my talk, checkout: “Harnessing Weapons of Mac Destruction”
+The Lazarus group’s malware we’re looking at today is a perfect candidate for repurposing.
+As a 1st-stage loader, it simply beacons out to a remote server for 2nd-stage payloads (which as noted, are executed directly from memory).
+Thus once we understand its protocol and the expected format of the payloads, (in theory) it should be rather trivial to repurpose the loader to communicate instead with our server, and thus stealthily execute our own 2nd-stage payloads!
+This gives us ‘access’ then, to an advanced 1st-stage loader that will execute our custom payloads (from memory!)
+…without us having to write a single-line of (client-side) code.
+Better yet, as the repurposing-modifications will be minimal, if this repurposed sample is ever detected, it surely well be (mis)attributed back to the original authors (and as our 2nd-stage payloads never hit the file-system, will more than likely remain undetected) 😎😎 #winning
+After identifying a malware specimen to repurpose (“recycle”), the next step is to comprehensively understand how it works:
+The goal of this analysis phase is to:
+In a previous blog post, “Lazarus Group Goes ‘Fileless’” we thoroughly analyzed the sample and answered the majority of these questions.
+However, I did not discuss the malware’s communications protocol, specifically the format of the response from the remote server …the response that contains the 2nd-stage payload(s).
+As our ultimate goal is to repurpose this malware such that it executes our own 2nd-stage payloads, this protocol and payload format is essential to understand!
+To facilitate dynamic analysis and to understand the malware protocol, I created a simple python HTTPS server that would respond to the malware’s requests.
+Although (initially) I did not know the expected format of the data, trial and error (plus a healthy dose of reverse-engineering) proved sufficient!
+Armed with a simple (initially bare-boned) custom C&C server to respond to the malware’s requests, we can begin to understand the network protocol, with the ultimate goal of understanding how the 2nd-stage payloads should be remotely delivered to the malicious loader, on infected systems.
+First, we note that on check in the malware provides some (basic) information after the infected system (e.g.
+the macOS version/build number: Mac OS X 10.15 (19A603), serial number: VMI5EOhq8gDz, etc.
+), and implant version ('ver', '1.0').
+Moving on we can hop into a disassembler to look at the malware’s code responsible for connecting to the C&C server, and parsing/processing the server’s response.
+In the malware’s disassembly we find a function named onRun() that invokes a method named Barbeque::post.
+This method connects to the remote server (https://unioncrypto.vip/) and expects the server to respond with an HTTP 200 OK.
+Otherwise it takes a nap (before trying again):
+Assuming the (our) server responds with an HTTP 200 OK, the malware checks that at least 0x400 bytes were received, before base64-decoding said bytes:
+…so already, we know the server’s response (which the malware expects to be a 2nd-stage payload) must be at least 0x400 in length …and base64 encoded.
+As such, we update our custom C&C server to respond with at least 0x400 bytes of base64 encoded data (that for now, just decodes to ABCDEFGHIJKLMNOPQRSTUVWXYZABCD...).
+Once we respond with the correct number (0x400+) of base64 encoded bytes, the malware happily continunes and invokes a function named processUpdate (at address 0x0000000100004be3).
+In a debugger, we can see this function takes the (base64 decoded) bytes (in RDI) and their length (in RSI):
+As shown in the debugger output, so far, the malware is content with our server’s response, as the response is over 0x400 bytes in length and encoded correctly.
+(Note our decoded bytes, ABC... in the rdi register).
+In the previous blog post, we noted that the processUpdate function calls into a method named load_from_memory to, well, load (and execute) the received bytes …the 2nd-stage payload(s).
+However, before it invokes this function it calls two other functions:
+Let’s step thru this in a debugger to see what it’s hashing, and what/how it’s (AES) decrypting.
+Using our simple python HTTPS (C&C) server we’ll serve up again 0x400+ bytes of ABCDEFGHIJKLMNOPQRSTUVWXYZABC...:
+Stopping at the call to the md5_hash_string function, we can dump the string being passed in.
+Turns out it’s: VMI5EOhq8gDz (albeit prefixed with 0x18).
+The calling convention utilized by macOS is the “System V” 64-bit ABI …which always passes the first argument in the rsi register.
+“System V operating systems [and macOS] will use RDI, RSI, RDX, RCX, R8 and R9.
+XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6 and XMM7 will be used to pass floating point parameters.
+RAX will hold the syscall number.
+Additional arguments are passed via the stack (right to left).
+Return values are sent back via RAX.”
+Once the malware has generated an MD5 hash of this string, it invokes the aes_decrypt_cbc function.
+What does it pass in?
+In the disassembler, the aes_decrypt_cbc function is invoked in the following manner: _aes_decrypt_cbc(0x0, r15, rdx, rcx, &var_40);
+Hopping back into the debugger we can determine what the r15, rdx, and rcx registers hold:
+r15: appears to be a pointer into the received (now base64 decoded) bytes.
+Looking back a few instructions in the disassembly we see: r15 = rbx + 0x10 (rbx is a pointer to the start of the received decoded bytes).
+Thus, r15 points exactly 0x10 (16d) bytes into the received, decoded bytes.
+rdx: appears to be 0x10 less than the size of the total (received) decoded bytes.
+Again, a few instructions back, we see: rdx = r14 - 0x10 (r14 holds the total sized of the received decoded bytes).
+In other words, rdx is the remaining size of the (received) decoded bytes (from r15 to the end!
+rcx: appears initially to be a pointer some random/unknown bytes (0x26 0x1d 0xfd 0xb9 ...).
+However, by looking back in the disassembly, we can see it’s the result of hashing the VMI5EOhq8gDz string!
+We now understand the parameters passed to the aes_decrypt_cbc function:
+Thus, the malware is (AES) decrypting the received (now base64 decoded) payload, with key = MD5("VMI5EOhq8gDz").
+After decrypting the received bytes, the malware initializes a pointer 0x90 bytes into the received bytes, and a variable with the size of the remaining bytes, before invoking the load_from_memory function:
+Before discussing the parameters passed to this function let’s update our custom C&C server to serve up the same data from a file (ABCDEF...), but this time AES encrypted with the hash of "VMI5EOhq8gDz".
+…we also make sure to skip the first 0x90 bytes (as the malware skips over these):
+Setting a breakpoint on the call to the load_from_memory function (0x0000000100004cb8: call load_from_memory), we can now dump the parameters (and confirm that the encryption in our custom C&C server is correct):
+Recalling that the first and second arguments are passed in via the rdi and rsi registers, respectfully, in the above debugger output we can see the malware is passing our now decoded, decrypted “payload” (ABC...) and size, to the load_from_memory function.
+Hooray, this confirms that our detailed analysis has correctly uncovered both the format, encoding, and encryption of the server’s expected response.
+As we now fully understand the format of the malware’s protocol, in theory, we should be able remote transmit an encrypted & encoded binary payload and have the malware execute directly from memory!
+…but first a brief discussion of the malware’s “load and execute from memory” code.
+In my previous writeup, “Lazarus Group Goes ‘Fileless’", I detailed exactly how the malware executed the 2nd-stage payload from memory.
+The load_from_memory function mmaps some memory (with protections: PROT_READ | PROT_WRITE | PROT_EXEC), then copies the decrypted payload into this memory region, before invoking a function named memory_exec2.
+The memory_exec2 function invokes the Apple API NSCreateObjectFileImageFromMemory to create an “object file image” from a memory buffer (of a mach-O file) then invokes the NSLinkModule function to link the “object file image”.
+Once the malware has mapped and linked the downloaded payload, it invokes a function named find_macho which appears to search the memory mapping for MH_MAGIC_64 (0xfeedfacf), the 64-bit “mach magic number” in the mach_header_64 structure.
+Once the find_macho method returns, the malware begins parsing the mapped/linked (mach-O) payload, looking for the address of LC_MAIN load command (0x80000028), which contains information such as the entry point of the in-memory code.
+The malware then retrieves the offset of the entry point (found at offset 0x8 within the LC_MAIN load command), sets up some arguments, then jumps to this address, to kick off the execution of the payloads binary code.
+Skimming over the disassembly of the memory_exec2 reveals some interesting code snippets, such as the following:
+Stepping thru this code in a debugger, reveals it is checking the type of the (mach-O) binary payload (MH_EXECUTE, MH_BUNDLE, etc).
+If the mach-O file type is not MH_BUNDLE (0x8), it updates the (in-memory) type to be this value: *(rdi + 0xc) = 0x8.
+This is done, (as online research notes) as the man page for NSModule state: “Currently the implementation is limited to only Mach-O MH_BUNDLE types which are used for plugins."
+Thus in order to play nicely with the Apple APIs and thus support the in-memory execution of ‘standard’ mach-O executables (type: MH_EXECUTE), this ‘patch’ must be applied.
+However, the most interesting thing about this snippet of code found within the malware, is that it’s not original…
+In 2017, Cylance published a blog post titled: “Running Executables on macOS From Memory".
+Though the topic of in-memory code execution on macOS had been covered before (as was noted in the blog post), the post provided a comprehensive technical deep-dive into the topic, and more importantly provided an open-source project which included code to perform in-memory loading: “osx_runbin".
+The researcher (Stephanie Archibald), also presented this research (and more!)
+Here we are learning modernized osx rootkits (userland) from Stephanie Archibald !
+If we compare Cylance’s osx_runbin code, it is trivial to see the in-memory loader code found within the Lazarus’s group’s malware is nearly 100% the same:
+…in other words, the Lazarus group coders simply leveraged (copied/stole) the existing open-source osx_runbin code in order to give their loader, advanced stealth and anti-forensics capabilities.
+And who can blame them?
+Work smart, not hard, right!?
+This is not the first time, I’ve stumbled across “shared” code in macOS APT group malware specimens.
+See: “From Italy With Love?
+Finding HackingTeam code in Russian Malware”
+Ok, so let’s start to wrap this all up, and (finally!)
+illustrate the full repurposing of the Lazarus group’s loader, so that it beacons to our C&C server to download and execute (from memory), our 2nd-stage payloads!
+Step one is to modify the loader so that it beacons to our C&C server for tasking.
+Looking in the disassembler, we find the hardcoded address of the malware C&C server: https://unioncrypto.vip/update:
+Popping into a hexeditor, we can modify this to whatever URL or IP address we’d like the malware to now connect to (i.e.
+to from https://unioncrypto.vip/update to https://allyourbase.belong/):
+One the malware checks in:
+…we should be able to serve up our 2nd-stage payloads!
+Step two is to prepare and package up these payloads.
+This involves encrypting (AES, key: MD5("VMI5EOhq8gDz")) any mach-O binary and placing that at offset 0x90 within the server’s base64-encoded response.
+During our analysis phase, we had (already) put together some basic python code, to implement this logic:
+Now we just need a test payload …a standard "Hello World" binary should suffice:
+After compiling this "Hello World" code into a mach-O binary, we run it thru our python “deployment” script which encrypts, encodes, and packages it all up:
+Now, we simply modify our custom C&C server to serve up this processed payload when the repurposed malware checks in with our server:
+Setting a breakpoint within the memory_exec2 function (specifically at 0x0000000100006af6, the call into the payload’s main/entrypoint), allows us to confirm that our payload has been successfully transmitted to the remote (now repurposed) loader, unpackaged, decoded, and decrypted successfully:
+…and if we continue (c), our 2nd-stage payload is successfully executed on the infected system, directly from memory!
+Before ending, I want to briefly discuss detection of this threat (either in it’s pristine or repurposed state).
+First, it’s rather trivial to detect the malware’s (launch daemon) persistence (e.g.
+
+
+Our firewall LuLu will also detects the unauthorized network traffic to the attacker (or our!)
+And what about detecting the in-memory execution of 2nd-stage payloads?
+Turns out that’s a bit tricker (which is one of the reasons why attacker have begun to utilize this technique!
+Good news though (from the detection point of view), the well-known macOS security researcher (and former #OBTS speaker!)
+Richie Cyrus recently published a blog post that included a section titled: “Using ESF to Detect In-Memory Execution”
+For the past few months, I've been diving into Apple's Endpoint Security Framework.
+This post shares how I use the framework for detection engineering purposes.
+In his, post he notes that via Apple’s new Endpoint Security Framework (ESF), we can track various events, such as memory mappings (ES_EVENT_TYPE_NOTIFY_MMAP) which (when combined with other observable events delivered by the ESF) may be used to detect the execution of an in-memory payload:
+Unfortunately, without a kernel extension (which Apple is rapidly deprecating), as far as I know, there is no way to dump a process’s memory contents.
+Thus even if we are to detect that a 2nd-stage payload is executing from memory, we won’t be to capture the payload (i.e.
+Apple, a little help here!
+For more on the topic of memory forensics on macOS, check out the following (insightful!)
+Memory scanning capabilities on macOS are pretty bad in general.
+But this abolition of kexts for macOS will definitely make it impossible to access the memory if no access to kernel mode will be possible.
+Lazarus group proves yet again to be a well-resourced, persistent threat, that continues to target macOS users with ever evolving capabilities.
+…so why not repurpose their malware for our own surreptitious purposes!
+Traditionally, repurposed malware has only been leveraged by sophisticated cyber adversaries:
+However in this blog post, we illustrated exactly how to “recycle” Lazarus latest implant, unioncryptoupdater, in a few, fairly straightforward steps.
+Specifically, after reversing the sample to uncover its encryption key and encoding mechanism, we built a simple C&C server capable to speaking the malware’s protocol.
+And after overwriting the embedded address of the attacker’s C&C server in the malware’s binary, with our own, the repurposing was wholly complete.
+An advanced persistent 1st-stage implant implant, capable of executing our 2nd-stage payloads, directly from memory!
+And besides not having to write a single line of “client-side” code, if our repurposed creation is ever discovered it will surely be (mis)attributed back to the Lazarus group.
+…and no, Catalina’s notarization requirements, will not thwart our “repurposed” creations!
+You can support them via my Patreon page!

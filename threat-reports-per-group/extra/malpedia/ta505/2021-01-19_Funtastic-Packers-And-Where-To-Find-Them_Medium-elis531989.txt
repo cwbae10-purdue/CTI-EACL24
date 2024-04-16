@@ -1,0 +1,111 @@
+In malware, we often see threat actors that tend to obfuscate or encrypt their code in order to slow down the analysis of security researchers.
+To do so, many authors tend to use open-source packers but also craft their own custom packers.
+While custom packers are definitely not a new thing, it is always interesting to observe how they work, and what is the shared similarities between them in different malware.
+In this writeup, I will present some known first-stage malware that uses custom packers or other packing mechanisms.
+I will also share some theoretical insights regarding the way to approach these packers, and hopefully, shed some light using a step-by-step dynamic observation.
+The purpose here is to give some guidelines on what to look for when we try to understand how the unpacking mechanism works.
+This downloader was first emerged in 2019 and associated with TA505 threat actors.
+It is known to deliver different malware, most notably Sdbbot.
+As in every case, when malware wants to write unpacked content, it first needs to allocate the memory space for it.
+Get2 uses the API call VirtualAlloc three times, we’ll focus only on the last two.In each allocated memory we’ll set a write hardware breakpoint, this assures us that whenever something will be written we’ll know about lt.
+After settings the breakpoints, we'll hit run until we reach the first breakpoint.
+Then, we’ll observe a loop whose objective is to write content to the first allocated memory.
+To save time, we’ll set a breakpoint one step after the loop to see the entire written content.
+Then, we observe that the memory section is filled with obfuscated data.
+After a couple of instructions, we found ourselves in another loop.
+At first glance, it seems this loop has characteristics we expect from traditional decryption\encryption routines, such as shr (shift right), xor, and rol (rotate left) opcodes.
+The loop changes the first bytes of the obfuscated content to “M8Z”, which starts to resemble the classic “MZ” string.
+To see the final stage of this decryption loop, we’ll set a breakpoint one step after the jump instruction and hit run.
+Then, additional string fractures such as: “This program cannot run in DOS mode” and the word “PE”, will be revealed.
+Overall, we understand that this loop was responsible for taking the obfuscated content and do some decryption.
+However, it is obvious that this is not the final stage.
+After the loop ends, we encounter a call to one of the Get2 functions.
+This function is important for the final decryption stage.
+We’ll set a breakpoint on it and step into it.
+As we enter, we see that our second allocated memory has been manipulated., and the letter M has been written into it.
+This is because the function is copying and manipulating the content from the first to the second allocated memory.
+The entire process of writing content to the second allocated memory is also part of a large loop.
+Although we get what seems to be a clean portable executable, we didn't finish yet.
+When we inspect the PE headers we see that it is packed with a UPX packer.
+The UPX packer is one of the most common open-source packers.
+For attackers, it's easy to use packer and it also provides reliability because of the fact that it is not a complex packer.
+There are several ways to overcome this packer, most of them are documented on the internet.
+In this case, I choose to use the UPX utility of CFF Explorer.Note: In some recent versions of Get2 malware, the UPX part is missing.
+The final stages of the unpacking mechanism are portrayed in the following diagram:
+While inspecting the final unpacked file, we’ll see it has low entropy and a large number of strings, functions names, and data.
+Qbot (aka QakBot, Pinkslipbot, QuakBot) is one of the known and prevalent banking trojans in the last years and been active for years since 2007.
+The way to unpack the first dropper of Qbot is relatively simple and already been documented.
+Setting a breakpoint on VirtualProtect and inspecting several mov instructions after it, will do the trick.
+Otherwise, we can use automated tools such as PE-Sieve.
+However, where is the fun in that?
+To start, we’ll set a breakpoint on VirtualAllocEx and VirtualAlloc, then, click Run.
+We’ll hit on VirtualAllocEx, and to assure nothing slips away, put a write hardware breakpoint on the newly allocated memory.
+We reach our breakpoint in a function that writes obfuscated data, byte by byte, into this allocated memory.
+Similar to the Get2 malware or basically any other malware that has an unpacking mechanism, the data is written inside a loop.
+In order to speed up the process, we’ll set a breakpoint just after the loop.
+Then, an entire obfuscated content will be written.
+Note: Packed binaries tend to contain an embedded obfuscated content that will be read and written into newly allocated memory sections.
+Initial static analysis of Qbot shows the obfuscated content to be written.
+Interestingly, this memory section is being manipulated again and again by several loops.
+Then, it being overwritten until the upper part is filled with the unknown string “aaa45678901234” followed by several names of API calls.
+The rest of the memory section appears to be more obfuscated.
+However, when taking a closer look, it does has fragments of strings that can indicate a potential encrypted PE file.
+Several instructions later, in the CPU window, we observe the string “aaa45678901234” is being modified by several mov instructions.These instructions assign the HEX value “47 65 74 50 72 6f 63 41 64 64 72 65 73 73” to the ECX register (in ASCII, these bytes are translated to “GetProcAddress”).
+This technique is called Stack-Strings and will appear several times during the Qbot unpacking process.
+Then, the GetProcAddress string being used by another function.
+Next, the packer call to another function that deals with VirtualAlloc by using the Stack-strings concept.
+As observed in the image below, it will store the VirtualAlloc string from EBP-18 to EBP-C.
+Then, the function will do the following:
+Surprisingly, this call did not trigger the VirtualAlloc breakpoint we set at the beginning of our investigation.
+Similar to previous times, we’ll set a breakpoint on the newly allocated memory, just in case we’ll not miss any content that will be written there.
+Fortunately, after several instructions, we encounter a loop that starts to write content to the newly allocated memory.
+It starts copying the data stored in the EDX register, which points to an address found several offsets further in the first allocated memory.
+As we remember, we suspected it might contain encrypted PE.
+As always, to speed things up, we’ll set a breakpoint one step after the loop and hit Run.
+We can see that the entire part from the first allocated memory has been copied into the second allocated memory.
+Then, we encounter another loop.
+This loop deobfuscates the entire second allocated memory.
+It is noticed by observing the magic string -”MZ” that appears after the first iterations.
+This loop contains several characteristics that already observed in the Get2 malware unpacking mechanism.
+The use of xor and add opcodes.
+As always, when we encounter these types of loops we’ll set a breakpoint step after the loop to get the final result, which is a clean portable executable.
+The final stages of the unpacking mechanism are portrayed in the following diagram:
+Now, we’ll dump this memory section and inspect it with tools such as IDA or PEstudio.
+The second stage of Qbot is known to contain its further payload in its resource section, and also contain RC4 encryption and BLZPack decompression.
+IcedID aka Bokbot is also one of the most prevalent banking trojans in the last years.
+It is known to be associated with Lunar Spider threat actors.
+Unpacking the first dropper of IcedID is pretty simple, similar to Qbot, we only need to set breakpoints on VirtualAlloc and VirtualProtect.
+In the unpacking mechanism, the second time VirtualProtect will be called it will indicate the unpacked IcedID.
+As said, we’ll focus on how the IcedID unpacking mechanism works rather than getting the fastest way to unpack it.
+As we start, by setting a breakpoint on VirtualAlloc and VirtualProtect, we’ll notice a difference between the IcedID and Qbot, Get2 unpacking mechanisms.
+Traditionally, we expect to see a memory allocation before everything else.
+In IcedID it’s not the case- VirtualProtect is being called before VirtualAlloc.
+By inspecting the “lpAddress” argument in VirtualProtect we’ll notice that it appears to deal with shellcode execution.
+This is visible with the byte sequence E8 00 00 00 00 which is a relative call for the next instruction.
+In this writeup, I won't cover the entire shellcode investigation, only the unpacking mechanism.
+For those of you who want to explore it, you can click on the shellcode memory address, press “follow in disassembler”, set a breakpoint on the relative call, and hit Run.
+Then, we’ll hit Run again and encounter VirtualAlloc three different times.
+In the third time, we’ll set a write hardware breakpoint on the newly allocated memory.
+Next, we encounter a function, which has a loop that copies data to the newly allocated memory.
+Interestingly, in the previous malware, when we saw data moved it always copied byte by byte.
+Nonetheless, in this case, we see that the copy is managed by an instruction called rep movsb.
+This instruction by default moving data from the ESI to the EDI register, which points to the newly allocated memory.
+This opcode of data transfer will be used multiple times in the IcedID unpacking mechanism.
+We’ll hit Run again until we found ourselves in another data manipulating loop.
+This loop is significantly smaller and appears to modify the data using xor and ror (rotate right) opcodes.
+While modifying, we notice some signs of a portable executable, with the strings “M8Z” (as we saw in the Get2 malware).
+As always, to speed up the process we’ll set a breakpoint one step after this loop and we’ll hit Run.
+Once we did that, we can see that some bytes have been changed.
+Still, it’s not a clean portable executable.
+Then, we observe something unusual.
+We can see again the movsb opcode in a larger loop, but now it copies data from the upper part of the allocated memory (the one from the image above) which is stored in the ESI register, to an address in the same memory space located several offsets after (which is also stored in the EDI register).
+After a few iterations and data manipulation functions, we observe the bytes 4D 5A and the string “MZ” at the beginning of the memory to which the movsb opcode writes.
+Eventually, we understand the purpose of this loop -writing a clean portable executable in this memory part.
+The final stages of the unpacking mechanism are portrayed in the following diagram:
+After the loop ends, we’ll dump the file and inspect it with other tools.
+This file, which is actually a module, is the second stage of IcedID, which is a downloader for the final payload.
+In this writeup, we observed three first-stage malware unpacking mechanisms.
+And although each one has its own way to unpack itself, we saw several characteristics they all shared.
+Similarly, whether its unpacking or decrypting, the following features will most likely occur:
+Malware Researcher & Threat Hunter
+Malware Researcher & Threat Hunter

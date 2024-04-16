@@ -1,0 +1,59 @@
+I am not sure what happened this year but it seems that Cobalt Strike is now the most used malware around the world, from APT41 to APT32, even the last SolarWinds supply chain attack involved Cobalt Strike.
+Without relaunching the heated debate on publishing offensive tools, this blog post intends to summarize what an analyst needs to know about Cobalt Strike to quickly identify and analyze it during incidents.
+A few months ago, the Salesforce security team published a new active fingerprint tool called JARM.
+It is the active equivalent to JA3 they published last year.
+It generates a fingerprint based on the TLS configuration of a remote server, such as the TLS version or the TLS extensions, without considering the certificate.
+It is especially useful to identify custom web servers used by some tools, and Cobalt Strike is one of them.
+Here is the Cobalt Strike JARM signature : 07d14d16d21d21d07c42d41d00041d24a458a375eef0c576d23a7bab9a9fb1
+JARM has already been added to Shodan, BinaryEdge, and SecurityTrails, Shodan recently added indexing on ssl.jarm, so it is easy to find Cobalt Strike servers in the wild.
+Let’s check Shodan with ssl.jarm:07d14d16d21d21d07c42d41d00041d24a458a375eef0c576d23a7bab9a9fb1:
+Shodan has identified 5623 IP with this JARM fingerprint Cobalt Strike servers, mostly on Amazon and Digital Ocean.
+If we limit to port 443, we get 3423 IPs.
+We can easily confirm that Cobalt Strike is still running on port 443 of the first IP using JARM:
+(This JARM signature is actually a signature of the Java Web server and specific to the JAVA 11 stack, so it includes other tools not related to Cobalt Strike (like Burp Suite) and does not include Cobalt Strike using different Java versions.
+Cobalt Strike recently wrote a blog post about this question.)
+Cobalt Strike uses a checksum of the url using an algorithm called checksum8 to serve the 32b or 64b version of the payload (in the same way as the metasploit server).
+The decompiled code of Cobalt Strike has been published several times on GitHub or elsewhere, it provides information on this checksum:
+We can easily bruteforce the algorithm to find urls that match it in python:
+So /aaa9 should return the 32 bits beacon (if available) and /aab9 should return the 64 bits beacon (if available).
+Let’s test that on one of the Cobalt Strike servers from the Shodan list, 103.39.18.184 (AS136800 - ICIDC NETWORK - China) (one thing to know is that the Cobalt Strike server blocks unusual user agents).
+So this IP 103.39.18.184 gives us two Cobalt Strike beacons:
+The files returned by the server are actually not PE file:
+During the execution of a Cobalt Strike exploit, it downloads this beacon and run it directly in memory.
+So this file is a blob of data containing a shellcode at the beginning that decodes and executes the beacon.
+We can easily graph this shellcode with miasm:
+The first JMP goes to a call right before the encryption key and encrypted beacon.
+The call goes back to the shellcode and the next POP EDX gets the address of the key.
+The code in loc_f gets the key in EBX, the length of the payload in EAX, and store on the address of the final beacon on the stack.
+The loop in loc_1d goes through the beacon and xor it with the key.
+We can easily reproduce it in python, the challenge is to find the base address.
+Here the loc_47 is the address of the call just before the key, length, and encrypted payload, so the base address is 0x47 + 5 (the length of the call instruction).
+The base address changes with different payloads but it is possible to find it easily by searching the last call instruction.
+We get a PE file : 3c9a06b2477694919b1c77d3288984cb793a47dd328ef39e15132cd0cfb593ab.
+It is surprising to see a PE file directly there because it is directly executed by the last call.
+The trick is that the PE file is actually modified to be at the same time a valid PE file and executable directly (something Cobalt Strike calls raw stageless payload artifact).
+We see here the MZ header being executed:
+The DOS header is modified to include valid instructions that jump to the address 0x8157 in the binary.
+This address is the address of the exported _ReflectiveLoader@4 function, a function based on the ReflectiveDLLInjection software that is in charge of reproducing a simple PE loader to load and map import functions before calling the entry point.
+(Note that this is only optional in Cobalt Strike, many Cobalt Strike payloads do not have a PE file format but the payload directly in a shellcode-like format).
+The Cobalt Strike configuration is encrypted within the payload, with a different key depending on the Cobalt Strike version, either 0x2E or 0x69.
+Once decoded, the configuration is stored in the format type-length-value :
+To find the start address of the configuration, we can look for the encoded value of the first key, which is 1 (DNS/SSL), 1 (Short), 2 (2 bytes), which is encoded to ihihik with the key 0x69 or ././., with the key 0x2E.
+We can then decode the configuration of the beacon:
+Now that we have decoded everything, it is quite easy to do the request, extract the beacon and the configuration directly.
+I have put all this in a script available on this github repository:
+It is common to find the same configuration for many different samples because CS uses what they call Malleable C2 Profiles which are actually configurations for the CS beacons that can be shared easily through configuration files.
+For instance, Ocean Lotus uses a public profile mimicking Google Safebrowsing urls.
+This repository list profiles used by different APT or cybercrime groups.
+One interesting value in the configuration is the watermark, which is a number generated from the license file.
+As it is unique to a customer, it can be used to pivot and link multiple CobaltStrike instances together (as it was done for Trickbot).
+As such, many cracked versions of CobaltStrike disable this watermark.
+This watermark is technically associated with the Cobalt Strike Customer id, so it should be possible to report this id to Cobalt Strike and identify the customer for people using paid licenses, but I have never heard anyone doing that (I guess few APT groups have a valid CS license).
+Based on the same code, I have scanned the 3424 servers identified with JARM in Shodan, I have scanned them all using this script and found 520 serving Cobalt Strike beacons.
+I have uploaded on GitHub a csv listing the IPs and configuration of these beacons, here is a short extract:
+165 of them over 523 have no watermark, another watermark (305419896) is used by 160 IPs, so it is likely a default value.
+Then a few watermarks have more than 5 servers, such as 1580103814, 1873433027 or 16777216.
+I have uploaded all these scripts and yara rules for beacons on Github, feel free to DM me on Twitter or send me an email if you have any question.
+Here are some other interesting resources on Cobalt Strike:
+This blog post was mostly written while listening to Susumu Yokota.
+Edit 1: adding link to Cobalt Strike JARM analysis (thanks @AZobec)

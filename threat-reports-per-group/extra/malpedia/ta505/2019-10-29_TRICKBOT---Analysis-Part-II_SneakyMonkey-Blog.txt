@@ -1,0 +1,105 @@
+Some further TTPs used by TRICKBOT [1] from an infected host that I thought was interesting to share.
+The sample used here is from an EMOTET to TRICKBOT infection "GTAG:mor14" courtesy of Malware-Traffic-Analysis.
+Continuing on some past research on TRICKBOT's arsenal of modules, I knew that there was a PowerShell EMPIRE module NewBCtestDll64 but never saw it ITW (in-the-wild) myself.
+2018-10-08 - Quick post: #Trickbot gtag sat75 infection with #PowershellEmpire traffic - https://t.co/sU86nZJnh2 - part of ongoing US-based Paypal-themed Trickbot #malspam campaign.
+Powershell Empire traffic seems tied to the NewBCtestDll64 module (and probably the 32 bit version pic.twitter.com/A5m64aIRd7
+This soon escalated to COBALT-STRIKE connectivity and BLOODHOUND reconnaissance.
+In this observed activity, EMPIRE was used for reconnaissance and privledge escalation and COBALT-STRIKE for delivering further recon via the means of BLOODHOUND - both tools attempted credential dumping with MIMIKATZ.
+The endgame here, is for the adversary to priv esc all the way to Domain Admin for full domain compromise to then deliver one of the many ransomware variants such as RYUK [2] 💣💣💣💥💲💲💲.
+For those that do not know, PowerShell EMPIRE is a post exploitation framework written in PowerShell.
+This project has recently retired due to the heighten uptake in PowerShell visibility over the last few years, the project has stated it has reached its goal and has ended support.
+PSA for Empire development: The original objective of the Empire project was to demonstrate the post-exploitation capabilities of PowerShell and bring awareness to PowerShell attacks used by (at the time) more advanced adversaries.
+Although EMPIRE is now in retirement it is still being used ITW (in-the-wild).
+It still works, just not supported.
+I'd expect an uptake on other C2 post exploitation frameworks many such are listed here Remote Access Tools
+A quick series of events will unfold.
+Some of these are documented here.
+From EMOTET infection to CS connectity it was less then 48hrs.
+To start off we identify the newly established EMPIRE connectivity.
+The initial "stager" is the way the victim talks back to the EMPIRE C2 that is listening for the connection to then download stage 2 which is the EMPIRE agent.
+The default launcher/stager is a PowerShell Base64 encoded/obsfucated command.
+By capturing the PowerShell activity on our box (PowerShell Logging, Command Line audit logging EID 4688), decoding and identifying the EMPIRE stager wasn't too difficult due to the fact most if not all the EMPIRE defaults were left the same.
+CyberChef EMPIRE stager reciped used is available here.
+On decoding this Base64 blob of data, the key items to look for are the default settings for an EMPIRE stager as documented in the official EMPIRE Github repo.
+User-agent:
+Mozilla/5.0 (Windows NT 6.1; WOW64; Trident/7.0; rv:11.0) like Gecko
+Session Cookie field:
+"Cookie", "session=XXXXXXXXXXXXXX"
+On of the following URLs:
+/login/process.php
+/admin/get.php
+/admin/news.php
+You can see the decoded result and highlighted fields
+We can see that the values were left as defaults as per Github EMPIRE Repo.
+For reference, the default user agent string and URLs for EMPIRE.
+Once the EMPIRE connection is established we see plenty of follow up POWERSPLOIT activity.
+PowerSploit is a collection of Microsoft PowerShell modules that can be used to aid penetration testers during all phases of an assessment.
+PowerSploit is comprised of the following modules: CodeExecution, ScriptModification, Persistence, AntivirusBypass, Exfiltration, Mayhem, Privesc, Recon.
+Simply put, the threat actor starts profiling or gathering a siutational awareness of their new environment they have landed in.
+From the manual - descriptions of each.
+Shortly after followed by an attempted credential dump using POWERSPLOIT's Invoke-Mimikatz -DumpCreds which actually failed in this environment.
+"VirtualAlloc failed to allocate memory for PE.
+If PE is not ASLR compatible, try running the script in a new PowerShell process (the new PowerShell process will have a different memory layout, so the address the PE wants might be free)."
+MIMIKATZ within EMPIRE v2.1.1 20171106 / POWERSPLOIT v2.0 alpha seems problematic with the newer updates of Windows 10.
+MIMIKATZ at the time of writing is at version v2.2.0-20190813.
+These frameworks are using an outdated version.
+(Cheers DP - REDTEAM FRIEND 👍👍)
+A quick background for those not in the know.
+Cobalt Strike is software for Adversary Simulations and Red Team Operations...Cobalt Strike gives you a post-exploitation agent and covert channels to emulate a quiet long-term embedded actor in your customer's network.
+BloodHound uses graph theory to reveal the hidden and often unintended relationships within an Active Directory environment.
+Attackers can use BloodHound to easily identify highly complex attack paths that would otherwise be impossible to quickly identify
+https://github.com/BloodHoundAD/BloodHound
+I was originally suprised about the use of Invoke-BloodHound at first which is from the default BLOODHOUND ingester SharpHound - ingester = data gatherer.
+SharpHound.ps1 - Runs the BloodHound C# Ingestor using reflection.
+With this little Bloodhound 101 first up was the CS stager and connectivity.
+The following code kicks off a COBALT-STRIKE 'beacon stager'.
+This hosted stager, uses @MrUn1k0d3r's "DONT KILL MY CAT" (DKMC) 🙀 which obfuscates the shellcode to avoid detection when executed on the endpoint.
+This DKMC 'template' gives away the use of COBALT-STRIKE.
+The URL points to this hosted PowerShell script...
+Base64 and Gunzip decompress, decodes to a DKMC PowerShell stager with encoded and XOR encrypted shellcode.
+Another Base64 decode and XOR decrypt using the hardcoded key 35.
+CyberChef doing the heavy work here.
+Which leaves us with a nice COBALT-STRIKE C2 and USER AGENT string.
+User-Agent: Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; WOW64; Trident/5.0; FunWebProducts
+185.147.14[.
+Once an active connection was made to the infected victim, a follow up series of recon commands were carried out via Get-NetLoggedon, Get-NetComputer | Out-String | %{$_ + "`n"};"`nGet-NetComputer completed!"
+and another attempt to dump credentials was made with Invoke-Mimikatz.
+Lastly we see the domain recon via BLOODHOUND
+This actually left artefacts on disk 🤷‍♂️ local_admins.csv , group_memberships.csv, trusts.csv and user_sessions.csv.
+Shortly after this activity ended (maybe they realised my AD topology wasn't too hot and the penny eventually dropped... ) connections were then severed.
+One other thing I noted with this TRICKBOT infection was the use of ESENT UTIL to gather IE and Explorer browser history and webcache.
+The below command was seen;
+"a centralized meta-data store for the browser using the proven "JET Blue" Extensible Storage Engine (ESE) database format"
+"Remember that even if a user never opens Internet Explorer, there may still be valuable records in their IE database including files opened on the local system, network shares, and removable devices"
+https://digital-forensics.sans.org/blog/2015/06/03/ese-databases-are-dirty/
+"browser history data and while Chrome and Firefox allow copying of the history files, the WebCacheV01.dat file that IE and Edge history are stored in is a locked file and cannot be copied using native copy"
+https://dfironthemountain.wordpress.com/tag/ese-database/
+Artefacts on disk will be in the form of a .RAW capture
+Snippet from the .RAW log file below.
+Seems to be validating/repairing the database before exfiltrating?
+You can download, NIRSOFT ESE Viewer to peak inside the .edb file to see what data has been staged.
+In summary, the threat actors are looking for files and locations of interest on the network (?).
+Maybe profiling if you are a user?
+or to provide them context and situational awareness of the environment they have spawned into and where to pivot next such as file servers (?).
+ESENTUTL and EDB files are one to be aware of and possibly a contender for DFIR professionals and 🔵 teams to use also!
+As a side note, other previously seen similar activities and ITW sightings courtesy of @AltShiftPrtScn 🔽 .
+Found another #powershellempire C2, used in the same #RYUK attack: 176.121.14[.]135:443/admin/get[.
+]php.Also I have said it before but will say it again @GCHQ love your CyberChef tool, so easy to use (https://t.co/dlvsxhZzXd) thanks!
+Another similar TRICKBOT post-exploitation but using PSEXEC and AdFind to help deploy RYUK ransomware to the environment.
+A Nasty Trick: From Credential Theft Malware to Business Disruption
+Again, different attack paths, key sightings on TRICKBOT using EMPIRE/POSHC2 to deliver the "cyber-aids" 😂
+Usually it's FAKEUPDATES -> DRIDEX | TRICKBOT -> EMPIRE -> CYBERAIDS, but what I just saw was FAKEUPDATES -> DRIDEX -> POSHC2.
+We stopped it obviously before the CYBERAIDS.
+Highly recommend not catching the CYBERAIDS.
+The combination of EMOTET's access-as-a-service model and TRICKBOT's offensive set of modular tooling, they pose a real and current threat to businesses large and small.
+As stated before, once the infected systems have reported back - the threat actors can be pivoting further in your environment within (in this instance) <48hrs and start to elevate privledges to own the domain to ultimately deliver further badness such as ransomware.
+Using off the shelf offensive tooling such as EMPIRE, COBALTSTRIKE, BLOODHOUND, POWERSPLOIT and the infamous MIMIKATZ, detecting these tools are key in stopping the likes of TRICKBOT from moving further.
+Also to note, is the time taken to detect, investigate and remediate.
+Doing this in a timely manner is highly recommended.
+With the likes of offensive PowerShell becoming easiler to detect its only a matter of time before these TTPs change once more.
+As always defense in depth.
+[1] TRICKBOT TA505 GROUP https://attack.mitre.org/groups/G0092/
+[2] North Korean APT(?)
+Read more posts by this author.
+Analysis of Excel 4.0 macros and how to triage these .XLS files to gather IOCs from recent ITW samples such as ZLOADER, TRICKBOT and URSNIF.
+Research into how to decode the TRICKBOT config, quickly analyse to provide context and help incident response/blue teams.

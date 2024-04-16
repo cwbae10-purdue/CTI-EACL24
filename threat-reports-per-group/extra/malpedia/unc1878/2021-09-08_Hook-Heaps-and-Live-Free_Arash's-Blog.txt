@@ -1,0 +1,183 @@
+Decided to add a small demo of at least the EXE after all.
+I wanted to write this blog post to talk a bit about Cobalt Strike, function hooking, and the Windows heap.
+We will be targeting BeaconEye (https://github.com/CCob/BeaconEye) as our detection tool to bypass.
+Recently, I saw lots of tweets from MDSec Labs regarding NightHawk and some of its magic.
+I was inspired to try to re-create some of this magic within my own dropper to both understand it better and try to create a competitive dropper within my own Red Team kit.
+I decided the best place to start would be with encrypting heap allocations.
+Let's talk a bit about why we want to encrypt heap allocations.
+Something I'm not going to go too deep into is the difference between the stack and the heap.
+The stack is locally scoped and usually falls out of scope when a function completes.
+This means items set on the stack during the run of a function fall off the stack when the function returns and completes, this obviously isn't great for variables you'd like to keep long term in memory.
+This is where the heap comes in.
+The heap is meant to be more of a long term memory storage solution.
+Allocations on the heap stay on the heap until your code manually frees those allocations.
+This can also lead to memory leaks if you continually allocate data onto the heap without ever freeing anything!
+Based on this description let's consider some of the data the heap would contain.
+The heap would potentially contain long term configuration information such as Cobalt Strike's configuration like its sacrificial process, sleep time, paths for callbacks etc.
+Knowing this, it's obvious we'd like to protect this data.
+So then you say "but wait, there's sleep and obfuscate!"
+but (unless I did something wrong) it does not appear to actually encrypt heap strings.
+This means as long as your Cobalt Strike agent is running in memory, any defender could see in basically plain text your configuration in a processes heap space.
+As you can see this is quite an alarming thought.
+So now that we know about this problem, we must now venture to resolve it.
+This begs the question, how?
+So we have several potential resolutions and problems that occur with each one.
+Let's start with the case of the standalone EXE as this one is far simpler.
+This binary is your Cobalt Strike payload and nothing else.
+In this case we can very easily accomplish our goal as the only thing using the heap is our evil payload.
+Using the previously mentioned HeapWalk() function we can iterate over every allocation in the heap and encrypt it!
+To prevent errors we can suspend all threads before encrypting the heap and then resume all threads post encryption.
+So in theory this is a pretty easy implementation!
+The last piece of the puzzle we need to put together is how to invoke all of this when Cobalt Strike sleeps.
+If we look at the IAT (Import Address Table) for the Cobalt Strike binary we will see it leverages Kernel32.dll Sleep for its Sleep functionality.
+All we need to do is hook Sleep in kernel32.dll and then alter the behavior in our hooked sleep to the following:
+Basically we suspend all the threads, run our encryption routine which looks like the following:
+This creates a PROCESS_HEAP_ENTRY struct, zeros it out every call, then walks the heap and puts the data in the struct.
+We then check the flags of the current heap entry and verify if it is allocated so that we only encrypt the allocations.
+Then we run the original/old sleep function which will be created as part of our hooking functionality, and then decrypt before resuming threads so we can prevent crashes when the allocations are once again referenced.
+In all a fairly simple process.
+What we haven't touched on is the hooking capability.
+First off, what is function hooking?
+Function hooking means we are re-routing calls to a function, such as Sleep(), within a process space to run our arbitrary function in memory instead.
+By doing this, we can change the functions behavior, observe the arguments being called (since our arbitrary function is now called we can print the arguments passed to it for example) and even prevent the function from working at all.
+In many cases, this is how EDRs work in order to monitor and alert on suspicious behavior.
+They hook what they consider interesting functions, such as CreateRemoteThread, and log all the arguments to alert on suspicious calls later.
+So let's talk about how to hook a function, to me this was the most fun and interesting part of the whole experience.
+There are many ways to accomplish this but I'm only gonna mention two and go in depth on one.
+The two techniques I will mention are IAT hooking and Trampoline Patching (it's probably not the right term, I'm not quite sure what is).
+The idea behind IAT hooking is simple.
+Every process space has what's called an Import Address Table.
+This table contains a list of DLLs and the relevant function pointers that have been imported by the binary for usage.
+The recommended and most stable way of hooking is to walk the Import Address Table, identify the DLL you are trying to hook, identify the function you would like to hook and overwrite its function pointer to your arbitrary hooked function instead.
+Whenever the process calls the function it will locate the pointer and call your function instead.
+If you would like to call the old function as part of your hooked function you can store the old pointer.
+An example already exists at ired.team, I will link it here: https://www.ired.team/offensive-security/code-injection-process-injection/import-adress-table-iat-hooking.
+Now there are advantages and disadvantages to this method.
+The 2 big obvious advantages are that it is very simple to implement and it's very stable.
+You are changing what function is called and that's it, you aren't altering anything with a big risk of crashing.
+Now let's talk about the disadvantages.
+If anything uses GetProcAddress() to resolve the function it won't be in the IAT (though I believe you can perform EAT hooking to resolve that but that's for another time).
+It's a very targeted hooking method, which can be a benefit, but is a double edged sword if you wanna monitor a wider range of calls (such as being able to hook NtCreateThreadEx vs just CreateRemoteThread where you may miss lots of calls if they go lower level).
+It's also much easier to detect in theory.
+This is simple enough I won't go too into it.
+Here's another post on the matter as well: https://guidedhacking.com/threads/how-to-hook-import-address-table-iat-hooking.13555/
+Let's now talk about Trampoline Patching.
+Trampoline Patching is much more difficult to pull off, much more difficult to get stable, and can take a very long time to do universally for x64 due to a lot of relative addressing that must be resolved.
+Thankfully, someone already took the time to make an opensource library that performs what's required to accomplish all this in a very stable manner: https://github.com/TsudaKageyu/minhook.
+But for the sake of learning, let's go ahead and take a look at how this kind of hooker works so we could re-implement our own if we wanted.
+At first, I had considered sharing my own implementation but I decided it'd be an exercise best left to the reader (especially as other implementations for study already exist).
+Instead, we will debug my implementation to better understand how this patching mechanism works.
+The idea overall works like this, wall of text incoming!
+We will resolve the base of the function using GetProcAddress and LoadLibrary.
+We will then resolve the first X number of instructions that are valid assembly and add up to a minimum of 5 bytes.
+To be more specific, we will be using a very common technique that uses the 5 byte relative jump opcode (E9) in order to jump to a location +- 2GB from the function base that will then jump to our arbitrary function.
+Obviously, for this to work we need to overwrite the first 5 bytes of the function but if we do that we break the original function if we ever need to call it again.
+To ensure we can resolve the old functionality if needed, we will need to save the first instruction that we will later write into a code cave as part of a trampoline that will run it for us and then jump back to the functions next instruction.
+But if the first instruction is only 4 bytes, we break the first opcode of the second instruction if we write 5 bytes!
+So we will then need to store the first 2 instructions in our trampoline at this point and now the trampoline will run the first two instructions and jump back to the third instruction to continue execution.
+Wherever this trampoline lives will be the new pointer for the original function that is being hooked.
+So the original function pointer now runs like so ->
+This code cave will also have a jump to the location of our arbitrary function somewhere, the relative 5 byte jump written at the base of the original function jumps to this location which then jumps to the arbitrary function like so ->
+With this we now have a way to run our arbitrary function when the old function is called and call the old/original function as we need.
+Let's now take a look at this while debugging.
+First, let's see what MessageBoxA looks like clean vs hooked.
+First we hook MessageBoxA, the code looks something like:
+MessageBoxA lives in user32.dll, so if we want to get its base address that's where we must find it.
+With this we find the base address, patch everything, add some code to a cave, resolve the relative jump, and store the trampoline in OldMessageBoxA().
+Our arbitrary/hooked MessageBoxA function will look like this:
+We need to match the return type and arguments, and here we will run the original MessageBoxA but we will alter the text to always say "HOOKED" no matter what.
+Now let's see what it looks like before and after.
+So MessageBoxA is a somewhat perfect example of the issue previously mentioned.
+As you can see in the BEFORE screenshot the first instruction is only 4 bytes, this means we'll need to store the first 2 instructions, then our relative jump continues to overwrite the first 5.
+We do not need to alter the remaining bytes, we will have our trampoline execute the first 2 we stored and then jump back to location 0x00007FF8EF70AC27.
+Let's continue in the debugger to see what the new hooked functionality looks like.
+We will start right after running the JMP:
+Here we see 2 00's first, I do this to make sure if we are writing multiple trampolines to the cave we don't overwrite the end of a 00 00 in a function pointer.
+Next we see FF 25 00 00 00 00, which is the JMP QWORD PTR instruction.
+Right after you will see the 8 bytes that are the pointer to our hooked function!
+If we execute this instruction we will see:
+Here we can see we are in our hooked function.
+The hooked function only runs and returns the old function so lets go ahead and continue execution into the old function:
+Let's see where that leads:
+ If you look at this image you can see we are executing those first 2 instructions we overwrote!
+Right after the copied bytes we do a second JMP QWORD PTR right to the location of the OriginalFunction+7 (since the size of the trampoline is 7 bytes in this instance).
+This will put us right at the start of the third instruction.
+Here you can see we are now at the CMP instruction, continuing execution right from where we left off!
+Through this process you can see how utilities like minhook work.
+Now you can either implement it yourself like I did or just use something stable like minhook.
+In case you are feeling adventurous, I'll give you a freebie of some non-optimized cave finding code that identifies any cave forward 2 gigs (you'll need to figure some parts out, nothing in life is completely free!
+Time to put everything together and see what it looks like.
+So let's go over the steps:
+I'm going to assume you have your own encryption, hooking, and full thread suspension functionalities.
+Code should look something like this:
+All in all very straightforward, this code obviously doesn't include your implant.
+You can either run the implant in the same process space by executing shell-code somehow, or you can turn this into a DLL and inject it into the beacon post execution!
+Since it uses HeapWalk() it can encrypt past, present, and future allocations all with no issues only needing to hook Sleep() to begin the call.
+For the purposes of this demo we do no encryption for anything with a sleep of 1 or less.
+As you can see, first we do a sleep of 1 and BeaconEye catches our configuration.
+We change the sleep to 5, encrypting begins, and we successfully shut down BeaconEye.
+Remember, since this encrypts ALL heap allocations this will NOT work as an injected thread as the process it's injected in will not function while Cobalt Strike is sleeping.
+Imagine injecting into explorer.exe and every time beacon sleeps all of explorer just freezes.
+So this solution obviously isn't optimal when it comes time to inject as a thread.
+If we want something that will work as a thread we will need to do way more work.
+So our new design will have to work with a separate thread.
+We will not be able to suspend additional threads, we can't lock the heap, the main process will have to continue functioning.
+This means when we inject a beacon thread we will have to ensure that ALL allocations that are encrypted are from that thread only.
+If we properly target the thread we can successfully avoid issues.
+So how can we do this?
+We now have hooking capabilities in our dropper.
+In order to manipulate the heap there are a subset of functions called.
+These functions are the following within Windows:
+Malloc and free within Windows, located in msvcrt.dll, are actually high level wrappers for HeapAllocate() and HeapFree() which are high level wrappers for RtlAllocateHeap() and RtlFreeHeap() which are the functions within Windows on the lowest level that end up managing the heap directly.
+This means if we hook RtlAllocateHeap(), RtlReAllocateHeap(), and RtlFreeHeap() we can keep track of everything being allocated and freed within heap space in Cobalt Strike.
+This is nice because by hooking these 3 functions, we can insert allocations and re-allocations in a map and remove them from a map when free is called.
+This still doesn't solve our thread target problem though?
+It turns out, if you call GetCurrentThreadId() from a hooked function, you are actually able to get the thread id of the calling thread!
+Using this, you can inject your beacon, get its thread id, and do something similar to below:
+Do this for the re alloc and do removes for the free as well and now you are targeting a thread!
+But remember that issue from before, the reason why we had to suspend other threads?
+WININET and RPC calls will still try to access encrypted memory before we decrypt it in time.
+There's a few options here but I personally used what I think is a pretty interesting one.
+Since the loaded shell-code was neither a valid EXE nor DLL, I was able to target allocations from anything that made a call that originated from a module with no name.
+For this mechanism to work we need to be able to resolve the module that made the function call.
+This can be done with the following code:
+This will get the _ReturnAddress intrinsic and leverage it with GetModuleHandleEx and the flag GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS in order to identify what module is making this call.
+We can then convert it to a lower case string and if the string does not contain DLL or EXE we go ahead and insert it.
+With this, you have a stable list of allocations to encrypt on sleep!
+You will need to repeat this process for your hooked re alloc.
+For the encryption to run, you need to iterate the list and encrypt those allocations instead of doing HeapWalk()!
+This will depend on whether you decide to use a map, vector, linked list whatever.
+The idea is you wanna store the pointer returned by the real HeapAlloc or ReAlloc into your array and iterate the array and encrypt the data there by size.
+Arg3 in the example above is size (https://docs.microsoft.com/en-us/windows/win32/api/heapapi/nf-heapapi-heapalloc).
+So now we hook 4 different functions, insert allocations based on thread id into a vector, iterate the vector and encrypt each address on sleep, and if successful, we should once again bypass BeaconEye.
+Again, for the purposes of this demo we do no encryption for anything with a sleep of 1 or less.
+We can inject into any process, encrypt only our own thread's heap, and the process won't crash just because we're sleeping!
+Along this journey of stable heap encryption there were 3 additional interesting discoveries I made along the way.
+Let's go over each one 1 by 1.
+The first 2 are additional BeaconEye bypasses.
+As with any tool BeaconEye has its flaws, completely by accident I discovered 2 mechanisms that bypass BeaconEye's capabilities completely.
+The first, injecting into explorer.exe with beacon appears to bypass BeaconEye completely.
+As you can see, injecting into cmd.exe is caught but explorer.exe seems like it must be getting scanned ineffectively.
+Additionally, initializing symbols in the binary also breaks BeaconEye completely with the following lines of code:
+Lastly, I noticed something a bit interesting...I'm not sure people are aware but Cobalt Strike does absolutely no cleanup on heap allocations on exit.
+This means if you exit an injected Cobalt Strike thread and the process doesn't restart, your configuration now stays in memory as an extract-able artifact.
+Maybe with everything you've been taught in the blog post you could put something together to resolve this?
+As for blue teams, now you know exiting isn't the end!
+I may have made some mistakes during this post, feel free to let me know and I'll gladly make corrections as education is the main goal.
+I'm on Discord, you'll find me.
+In my next post, I would like to look into other hooking capabilities/ideas that could help us do a few more fun things.
+
+                  Get the latest posts delivered right to your inbox.
+
+          Now check your inbox and click the link to confirm your subscription.
+
+      Please enter a valid email address
+There was an error sending the email, please try later.
+
+                          Apparently there are no posts at the moment, check again later.
+
+      No results for your search, please try with something else.
+
+Arash's Blog © 2021
+  •  
+Published with Ghost

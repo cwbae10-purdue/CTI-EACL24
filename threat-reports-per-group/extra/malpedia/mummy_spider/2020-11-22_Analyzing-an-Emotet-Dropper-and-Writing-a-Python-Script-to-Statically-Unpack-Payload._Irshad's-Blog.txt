@@ -1,0 +1,89 @@
+In this blog post, we will analyze an Emotet dropper.
+The sample used in this post is available on any.run here.
+Details of the sample areMD5: b92021ca10aed3046fc3be5ac1c2a094Filename: emotet.docFile Type: DOCX
+When you open the file in MS Word, you will be greeted with social engineering message asking you to enable the Macros.
+There are multiple tools that can accomplish this, but my favorite one is olevba.
+The extracted Macro is uploaded here on gist.
+Macro code is heavily obfuscated.
+However, there are some lines that stand out.
+(Line numbers are the same as the code on gist.)
+At line 62 it prepares a string GS0LWK , and then use it as a parameter to winmgmts:Win32_Process.Create on line 88, which is used to create a new process.
+GS0LWK will be the command-line of the new process.
+Now we can set up a breakpoint on line 88 and debug the Macro to see what process is being created
+The figure above shows it will create a Powershell Process with Base64 encoded code.
+We can copy the command line from variable GS0WLK, or using any process manager such as `procexp` or Process Hacker.
+It is also available on any.run link shared at the start of the blog.
+So Macro will create the following PowerShell process.
+After Base64 decoding the code looks like this
+The de-obfuscated PowerShell code would look this.
+(I have defanged the URLs)
+This shellcode will download an executable from one of the URLs in the array “$pLjBqINE“, save it to the path “%UserProfile%\284.exe", check if its size is greater than or equal to 23931 bytes,  and execute it.
+284.exe can be downloaded from any.run.
+Let’s see if it is packed with any known packer.
+Exeinfo PE is unable to find any known packer.
+However, Detect it easy finds that it is an MFC application
+with high entropy and status packed.
+Most likely, it is packed with a custom MFC Packer.
+When I open the file in IDA-PRO and look at the imports,  shown below, it is filled with junk imports.
+So, yup Exe is packed.
+Usually, to further analyze these types of files, either I run them in a sandbox,  or run them with a tracer tool, such as tiny_tracer, and look for interesting API calls.
+When I run the 284.exe with tiny_tracer, at the end of the API log file, I see an interesting API call sequence.
+It seems like, it is loading some resource, decrypting it, allocating new space to copy the decrypted code, and then executing it.
+Set a breakpoint on FindResourceA in a debugger, execute it till return, and it will land you in this unpacking function.
+You can use ida_fl plugin to load .tag file in IDA Pro.Unpacking function analysisIt will load the KITTKOF resource in memory
+The resource hacker shows KITKOFF resource.
+It seems to be encrypted.
+Then packer will decode the shellcode from Base64+ RC4 encrypted string that will in turn decrypt the resource.
+The RC4 algorithm, shown as CustomRC4,  it uses to decrypt the is slightly modified from the standard version.
+It uses N=0x1E1, instead of the standard N=0x100.
+Then the malware calls the shellcode twice and passes Resrouce Size, Pointer to loaded resource data, an integer, and string as parameters.
+Nothing happens in the first call.
+However, the second call decrypts the resource.
+Analysis Of ShellcodeLike any other shellcode, at first, it resolves the LoadLibraryA and GetProcAddress using API hashes as shown below.
+Then  it prepares the following WINAPI strings on the stack, and dynamically resolves them–   CryptAcquireContextA–   CryptImportKey–   CryptEncryptan example is shown below
+The shellcode then prepares two PUBLICKEYSTRUC key blobs on the stack, One for RSA with  ALG_ID of  CALG_RSA_KEYX(0x0000a400)
+Other for RC4 with ALG_ID of CALG_RC4 (0x00006801)
+The shellcode imports both of these key blobs using CryptImportKey.
+However, it only updates the key in RC4 one, and use that to decrypt resource data.
+The corresponding API call is shown below.
+We can analyze the pbData parameter, which is of type  PUBLICKEYSTRUC to find the key used.
+pdData data is shown below with key highlighted.
+If notice, this key was passed as the first parameter while calling the shellcode.
+Finally, the shellcode calls CrypteEncrypt and decrypts the Resource data.
+The decrypted data is shown below.
+That is another layer of shellcode.
+If you scroll down a little, you will find a PE file is also present in decrypted data.
+I have analyzed the next layer of shellcode, it just reflectively loads the embedded PE file.
+So we can dump decrypted resource data and carve out PE files using Exeinfo-PE or some other tools.
+Exeinfo PE extracted two files
+So we have reached the final payload of Emotet.
+Let’s see if we can write a script to statically unpack and extract the payload.
+We can write a python script to unpack 284.exe statically by
+The code is pretty self-explanatory.
+If you have any questions please let me know in comments.
+
+			Malware Researcher			
+				View all posts by Irshad Muhammad
+Fill in your details below or click an icon to log in:
+
+
+			You are commenting using your WordPress.com account.
+( Log Out / 
+				Change )
+
+
+			You are commenting using your Google account.
+( Log Out / 
+				Change )
+
+
+			You are commenting using your Twitter account.
+( Log Out / 
+				Change )
+
+
+			You are commenting using your Facebook account.
+( Log Out / 
+				Change )
+ Notify me of new comments via email.
+ Notify me of new posts via email.

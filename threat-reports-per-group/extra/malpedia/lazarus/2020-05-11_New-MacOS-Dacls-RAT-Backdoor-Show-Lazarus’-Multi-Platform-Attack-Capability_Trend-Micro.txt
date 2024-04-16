@@ -1,0 +1,82 @@
+We found an application sample in April called TinkaOTP, and our investigation showed the application bearing a striking resemblance to Dacls remote access trojan (RAT), a Windows and Linux backdoor discovered in December 2019.
+By: Gabrielle Joyce Mabutas, Fujisawa Kazuki
+		
+			May 11, 2020
+Read time:  ( words)
+A one-time password (OTP) system involves the use of a generated password that can only be used once to log in and access specific online services.
+Often managed by a third-party provider, this rolling password system aims to reduce unauthorized intrusions to systems via compromised accounts.
+We found an application sample in April called TinkaOTP that seemed like a normal OTP authentication tool.
+However, further investigation showed the application bearing a striking resemblance to Dacls remote access trojan (RAT), a Windows and Linux backdoor that 360 Netlab discovered in December 2019.
+The strings that the trojan’s command and control (C&C) server uses to communicate with the storage samples links it to previous deployments by the cybercriminal group Lazarus.
+After running the TinkaOTP application, the sample appeared as a Disk iMaGe (DMG) application bundle meant to be mounted and run.
+Launching the app initially didn’t reveal any suspicious behavior, but it dropped a hidden file ~/Library/.mina in the Library folder, along with a LaunchDaemon /Library/LaunchDaemons/com.aex-loop.agent.plist set to run the hidden file on startup.
+TinkaOTP dropping a hidden file
+Another comparison showed that the main mach-o executable of the bundle —/Contents/MacOS/TinkaOTP — was a repackaged version of another OTP tool called MinaOTP, an open-source authentication tool available at GitHub.
+TinkaOTP (left) and MinaOTP (right, image taken from GitHub)
+Disassembly of TinkaOTP’s main executable showed direct references to MinaOTP modules, as well as the shell command for copying the malicious hidden file
+Tracing the origin of the hidden .mina file showed that it is a copy of an included resource, renamed SubMenu.nib, from the application bundle and where the main backdoor functions were contained.
+It also has the same links to Lazarus’ Windows and Linux predecessors: the presence of the hardcoded strings c_2910.cls and k_3872.cls.
+Both strings were previously used during C&C communication to the domain thevagabondsatchel[.
+]com as the sample storage of the cybercriminal group, as reported by 360 Netlab researchers.
+Strings used to communicate with the C&C
+Same HTTP Post message format as Windows and Linux backdoor discovered
+We also found another variant with an executable that drops the main backdoor payload.
+The SubMenu.nib is nowhere to be found, but it downloads the payload from a hardcoded address and extracts it into the hidden payload to be run.
+A look into the address, loneeaglerecords[.
+]com, revealed that the domain has been registered and existing for 11 years, but the issued HTTPS certificate is fairly recent.
+The domain is assigned to 50[.]87[.]144[.
+]227, an IP investigated to have hosted different kinds of Windows malware such as ADWIND and URSNIF.
+Despite the differences, the hidden payload downloaded is the same in both variants.
+Payload address of another variant
+The group appeared to have made this version as a quick follow-up to the Windows/Linux Dacls RAT variants.
+This was confirmed by matching the latest IP assignment and HTTP certificate from the download address of the new variant.
+The backdoor installation sequence shows that it’s meant for persistence via /LaunchAgents/com.aex-loop.agent.plist and /Library/LaunchDaemons/com.aex-loop.agent.plist.
+It initiates the configuration file /Library/Caches/com.applestore.db to set the C&C server IP and for remote session information.
+Loading the bot plugins, this enables connection to the server to open and wait for commands, update the configuration file based on the commands received, and encrypt the file via AES CBC.
+If the configuration file already exists, it will decrypt once a new session starts.
+Related code disassembly for persistence
+Once installed, it checks if an existing configuration file exists.
+If not, it creates a config file and writes data related to the setup such as C&C server addresses and other C&C session information.
+The initial C&C server IPs — 67[.]43[.]239[.
+]207 — the bot connects to are hardcoded in the backdoor file and written to the config file.
+The config file will then be dropped as /Library/Caches/com.applestore.db and encrypted.
+Once completed, the backdoor proceeds to load the plugins responsible for specific functions.
+Initial server IPs written on the config file.
+The file may have the IPs rewritten to an updated IP address of a new server.
+Dropping the config file and encrypting with AES CBC
+A look into the server IPs also showed that the domain hosts legitimate traffic; blocking the said domains may have side effects for other sites.
+During the initial analysis of the disassembled codes, the strings used to load the IPs and plugins appear to be missing characters.
+However, a closer inspection of the first characters showed that these strings were intentionally separated — likely an effort to evade detection.
+After receiving a response from the server, it will check the headers to determine the plugins to run, with each plugin templated to load their respective functions on initialization.
+Comparing the plugins used for MacOS and its Windows/Linux variants showed some differences and additional capabilities.
+·         Capability of Reverse Shell
+·         Open, write, and delete
+·         Collect data on running processes
+·         Connect to log server
+The bash/cmd plugin is used for executing shell commands in the form of appending them as a bash script and then running it on the terminal.
+Based on the arguments set in the packet received, it also has the capability to run a reverse shell.
+The file plugin runs the same functions as the Windows and Linux variants: it can read, write, delete, and download files, as well as scan a directory for a specific file.
+Looking into the arguments shows that the process plugin comes from the received packet to execute functions such as collecting process information, running a new process, and terminating a running one.
+The process information collected includes the username, user ID, group ID, and process parent ID of the target process.
+Process plugin formatting the collected information before sending
+The test plugin attempts to connect to a provided address to check access to the network.
+Meanwhile, the reverse P2P plugin creates a proxy server to bridge the C&C and the client.
+This creates another connection to another C&C specified in the commands to act as a proxy, redirecting traffic from the infected machine to the real C&C server.
+The logsend plugin collects system information by scanning the system using function start_scan_worm and send data to the log server specified.
+Meanwhile, the socks plugin creates a connection via socks4 for Secure Sockets Layer-related (SSL) transactions.
+This plugin was not observed in the Windows/Linux variants.
+The discovery of the Windows/Linux variants and analysis of this routine has shown Lazarus’ range of expertise.
+As mentioned in a previous Lazarus discovery involving MacOS, this shift in focus towards attacking multiple operating systems indicate an expansion of targets.
+It also shows that they’re experimenting for future-related cases, highlighted by the additional plugin that has not been observed in similar routines.
+To note, shortly after our first discovery of Lazarus’ interest in MacOS in 2019 via poisoned spreadsheets, the group was able to follow up with fileless AppleJeus, showing a rapid development in research.
+Related to this routine, the dropper from the first variant’s only implemented evasion method was the use of copying the payload into a hidden file; the second variant improved on this by downloading the payload instead.
+While considerably not as sophisticated yet, given how the AppleJeus malware quickly followed with a fileless version, we could expect the group to deploy a similar execution of this routine soon.
+We also suspect that the group may be targeting specific users for bot distribution, taking advantage of users’ needs for layered security.
+OTP authentication tools have also been used to manage cryptocurrency wallets and exchanges, another common target for fraud by the cybercriminal group.
+The group might also be expanding to mobile platforms.
+Considering that the original MinaOTP source contains a separate project called MinaOTP-iOS, the group might be planning to rebuild a repurposed version of this for mobile.
+We will continue monitoring Lazarus deployments and activities.
+To protect systems from this type of threat, users should only download apps from official and legitimate marketplaces.
+Users can also consider multilayered security solutions such as Trend Micro Antivirus for Mac, which provides comprehensive security and multi-device protection against cyberthreats.
+Enterprises can take advantage of Trend Micro’s Smart Protection Suites with XGen™ security, which infuses high-fidelity machine learning into a blend of threat protection techniques to eliminate security gaps across any user activity or endpoint.
+Those highlighted in yellow are characteristics observed during analysis, while those in green are possible actions based on observed C&C server commands.

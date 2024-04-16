@@ -1,0 +1,47 @@
+The backdoor uses a novel method of delivery that echoes other threat actor techniques as well as adds some interesting new behaviour.
+In this post, we’ll review some of the details in the earlier report but also add some new IoCs and observations that have not yet been mentioned.
+The malware is delivered as an application disguised as an MS Office Word doc.
+The previous research noted that the malware deploys a novel trick to prevent MS Office attempting to launch the disguised app as a doc by embedding a unicode character in the file name.
+This causes launch services to call “open” on the file rather than the default program for “.doc”.
+On launch, the malware switches out the malicious application bundle for an actual MS Office doc: the same file name is used but now minus the hidden Unicode character.
+After the bait and switch, this doc is launched and presented to the user.
+The whole trick is invisible to the user, who only sees a document appearing with the same name as the one they double-clicked on.
+Meanwhile, the second stage payload has been deposited in the /tmp folder and begins its run to install a hidden persistence agent and the third stage malicious executable.
+That trick is accompanied by the borrowing of a technique that has become popular among commodity adware and malware distributors; namely, using a shell script both as the main executable inside the app bundle and also as a vehicle to drop an embedded base64-encoded payload.
+Note line 4, which defines a variable with around 850Kb of base64-encoded data.
+At line 40, that data is piped through the base64 utility for decoding, dropped in a subfolder in the /tmp directory, given executable permissions via chmod, and then launched as the 2nd stage payload.
+Importantly, prior to line 40, the script takes measures to deal with two macOS security features: App Translocation and file quarantine.
+The former was a security feature brought in by Apple to prevent executables accessing external resources via relative paths and bypassing Gatekeeper checks.
+However, like Gatekeeper itself, App Translocation relies on the executable being tagged with the com.apple.quarantine bit.
+The second stage payload, once dumped from the encoded base64, is a universal FAT binary containing Mach-Os for i386 and x86_64 architectures.
+The source code was written in C++.
+As earlier research pointed out, this stage is responsible for dropping a persistence agent with the label of “com.apple.marcoagent.voiceinstallerd” and its program argument, “mount_devfs”.
+However, we also note that this stage has code for testing the UID and determining whether the executable is being run as root or not.
+If so, the persistence mechanism is now written to /Library/LaunchDaemons instead of the user’s Library LaunchAgents folder.
+In either case, the program argument is the same, pointing to a custom subfolder in the Library folder called “User Photos” and an executable, mount_devfs, which is similarly a universal FAT binary containing Mach-Os written in C++.
+A further point not mentioned in the earlier research is that the Launch Agent or Launch Daemon is written using the “Hidden” flag so that users won’t see it in the Finder by default.
+According to the earlier research, the malicious “mount_devfs” file provides the actors with backdoor capabilities, which include the ability to exfiltrate information as well as download files to the target machine.
+For downloading, the actors make use of the same built-in dylib as we’ve seen used by Lazarus APT, libcurl.4.dylib.
+The third stage payload has the ability to collect data regarding the device and its environment, including the computer host name.
+Curiously, the sample has two hardcoded strings that presumably are meant as a “calling card” or have some internal meaning to the malware developers:
+Although these samples were unknown to static signature engines prior to the publication of this week’s research, the malware was already detectable through behavioral means.
+The first stage attempts to remove the quarantine bit on every file starting from both the User’s Home directory, ~/, and from /.
+This is incredibly “noisy” from a detection point of view, as no legitimate process is likely to have such behavior.
+The 2nd stage payload can trigger detections on MITRE TTPs T1150 and T1160 as it attempts to achieve persistence.
+The samples’ code signatures have now been revoked by Apple, although it is still possible to execute the malware either by removing the signature or re-signing it with a different developer ID or ad hoc signature.
+Defenders can hunt both for the Team Identifier used to sign the malware, “UD9UN593Z4”, and the bundle identifier of the initial malicious application, “com.apple.files”.
+The persistence mechanism’s label “com.apple.marcoagent.voiceinstallerd” and executable path “[~]/Library/User Photos/mount_devfs” should also be included in the IoCs for threat hunting.
+In our tested sample, the malware C2 was a URL hosted at the domain mihannevis[.
+The third stage payload is not well-known to static reputation engines as yet, so defenders should look to behavioural indicators to ensure detection.
+While much macOS malware is often very simply or inexpertly written, the actors behind this multi-stage backdoor trojan have both deployed some novel tricks and improved upon techniques seen in commodity malware such as Shlayer and adware like bundlore.
+This indicates that they have both the skills and the resources to imitate and innovate in order to achieve their objectives.
+SHA1c2e0b35fd4f24e9e98319e10c6f2f803b01ec3f1   – Application Bundle Zip9f84502cb44b82415bcf2b2564963613bdce1917  – Stage 2 Mach-O4f6d34cf187c10d72fb3a2cd29af7e3cb25bc3aa  – Stage 3 Mach-O
+SHA256cfa3d506361920f9e1db9d8324dfbb3a9c79723e702d70c3dc8f51825c171420 – Application Bundle Zip05e5ba08be06f2d0e2da294de4c559ca33c4c28534919e5f2f6fc51aed4956e3 – Stage 2 Mach-Ofd7e51e3f3240b550f0405a67e98a97d86747a8a07218e8150d2c2946141f737 – Stage 3 Mach-O
+MITRE ATT&CK TTPsProcess achieved persistency through launchd job.
+T1150Process dropped a hidden suspicious plist to achieve persistency.
+Get notified when we post new content.
+Keep an eye out for new content!
+In the era of interconnectivity, when markets, geographies, and jurisdictions merge in the melting pot of the digital domain, the perils of the threat ecosystem become unparalleled.
+Crimeware families achieve an unparalleled level of technical sophistication, APT groups are competing in fully-fledged cyber warfare, while once decentralized and scattered threat actors are forming adamant alliances of operating as elite corporate espionage teams.
+Get notified when we post new content.
+Keep an eye out for new content!

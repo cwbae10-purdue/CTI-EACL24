@@ -1,0 +1,112 @@
+We discovered a new campaign we named Earth Wendigo that has been targeting several organizations in Taiwan - since May 2019, aiming to exfiltrate emails from targeted organizations via the injection of JavaScript backdoors to a webmail system that is widely used in Taiwan.
+By: Trend Micro Research
+		
+			January 05, 2021
+Read time:  ( words)
+With no clear connection to any previous attack group, we gave this new threat actor the name “Earth Wendigo.”
+Additional investigation shows that the threat actor also sent spear-phishing emails embedded with malicious links to multiple individuals, including politicians and activists, who support movements in Tibet, the Uyghur region, or Hong Kong.
+However, this is a separate series of attacks from their operation in Taiwan, which this report covers.
+The attack begins with a spear-phishing email that is appended with obfuscated JavaScript.
+Once the victim opens the email on their webmail page, the appended JavaScript will load malicious scripts from a remote server operated by the threat actor.
+The scripts are designed to perform malicious behaviors, including:
+After the attackers gain a foothold into the system — either through XSS injection or Service Worker — the next (and final part) of the attack chain, the exfiltration of the mailbox, is initiated.
+The Earth Wendigo threat actor will establish a WebSocket connection between the victims and their WebSocket server via a JavaScript backdoor.
+The WebSocket server instructs the backdoor on the victim’s browser to read emails from the webmail server and then send the content and attachments of the emails back to the WebSocket server.
+We will share more details of the attack chain in the following paragraphs.
+The victim will receive a spear-phishing email disguised as an advertisement with a discount coupon from an online shopping website — however, an obfuscated malicious JavaScript is embedded inside.
+The email leverages the webmail system’s search suggestion function to trigger the webpage to execute their script instead of directly running the malicious script.
+This is done to evade static security checks.
+The email will generate multiple email search requests to the webmail system via the CSS function ”backgroup-image” using their malicious code as a search keyword to make the system register it as a frequently searched keyword.
+Next, a new “embed” HTML element is created to load the result of the search suggestion by finding the keyword “java” on the webmail server.
+The returned suggestion is the JavaScript code that was searched during the first step and has now been indirectly loaded and used to execute the malicious code.
+This approach allows the threat actor to hide their malicious code inside CSS elements to prevent detection by security solutions that employ static analysis.
+At the end of this step, the code will create another new script element that will load other malicious JavaScript codes from remote servers.
+Interestingly, we found many other emails that have injected their malicious JavaScript code at the bottom to load their malicious code from remote servers.
+However, these emails don’t look like phishing emails and seemed more like real email sent from normal users within the same organization.
+Further investigation revealed that the attacker had modified the victims’ email signatures through malicious code injection.
+This means that all of the emails sent by the victim with the modified mail signature will have the malicious code appended at the end, which is how we found a normal email that was also injected with malicious code.
+We think the threat actor used this approach to attempt to infect the victim’s contacts for further propagation.
+As soon as the user executes the malicious script in the email, a cookie stealer script will be delivered and launched on the browser.
+The script generates a request to “/cgi-bin/start,” which is a wrapper page embedded with the webmail session key.
+The script will then extract the session key from the page while also collecting browser cookies.
+The script will send an HTTP GET request to remove the server with all the collected keys and cookies appended on the query string to transfer the stolen information.
+The framework used to deliver and manage these XSS attack scripts is called “XSSER.ME” or “XSS Framework.” The stolen session keys and browser cookies are also sent to the framework to store in the database.
+While a stolen session key may allow the attacker to log into their target’s webmail system without a password, note that this is not the Earth Wendigo operation's ultimate goal.
+After the initial execution of malicious code with the approaches we mentioned above, the attacker implemented steps to ensure that their malicious script would be constantly loaded and executed by their targets.
+The actor prepared two different infection methods.
+The first involves injecting malicious code into the webpage via an XSS vulnerability on the webmail system.
+The vulnerability, which exists inside the webmail system’s shortcut feature, allows users to create links on the webmail front page.
+The attacker can add a shortcut with a crafted payload by exploiting the XSS vulnerability, which replaces part of the original script from the webmail system with malicious JavaScript code.
+If this is successful, the victim will load the malicious code whenever they access the webmail page with the malicious shortcut added.
+Note that the infection will not impact all of the users on the system simultaneously, but only those with infected mail accounts.
+We have reported the vulnerability to the company that developed the webmail system, which informed us that the vulnerability had been fixed since January 2020.
+It should not affect those who are using the latest version of the webmail system.
+The security risk of Service Worker has been discussed and demonstrated by both PoC work and academic research — for example, a registered Service Worker could intercept and manipulate the requests between the client and the web server.
+By examining one of the malicious scripts from the Earth Wendigo campaign, we discovered that it uploaded the tampered Service Worker script to the webmail server disguised as an original script provided by the server.
+It then registers the uploaded script to the user’s Service Worker before removing it from the server immediately after registration.
+The registered Service Worker script checks the URL path from an intercepted request and performs various responses:
+At the end of the attack, Earth Wendigo delivers a JavaScript code that then creates a WebSocket connection to a remote server and executes the script returned from the server.
+We found that the returned script is a backdoor that gets its instructions from the WebSocket server.
+It has only one command, “get(‘URL’),” to perform a request from the victim’s browser to the webmail server and collect the response back to the WebSocket server.
+The usage of the backdoor we found, in this case, is for the mailbox exfiltration.
+A typical sequence used for mailbox exfiltration:
+The WebSocket server returns a backdoor script that is executed on the victim’s browser
+The backdoor sends the webmail session key, browser cookies, webpage location, and browser user agent string back to the WebSocket server to register the victim’s information
+The WebSocket server sends the command “get(‘/cgi-bin/folder_tree2?cmd=…’)” to grab the list of existing mailboxes under the victim’s mail account
+The WebSocket server sends the command “get(‘/cgi-bin/msg_list?cmd=…’)” to grab the list of emails inside a mailbox that they are interested in reading
+The WebSocket server sends the command, “get(‘/cgi-bin/msg_read?cmd=pring_mail&…’)” to read the email listed in the response seen in the previous step; it reads each email sequentially from the mailbox and sends it back to the WebSocket server
+If a stolen email has attachments, the WebSocket server sends the command “get(‘att:/cgi-bin/downfile/…’)” to grab the relevant attachment from the webmail server and slice it into 4096 bytes as chunks to return to the WebSocket server.
+These steps are repeatedly performed until they receive the victim’s entire mailbox.
+Besides their attack on webmail servers, we also found multiple malware variants used by Earth Wendigo.
+These malware variants, which are written in Python and compiled as Windows executables, communicate to a malicious domain — the same one used in this attack.
+Most of them are shellcode loaders that load embedded shellcode likely from Cobalt Strike.
+Some of them are backdoors that will communicate with the command and control (C&C)) server to request and execute additional python code.
+However, we don’t know what code they delivered because the server was already down when we were verifying the malware variants.
+It’s also not clear how they were delivered to the victims.
+While Earth Wendigo uses typical spear-phishing techniques to initiate their attack, the threat actor also uses many atypical techniques to infiltrate the targeted organizations, such as the use of mail signature manipulation and Service Worker infection.
+The impact of spear-phishing attacks can be minimized by following security best practices, which include refraining from opening emails sent by suspicious sources.
+We also encourage both users and organizations to upgrade their servers to the latest version to prevent compromise via vulnerability exploits.
+To avoid XSS attacks similar to what we described in this report, we recommend adapting Contant-Security-Policy (CSP) for websites.
+Domain operated by Earth Wendigo
+Domain operated by Earth Wendigo
+Domain operated by Earth Wendigo
+Domain operated by Earth Wendigo
+Domain operated by Earth Wendigo
+Domain operated by Earth Wendigo
+Domain operated by Earth Wendigo
+Domain operated by Earth Wendigo
+Domain operated by Earth Wendigo
+Domain operated by Earth Wendigo
+Domain operated by Earth Wendigo
+Earth Wendigo
+XSS attack script
+Earth Wendigo
+XSS attack script
+Earth Wendigo
+XSS attack script
+Earth Wendigo
+XSS attack script
+Earth Wendigo
+XSS attack script
+Earth Wendigo
+XSS attack script
+Earth Wendigo
+XSS attack script
+Earth Wendigo
+XSS attack script
+Earth Wendigo
+XSS attack script
+Earth Wendigo
+XSS attack script
+Earth Wendigo
+XSS attack script
+Earth Wendigo
+XSS attack script
+Earth Wendigo
+XSS attack script
+Earth Wendigo
+XSS attack script
+Earth Wendigo
+XSS attack script
+Earth Wendigo Service Worker script
+Earth Wendigo WebSocket JavaScript backdoor

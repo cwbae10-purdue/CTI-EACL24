@@ -1,0 +1,100 @@
+On October 25, 2019, a suspicious ELF file (80c0efb9e129f7f9b05a783df6959812) was flagged by our  new threat monitoring system.
+At first glance, it seems to be just another one of the regular botnets, but we soon realized this is something with potential link to the Lazarus Group.
+At present, the industry has never disclosed the Lazarus Group's attack samples and cases against the Linux platform.
+And our analysis shows that this is a fully functional, covert and RAT program targeting both Windows and Linux platforms, and the samples share some key characters being used by Lazarus Group.
+First, we searched VT for the hardcoded string c_2910.cls and k_3872.cls in the sample and found 5 more samples.
+We can confirm from their sample and C2 instruction codes that they are the same RAT family, and is suitable for Windows and Linux platforms, respectively.
+One of the 5 samples 6de65fc57a4428ad7e262e980a7f6cc7 was pointed to as Lazarus Group by the user Raeezabdulla of the VirusTotal community, and cited a report "CES Themed Targeting from Lazarus".
+This sample also has download address of https://thevagabondsatchel.com/wp-content/uploads/2019/03/wm64.avi.
+In October 2019, a sample named NukeSped was tagged by Twitter user @cyberwar_15 as Lazarus Group.
+And that sample file b578ccf307d55d3267f98349e20ecff1 has the download url as http://thevagabondsatchel.com/wp-content/uploads/2019/09/public.avi
+A quick google returns many Lazarus Group analysis reports and some open source threat intelligence data, many pointing out that thevagabondsatchel.com was used by Lazarus Group to store samples.
+Therefore, we speculate that the attacker behind Dacls RAT is Lazarus Group.
+Currently this sample is shown on VirusTotal with 26 pretty generic malware tag from by 26 antivirus vendors with no relevant analysis report.
+Therefore, we think it is necessary to disclose some of its technical detail here.
+We name it Dacls (Win32.Dacls and Linux.Dacls) based on its file name and hard-coded strings.
+Dacls is a new type of remote-control software targeting both Windows and Linux environment.
+Its functions are modular, the C2 protocol uses TLS and RC4 double-layer encryption, the configuration file uses AES encryption and supports C2 instruction dynamic update.
+The Win32.Dacls plug-in module is dynamically loaded through a remote URL, and the Linux version of the plug-in is compiled directly in the Bot program.
+We found a series of samples on a suspected download server  http://www.areac-agr.com/cms/wp-content/uploads/2015/12/, including Win32.Dacls, Linux.Dacls, the open source program Socat, and working payload for Confluence CVE-2019-3396.
+We speculated that the Lazarus Group used the CVE-2019-3396 N-day vulnerability to spread the Dacls Bot program.
+ELF 64-bit LSB executable, x86-64, version 1 (GNU/Linux), statically linked, no section header
+The function of this sample is simple.
+It collects the target host information by specifying the parameters of the log collecting process.
+It avoids scanning some specified root and secondary directories, and write the retrieved file path to /tmp/hdv.log.
+When all the work is done, it executes the system tar command to compress the log file tar -cvzf /tmp/hdv.rm /tmp/hdv.log and upload it to the specified log collecting interface.
+ELF 64-bit LSB executable, x86-64, version 1 (GNU/Linux), statically linked, for GNU/Linux 3.2.0, BuildID[sha1]=e14724498374cb9b80a77b7bfeb1d1bd342ee139, stripped
+The main functions of Linux.Dacls Bot include: command execution, file management, process management, test network access, C2 connection agent, network scanning module.
+After Linux.Dacls Bot is started, it runs in the daemon mode in the background, and uses the startup parameters /pro, the Bot PID file, /var/run/init.pid and the Bot process name /proc/<pid>/cmdlineto distinguish different operating environments.
+We suspect that it may be used for Bot program upgrades.
+The Linux.Dacls Bot configuration file is stored at $HOME/.memcache, and the file content is 0x8E20 + 4 bytes.
+If Bot cannot find the configuration file after startup, it will use AES encryption to generate the default configuration file based on the hard-coded information in the sample.
+After successful Bot communicates with C2, the configuration file will get updated.
+We define the data structure information of the configuration file as struct_global_cfg, which stores the Bot operating parameters, C2 information, and plug-in information.
+After decrypting the configuration file, we can see some plain text information in it, for example: session ID, version information, reconnection time for C2, C2 information, etc.
+After successfully connecting to C2, the configuration file will be updated according to received C2 instructions, such as adding new plugin information supported by the Bot, updated C2 information, etc.
+Linux.Dacls Bot and C2 communication is mainly divided into three stages, and uses TLS and RC4 double-layer encryption algorithms to ensure data communication security.
+The first phase is to establish a TLS connection, the second phase is to establish agreement for authentication process (Malware Beaconing), and the third phase is to send RC4 encrypted data by Bot.
+Several Beacon messages and C2 confirm each other's identity are exchanged here.
+RC4 Key generation algorithm, generated by random function, Key length range: greater than 0 and less than 50
+Replacement table generation algorithm, generate replacement table for RC4 encryption based on RC4 Key
+Encryption / decryption algorithm, complete encryption / decryption according to the replacement table generation algorithm.
+Because RC4 is a symmetric encryption algorithm, the encryption / decryption algorithm is consistent
+RC4 decryption example
+After completing the protocol authentication, Bot sends the RC4 Key length (the first 4 bytes) and RC4 Key data to C2.
+C2 receives the encryption key and sends the ciphertext to Bot.
+After decryption, the command is 0x00000700.
+After that, Bot will upload the hostname-related information to C2.
+The instructions accepted by Linux.Dacls Bot are a total of 12 bytes, but the actual effective size is 4 bytes, and it is divided into two control modes.
+The first mode: when the third byte is 0, this is to control the Bot main logic.
+The following is an example of the network sequence data packet corresponding to the 0x00000700 instruction: the mode is 0x00, and the instruction 2 is 0x07 to control Bot to upload host name information
+The second mode: when the third byte is 1, the plug-in logic is called.
+The following is an example of the network sequence data packet corresponding to the 0x00010101 instruction: the mode is 0x01, and the instruction 1 is 0x01.
+After receiving the instruction, Bot returns 0x20500 on successful execution and 0x20600 on failure.
+Linux.Dacls Bot uses static compilation to compile the plug-in and Bot code together.
+By sending different instructions to call different plug-ins, various tasks can be completed.
+The sample we analyzed contains a total of 6 plugins, because the configuration information of the plugin is a continuous array of structures (0x00 ~ 0x0e).
+We guess that Bot may have other more plugins.
+Each plug-in has its own corresponding configuration, which is saved in the bot’s configuration file $HOME/.memcache.
+When the plug-in is initialized, the configuration information will be loaded.
+The Bash plug-in is plug-in number 0, it mainly supports two functions: receiving and executing system commands issued by the C2 server; C2 issues temporary new C2, bot then connects to the temporary C2 and executes system commands issued by the temporary C2.
+The main function of the File plugin is file management.
+In addition to supporting read, write, delete, and find operations on files, bot can also download files from a designated download server.
+The main function is process management, including: killing a specified process, creating a daemon process, obtaining the PID and PPID of the current process, and obtaining process list information.
+If the /proc/<pid>/taskdirectory corresponding to the PID in the Linux process exists, the Bot sample will collect the following process information:
+The main function is to test network connectivity by connecting the IP address and port specified by C2.
+The Reverse P2P plug-in is actually a C2 Connection Proxy, it
+directs network traffic between bots and C2 to avoid direct connections to their infrastructure.
+This is a common used technique by the Lazarus Group.
+With connection proxy, the number of target host connections can be reduced, and the communication between the target and the real C2 can be hidden.
+In some cases, an infected intranet host can be used to  further penetrates into the isolated network segment.
+When Bot receives a command, it first attempts to connect to the specified C2 port to send a 0x21000.
+If C2 returns 0x21300, the C2 connection is successful and the Bot will connect to the target IP:port.
+If it works, it will return 0x21100 to C2, indicating that the forwarding connection has been established and can start forwarding data.
+Now, Bot can forward the data sent by C2 to the target, and at the same time return the data returned by the target to C2, until either party interrupts the connection.
+The following is the working flowchart of the Reverse P2P plugin:
+The LogSend plug-in mainly includes three functions: test the connection to the Log server, randomly scan the entire network's 8291 port and report to the Log server, execute system commands that take a long time and report the console output to the Log server in real time.
+LogSend related operation callback function
+After testing the connection to the Log server, the
+Bot will send a test request to the Log server.
+If the Log server returns {"result":"ok"}, indicating that the test was successful, C2 can issue more LogSend instructions.
+Sending the POST request using the HTTP interface address specified by C2 and the built-in User-Agent
+Randomly scan port 8291 on the entire network and report the result to the Log server.
+After receiving the instruction, Bot will randomly generate a public IP address according to 3 built-in rules and try to connect to their port 8291.
+If the connection is successful, the scan result will be returned to the log server.
+The random IP generation algorithm is as follows
+We can see that Bot hard-codes the TCP / 8291 port and calls the system connect function to perform port scan.
+It only checks whether the port is open and does not send payload data.
+We are not sure why TCP 8291 is targeted, but we know that the Winbox protocol of the MikroTik Router device works on TCP / 8291 port and is exposed on the Internet.
+Previously we also disclosed 2 articles about the TCP / 8291 port threat incident [1][2].
+Execute bash command which takes a long time to finish and report the console output to the Log server in real time.
+Execute the bash command and forward the output to the Log server.
+All reported Log data is submitted by HTTP POST.
+The format of the payload section is as follows:
+log=save&session_id=<session id>&value=<log content>
+We recommend that Confluence users patch their system in a timely manner and check whether they have been infected based on the process name, file name, and TCP network connection used by Dacls RAT.
+We recommend that readers monitor and block Dacls RAT-related IPs, URLs and domain names.
+Readers are always welcomed to reach us on twitter, WeChat 360Netlab or email to netlab at 360 dot cn.
+This post was a collaboration between
+Read more posts by this author.
+Read more posts by this author.

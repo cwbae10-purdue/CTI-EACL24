@@ -1,0 +1,75 @@
+
+          By Yanhui Jia, Chris Navarrete and Haozhe Zhang
+December 9, 2020 at 6:00 AM
+Tags: C2, command and control, Cybercrime, evasion, exploit, malware, NJRat, Pastebin
+This post is also available in: 
+    日本語 (Japanese)
+Attackers are taking advantage of this service to post malicious data that can be accessed by malware through a shortened URL, thus allowing them to avoid the use of their own command and control (C2) infrastructure and therefore increasing the possibility of operating unnoticed.
+In this blog, we will introduce different scenarios and data transformations that we have found in the wild, and describe the relationship between the downloader component and its second-stage malware.
+Palo Alto Networks Next-Generation Firewall customers are protected from njRAT with Threat Prevention and WildFire security subscriptions.
+Customers are also protected with Cortex XDR.
+Pastebin's C2 tunnel is actively used by attackers as a hosting service for malicious payloads that can be downloaded by keyloggers, backdoors or Trojans.
+The hosted data differs in its form and shape.
+The different data encodings and transformations that can be found include traditional base64 encoding, hexadecimal and JSON data, compressed blobs, and plain-text data with embedded malicious URLs.
+It is believed that this use of Pastebin is intended to evade detection by security products.
+In the following sections, we will introduce different scenarios and data transformations that we have found in the wild, and describe the relationship between the downloader component and its second-stage malware.
+Downloader: 91f4b53cc4fc22c636406f527e3dca3f10aea7cc0d7a9ee955c9631c80d9777f
+Second-stage: 492ea8436c9a4d69e0a95a13bac51f821e8454113d4e1ccd9c8d903a070e37b2
+Source URL: hxxps://pastebin[.
+The downloader (91f4b53cc4fc22c636406f527e3dca3f10aea7cc0d7a9ee955c9631c80d9777f) requests Pastebin C2 data and uses the less evasive version of stored data, which corresponds to traditional base64 encoding.
+Figure 1. base64 encoded data and its transformation to an executable file.
+Once decoded, the final payload is revealed as a 32-bit .NET executable, which makes use of several Windows API functions including GetKeyboardState(), GetAsynckeyState(), MapVirtualKey(), etc.
+These are commonly used by keyloggers and Trojans, as well as by functions used to potentially exfiltrate user data.
+It is also worth noting that the downloader and second-stage executables are similar in their functionality and code.
+The following image presents a screen capture of the decompiled code of the second-stage sample.
+Downloader: 67cbb963597abb591b8dc527e851fc8823ff22d367f4b580eb95dfad7e399e66
+Second-stage: ffb01512e7357ab899c8eabe01a261fe9462b29bc80158a67e75fdc9c2b348f9
+Source URL: hxxps://pastebin[.
+In this version, the base64 data was reversed, presumably as a measure to avoid detection for automated systems.
+Figure 3. base64 encoded reversed string and its transformation to base64 format.
+After proper transformation and decoding of data, the final second-stage 32-bit .NET executable was found to be a similar sample, which exhibits keylogging and Trojan capabilities as well.
+Three data transformation layers were required to get the final payload.
+Downloader: 9ba0126bd6d0c4b41f5740d3099e1b99fed45b003b78c500430574d57ad1ad39
+Second-stage: dfc8bffef19b68cfa2807b2faaf42de3d4903363657f7c0d27435a767652d5b4
+Source URL: hxxps://pastebin[.
+In this version, the base64 data was presented in hex characters.
+Hex encoded string and its transformation to base64 format.
+After proper decoding of Hex and base64 data, the dumped program is also a 32-bit.NET executable file sharing the same malicious characteristics as the previous example.
+Downloader: 54cf2d7b27faecfe7f44fb67cb608ce5e33a7c00339d13bb35fdb071063d7654
+Second-stage: 96c7c2a166761b647d7588428fbdd6030bb38e5ef3d407de71da657f76b74cac
+Source URL: hxxp://pastebin[.
+This 32-bit .NET launcher sample, unlike the others, works with compressed data fetched from Pastebin.
+The downloader performs the following actions:
+The following picture shows the decompressed 32-bit .NET executable data residing in memory before its execution.
+Downloader: bd2387161cc077bfca0e0aae5d63820d1791f528feef65de575999454762d617
+Second-stage: 7754d2a87a7c3941197c97e99bcc4f7d2960f6de04d280071eb190eac46dc7d8
+Source URL: hxxp://pastebin[.
+This .NET downloader uses the traditional method of grabbing an executable file from a remote URL.
+The target address points to hxxp://textfiles[.
+According to VirusTotal, this malware sample was identified by several vendors as malicious.
+Downloader: 94e648c0166ee2a63270772840f721ba52a73296159e6b72a1428377f6f329ad
+Source URL: hxxps://pastebin[.
+In this version, JSON formatted data was used.
+One of the key names, “downlodLink” (misspelled on purpose by the malware author), indicates that the value will be a URL, where additional components can be downloaded.
+No further information was given regarding the objective of this particular file, but it could potentially be used as a configuration file.
+Downloader: 97227c346830b4df87c92fce616bdec2d6dcbc3e6de3f1c88734fe82e2459b88
+Proxy Scraper.exe: e3ea8a206b03d0a49a2601fe210c949a3c008c97e5dbf77968c0d08d2b6c1255
+MaterialSkin.dll: b9879df15e82c52e9166c71f7b177c57bd4c8289821a65a9d3f5228b3f606b4e
+Source URL: hxxps://pastebin[.
+This malware parses the HTML page in order to get the link to prepare for further attacks.
+For this particular sample, Pastebin data is used to provide links for software downloads.
+The download link points to a compressed file called Simple+Scraper.zip containing two files: MaterialSkin.dll and Proxy Scraper.exe.
+By statically inspecting the code using .NET Decompiler software, we found that the downloader malware uses Pastebin as a repository to host links to updates related to the Proxy Scraper software.
+The downloader version (“v2.0”) is shown at code level, but the second-stage malware code doesn’t indicate a version.
+However, based on VirusTotal information, the executable file has been submitted under different names, including “Lithium proxy scraper v2.6”.
+The Pastebin C2 tunnel is still alive and being used by njRAT to deliver malicious payloads by downloading data hosted in Pastebin, allowing this and other malware families in the wild to take advantage of paste-based public services.
+Based on our research, malware authors are interested in hosting their second-stage payloads in Pastebin and encrypting or obfuscating such data as a measure to evade security solutions.
+There is a possibility that malware authors will use services like Pastebin for the long term.
+At the time of this writing, the following samples were not publicly available.
+However, we have created all the required coverage against their behavior and communication.
+Palo Alto Networks customers are protected from this kind of attack by the following:
+Sign up to receive the latest news, cyber threat intelligence and research from us
+Please enter your email address!
+Please mark, I'm not a robot!
+By submitting this form, you agree to our Terms of Use and acknowledge our Privacy Statement.
+© 2021 Palo Alto Networks, Inc. All rights reserved.

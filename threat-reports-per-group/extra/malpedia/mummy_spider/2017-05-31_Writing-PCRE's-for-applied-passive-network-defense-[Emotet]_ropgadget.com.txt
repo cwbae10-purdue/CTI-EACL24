@@ -1,0 +1,296 @@
+
+
+ 
+31MAY2017 - Writing PCRE's for applied passive network defense [Emotet]
+
+
+By Jeff White (karttoon)
+Regular expressions (regex) are a language construct that allow you to define a search pattern.
+The flexibility of this language allows you to craft search patterns for tons of practical applications, including passive identification of network traffic.
+Specifically, they can allow you to pattern match on URL's so that you may quickly identify malicious sites frequently used by malware command and control (C2), domain generation algorithms (DGA's), and other such activities.
+I fell in love with using regex as a defensive tool while doing incident response many years ago.
+The depth of control they provide naturally lends itself to the forensic, analyst, and responder lines of work.
+This blog may be old hat to most blue teamers out there, but if not, hopefully it serves as an educational resource on how you can use data to build PCRE's for network defense.
+Emotet is a great candidate for review as it has varying domain structures that are ripe for pattern matching.
+I'll walk you through how I develop these PCRE's, along with refining them, and then finally how they can be vetted for false-positives (FP) to make them ready for production.
+Throughout the blog, I'll be using a Python script I wrote called pcre_check to assit with the analysis.
+Essentially, all the tool does is take a parameter for a file containing your PCRE's, a parameter for a file containing the URL's, and then some flags for how to display the pattern matches and misses.
+This is helpful for the rapid development of PCRE's because, more often than naught, you find yourself in the midst of developing these when the shit has hit the fan...or at least I always did.
+I'll be focusing solely on URL's in this example; however, on the off chance you're not familiar with regex, keep in mind that a myriad of tools, all the way down at the byte level and up to the application level that I'll be covering here can utilize regex.
+You should absolutely learn the basics at least as it's something that can be a life saver in your daily toolbox.
+Before I get too much further in, here are a couple of helpful links, that I find myself constantly visiting, which you may find useful if you want to review or build your own PCRE's.
+I'll try to explain the regex syntax and logic as I go but I'll assume you know the basic structure of the language.
+If not, hit the references below.
+https://regex101.com/ - Lets you test a PCRE (or some other flavors of regex) against a set of strings you provide on the fly with color and syntax highlighting.
+It provides extremely helpful explanations that tell you how your PCRE is being evaluated so you can adjust as needed.
+http://www.regular-expressions.info/ - This site probably has everything you ever wanted to know about the regex language.
+A super handy quick reference for when you forget some of the nuances and syntax.
+This will be a long blog, and a little free flowing, as I develop these while enumerating step-by-step.
+Below are some jumps so you can skip around as needed.
+It's been popping up on my radar more and more lately so I want to try and enumerate the patterns here to further expand what I can catch.
+That being said, the very first thing I need to do is collect a decent samples of the various campaigns so that I can begin to try and match them.
+Prior to my current $dayjob, I'd approach this by hitting up multiple blogs from researchers or security companies and compile the URL set.
+When I didn't have access to systems that made this task fairly trivial, I would frequently build them from the below resources.
+Alient Vault Open Threat Exchange (OTX) - An awesome aggregation project that lets you pivot around various reports, blogs, and events based on keywords and extract what you need.
+Below is a screenshot showing a search for "emotet"; each of those contain IOC's for URL's you can copy out to build your list.
+Malware don't need Coffee - Kafeine's site is more focused on exploit kits but almost always had a handful of URL's of interest and sometimes links to raw URL dumps on Github.
+Malware Traffic Analysis - MalwareTraffic's site is heavily focused on exploit kits and e-mail based threats, but almost always includes domains/URL's as well.
+Usually just Googling the threat name, "Emotet domains", bring you to sites like this one which have links to Pastebin posts containing loads of samples.
+The more the better but in general, in my experience, I'd say between 15-30 URL's is usually enough to make a solid base for an individual pattern and then you can tweak it during the false-positive (FP) checking phase.
+I've placed 696 Emotet URL's on Github which you can use to follow along or throw in a blocklist.
+Pattern Recognition / Enumeration
+Once you have a decent sample set, the next step is to analyze the data and look for patterns.
+I'll show the various changes to the PCRE's as I analyze the URL's and you can see how they evolve into the final product after each iteration.
+To better illustrate this, I'll just focus on the last 20 URL's at a time but normally I'll have open 3 terminals: top window editing the URL file, middle window with pcre_check output, bottom window editing the PCRE file.
+This layout allows me to quickly modify and validate changes on the fly and significantly reducing the time to turnaround.
+Below is the first run of the script showing that none of the URLs matched and truncated to the last 20.
+Domains seem unrelated to the URL path, they are most likely compromised sites.
+The final path can be multiple levels down, so I'll need to account for this.
+At least 6 different variations can be seen out of the gate.
+For each of the PCRE, I've grown accustomed to starting them with the below structure.
+^http:\/\/[^\x2F]+\/
+
+This matches any line that begins ("^") with "http://" followed by any characters, except ("[^ ]") forward slash ("\x2F"), up to the first foward slash.
+This ensures we match the domain regardless of what TLD or subdomains may be present.
+For ease of illustration, I'm going to group the variations and break them down individually.
+[Group 01]
+http://www.surreycountycleaners.com/t5wx-x064-mzdb/
+http://xionglutions.com/wl7dh-uf201-asnw/
+http://zypern-aktiv.de/wp-content/plugins/wordfence/img9re-a789-stz/
+
+For this pattern, we have 4-5 alpha(lower)numeric, dash, 4-5 alpha(lower)numeric, dash, 3-4 alpha(lower).
+We'll also want to account for the last line which has the path multiple levels in.
+We can accomplish this by putting our "[^\x2F]+\/" section in a group and saying the group can repeat one or more times (eg match everything between the forward slashes until the last one, where our pattern is).
+^http:\/\/([^\x2F]+\/)+[a-z0-9]{4,5}-[a-z0-9]{4,5}-[a-z]{3,4}\/$
+
+[Group 02]
+http://www.melodywriters.com/INVOICE-864339-98261/
+http://wyskocil.de/ORDER-525808-73297/
+http://zvarga.com/15-12-07/CUST-9405847-8348/
+
+This next group appears to use a word in caps, dash, 6-7 numbers, dash, 4-5 numbers.
+We'll need to account for the subpaths again as well.
+In this case, I prefer to group full words instead of using a character range, which helps for trying to be false-positive adverse.
+We have one URL which is purely numerical and then two which have no lowercase letters.
+We'll cross that bridge as we look at more samples, if necessary.
+Another thing to note is that this group has a very weak pattern in that it is very generic, which means it will likely match a lot of legitimate URL's and not hold up during FP testing.
+We'll cross that bridge when we get to it as well.
+For now, it's a mix of 7-15 alphanumeric characters.
+I've defaulted to using "2017" as a string since it aligns with their usage of it as a date so it seems unlikely to change.
+^http:\/\/([^\x2F]+\/)+[A-Z]{5}-[0-9]{2}-[0-9]{5}-document-May-[0-9]{2}-2017\/$
+
+[Group 06]
+http://www.stellaimpianti.it/download2467/
+http://www.stepstonedev.com/field/download7812/
+http://www.ziyufang.studio/project/wp-content/plugins/nprojects/download5337/
+
+The string "download", 4 numbers.
+^http:\/\/([^\x2F]+\/)+download[0-9]{4}\/$
+
+I'll throw these into the emotet_pcres file and see how each performs against our target data set of known-bad Emotet sites.
+From here on out, if I don't list a particular group, it implies there was no change to the PCRE.
+Regular expressions (regex) are a language construct that allow you to define a search pattern.
+The flexibility of this language allows you to craft search patterns for tons of practical applications, including passive identification of network traffic.
+Specifically, they can allow you to pattern match on URL's so that you may quickly identify malicious sites frequently used by malware command and control (C2), domain generation algorithms (DGA's), and other such activities.
+I fell in love with using regex as a defensive tool while doing incident response many years ago.
+The depth of control they provide naturally lends itself to the forensic, analyst, and responder lines of work.
+This blog may be old hat to most blue teamers out there, but if not, hopefully it serves as an educational resource on how you can use data to build PCRE's for network defense.
+Emotet is a great candidate for review as it has varying domain structures that are ripe for pattern matching.
+I'll walk you through how I develop these PCRE's, along with refining them, and then finally how they can be vetted for false-positives (FP) to make them ready for production.
+Throughout the blog, I'll be using a Python script I wrote called pcre_check to assit with the analysis.
+Essentially, all the tool does is take a parameter for a file containing your PCRE's, a parameter for a file containing the URL's, and then some flags for how to display the pattern matches and misses.
+This is helpful for the rapid development of PCRE's because, more often than naught, you find yourself in the midst of developing these when the shit has hit the fan...or at least I always did.
+I'll be focusing solely on URL's in this example; however, on the off chance you're not familiar with regex, keep in mind that a myriad of tools, all the way down at the byte level and up to the application level that I'll be covering here can utilize regex.
+You should absolutely learn the basics at least as it's something that can be a life saver in your daily toolbox.
+Before I get too much further in, here are a couple of helpful links, that I find myself constantly visiting, which you may find useful if you want to review or build your own PCRE's.
+I'll try to explain the regex syntax and logic as I go but I'll assume you know the basic structure of the language.
+If not, hit the references below.
+This will be a long blog, and a little free flowing, as I develop these while enumerating step-by-step.
+Below are some jumps so you can skip around as needed.
+The Emotet banking malware download locations have a lot of different URL structures across their different campaigns.
+It's been popping up on my radar more and more lately so I want to try and enumerate the patterns here to further expand what I can catch.
+That being said, the very first thing I need to do is collect a decent samples of the various campaigns so that I can begin to try and match them.
+Prior to my current $dayjob, I'd approach this by hitting up multiple blogs from researchers or security companies and compile the URL set.
+When I didn't have access to systems that made this task fairly trivial, I would frequently build them from the below resources.
+Usually just Googling the threat name, "Emotet domains", bring you to sites like this one which have links to Pastebin posts containing loads of samples.
+The more the better but in general, in my experience, I'd say between 15-30 URL's is usually enough to make a solid base for an individual pattern and then you can tweak it during the false-positive (FP) checking phase.
+I've placed 696 Emotet URL's on Github which you can use to follow along or throw in a blocklist.
+Once you have a decent sample set, the next step is to analyze the data and look for patterns.
+I'll show the various changes to the PCRE's as I analyze the URL's and you can see how they evolve into the final product after each iteration.
+To better illustrate this, I'll just focus on the last 20 URL's at a time but normally I'll have open 3 terminals: top window editing the URL file, middle window with pcre_check output, bottom window editing the PCRE file.
+This layout allows me to quickly modify and validate changes on the fly and significantly reducing the time to turnaround.
+Below is the first run of the script showing that none of the URLs matched and truncated to the last 20.
+There are a couple of things that jump out immediately on the first review.
+For each of the PCRE, I've grown accustomed to starting them with the below structure.
+This matches any line that begins ("^") with "http://" followed by any characters, except ("[^ ]") forward slash ("\x2F"), up to the first foward slash.
+This ensures we match the domain regardless of what TLD or subdomains may be present.
+For ease of illustration, I'm going to group the variations and break them down individually.
+For this pattern, we have 4-5 alpha(lower)numeric, dash, 4-5 alpha(lower)numeric, dash, 3-4 alpha(lower).
+We'll also want to account for the last line which has the path multiple levels in.
+We can accomplish this by putting our "[^\x2F]+\/" section in a group and saying the group can repeat one or more times (eg match everything between the forward slashes until the last one, where our pattern is).
+This next group appears to use a word in caps, dash, 6-7 numbers, dash, 4-5 numbers.
+We'll need to account for the subpaths again as well.
+In this case, I prefer to group full words instead of using a character range, which helps for trying to be false-positive adverse.
+I feel this group may end up getting split later.
+We have one URL which is purely numerical and then two which have no lowercase letters.
+We'll cross that bridge as we look at more samples, if necessary.
+Another thing to note is that this group has a very weak pattern in that it is very generic, which means it will likely match a lot of legitimate URL's and not hold up during FP testing.
+We'll cross that bridge when we get to it as well.
+For now, it's a mix of 7-15 alphanumeric characters.
+This one, and the next three, all look pretty straight forward: 3 alpha(upper), dash, 8 numbers, period, "dokument" string.
+Similarly, very structured (which is good for us): 5 alpha(upper), dash, 2 numbers, dash, 5 numbers, dash, "document" string, dash, "May" string, dash, 2 numbers, dash, "2017" string.
+I've defaulted to using "2017" as a string since it aligns with their usage of it as a date so it seems unlikely to change.
+The string "download", 4 numbers.
+I'll throw these into the emotet_pcres file and see how each performs against our target data set of known-bad Emotet sites.
+Pretty low across the board except for group 3, which is the one I mentioned is too loose to begin with.
+From here on out, if I don't list a particular group, it implies there was no change to the PCRE.
+The next 20 URL's are below.
+It looks like we have a few new groups as well.
+I'll attempt to highlight in red the changes to the PCRE's which might make the changes clearer.
+[Group 01] - [ t5wx-x064-mzdb ]
+You'll note that the third one now introduces capital letters; it's possible this is a separate campaign but I'll circle back to this later during review.
+The main changes will be the addition of the capital letters and adjustment on the ranges, which will likely be the case for the rest of the groups.
+[Group 02] - [ INVOICE-864339-98261 ]
+New strings "Invoice" and "Cust".
+[Group 03] - [ H27560xzwsS ]
+Range adjustment (making this one even more useless).
+[Group 05] - [ EDHFR-08-77623-document-May-04-2017 ]
+[Group 07] - [ LUqc663BAyN333-HoO ]
+This cluser is defined by one dash towards the end: 11-14 alphanumeric, dash, 3 alpha.
+[Group 08] - [ NUDA-X-52454-DE ]
+Only one sample so I'll match it exactly, 4 alpha(upper), dash, 1 alpha(upper), dash, 5 numbers, dash, 2 alpha(upper).
+[Group 09] - [ CUST.-Document-YDI-04-GQ389557 ]
+Similar to Group 2: same word choice, period, dash, "Document" string, dash, 2-3 alpha(upper), dash, 2 numbers, dash, 7-8 alpha(upper)numeric.
+Note that the delta in the output after each group is just something I've included after the fact to show the progress for the blog.
+The next set of 20 URL's.
+One new variant in this set.
+[Group 01] - [ t5wx-x064-mzdb ]
+Range adjustment and additiona case changes.
+[Group 02] - [ INVOICE-864339-98261 ]
+This could be a different campaign as it breaks from the double-dashes but it's so similar to group 2 that I'll leave it for now and possibly revisit.
+The second dash I'll make optional which should allow the lowest ranges of the numerical sections to match.
+I'll use an optinal capturing group ("(-)?")
+Effectively creating a capture group and then using the "?"
+value after will cause the group to match between zero and one time, thus becoming optional.
+[Group 04] - [ RRT-13279129.dokument ]
+[Group 05] - [ EDHFR-08-77623-document-May-04-2017 ]
+Add "doc" string to grouping.
+[Group 07] - [ LUqc663BAyN333-HoO ]
+[Group 08] - [ NUDA-X-52454-DE ]
+[Group 09] - [ CUST.-Document-YDI-04-GQ389557 ]
+Couple of things going on here.
+New grouping of words for second part and first entry is only numerical without dashes, which looks similar to the new entry for Group 2.
+To account for these, I'll use optional capturing groups again to build around them.
+It makes the rule slightly less accurate but with the other anchors in it, I think it'll still be fairly unique enough to not FP.
+[Group 10] - [ zp3x-r88-wuh.view ]
+The "doc" and "view" ones may be different campaigns but, again, I'll lump them together for now and will separate at the end if necessary: 1-4 alpha(lower)numeric, dash, 3-4 alpha(lower)numeric, dash, optional 5 alpha(lower)numeric, dash, 2-3 alpha(lower), period, group "view" or "doc" strings.
+The pcre_check output shows decent coverage improvements.
+One new variant sticks out, otherwise business as usual.
+[Group 01] - [ t5wx-x064-mzdb ]
+Half of the 20 are for this group.
+Just some small range adjustments.
+[Group 02] - [ INVOICE-864339-98261 ]
+That means I need to edit Group 2 and 9 to avoid these and the simplest way of doing that is removing the previous optional dash, making it absolutely required.
+See Group 9 and 12 for further iteration details.
+[Group 05] - [ EDHFR-08-77623-document-May-04-2017 ]
+This new one breaks from the two parts separated by a dash.
+I can add the dash to the character list and up the range, or I can opt for a optional grouping and up the range.
+I'm going to do the latter for the reason that it keeps the structure in tact; for this, I'm not as worried about FP's due to the ending part of the pattern being fairly unique.
+[Group 09] - [ CUST.-Document-YDI-04-GQ389557 ]
+Similar to Group 2, I'm going to reverse course on the optional groupings so that the 10 digits are not captured.
+To account for the new variants in Group 9, I'm adding an optional grouping for the period after the first word and for the "Document" string, then moving the others back into the A-Z grouping that followed.
+[Group 10] - [ zp3x-r88-wuh.view ]
+[Group 11] - [ dhl___status___2668292851 ]
+Not much to work with yet so it's fairly static.
+[Group 12] - [ ORDER.-5883789520 ]
+Looking at the data in Group 2 and 9, this pattern will have: string grouping of "ORDER", "RECH", "CUST", "Cust", optional period, dash, optional "Document" string, 10-11 numbers.
+By the way, "rech" is shorthand for "rechnung", which is German for "bill" - you see these variations quite a bit in phishing campaigns as they focus on different regions.
+Since there are only 31 URL's left I'm just going to add them all here and close out this phase.
+[Group 03] - [ H27560xzwsS ]
+I'll adjust the ranges on this one but you can see from the above that it looks like two distinct campaigns.
+I have no doubt now that there will be more in this grouping but since it's almost over 200 URL's I'll review the entire set at the end.
+[Group 07] - [ LUqc663BAyN333-HoO ]
+[Group 08] - [ NUDA-X-52454-DE ]
+Curious these all end with "DE" too, possibly region based given the "Rech" stuff seen previously; will follow-up after.
+[Group 09] - [ CUST.-Document-YDI-04-GQ389557 ]
+Added "Rech" and "Rechnung" to initial string grouping along with expanding some ranges.
+[Group 10] - [ zp3x-r88-wuh.view ]
+[Group 12] - [ ORDER.-5883789520 ]
+Added "gescanntes" to initial string grouping (this is Dutch for "Scanned") and "Scan".
+Added "Dokument" to second optional grouping.
+Alright, now I've cleared all of the remaining matches.
+The next step is to validate the matches with the "-s" flag in pcre_check.
+This will show all of the respective matches under each PCRE.
+For this phase, I just eyeball it to make sure there is no overlap and what's expected in each group is present.
+All of the PCRE's look solid except Group 3, which I already mentioned would need more TLC, as it overlaps with other PCRE's.
+For Group 3, I'm going to visually break these down.
+I'll put 5 examples under each sub-grouping to show how I separated them.
+Some are very good for matching while others will just have to be left behind.
+TAKE NOTE BAD GUYS, BEING GENRIC IS GOOD, UNIQUE SNOWFLAKES ARE THE FIRST AGAINST THE WALL.
+[Group 03] - [ dhl/paket/com/pkp/appmanager/8376315127 ]
+I think thins one would have stood out earlier had it not been clobbered by the previous PCRE.
+The path is very unique and ends with 10 digits.
+This PCRE will replace the old one for Group 3 and the other new ones will start at Group 13.
+[Group 13] - [ 6572646300 ]
+I'm going to create a PCRE for this one but I don't expect it to live past the FP check.
+There is one that stands off from the rest here with 11 numbers instead of 10 - it may be that I just don't have enough samples to account for that campaign.
+Finally, I'll need to exclude the previous set of matches which also end with 10 digits.
+To do this, I'll use a negative lookbehind to ensure once we match 10 digits, "appmanager" was not in the URL path.
+I don't see any good patterns in this set or the next one.
+[Group 14] [ SCANNED/RZ7498WEXEZB ]
+This group was characterized by alpha(upper)numeric, which normally wouldn't be worth pattern matching, but I can see two patterns in the above that may be worth entertaining.
+For Group 14, I'll match on the URL's with "SCANNED" string in the path and the unique placement of the digits within the string: 2-3 alpha(upper), 4 digits, 6-9 alpha(upper).
+[Group 15] [ K44975X ]
+For Group 15, I'll match on 1 alpha(upper), 5 digits, 1 alpha(upper).
+The non-matched ones in the previous Group 14 may be an expanded part of this campaign but it's such a weak PCRE and prone to FP that I'm not going to bother with it.
+It's highly likely to not make the final cut either way.
+[ alphanumeric long 18-26 ]
+Nothing jumps out at me that would make for a good PCRE.
+It has a similar structure of alpha, digit, alpha but the ranges are very broad which makes it highly prone to FP again.
+[ alphanumeric short 7-14 ]
+This next one follows the same pattern I identified for Group 15: 1-5 alphanumeric, 4-5 digits, 1-5 alphanumeric.
+I'll just update Group 15 and see how it fairs in the FP check, but for what it's worth, it does match every single entry in this category which had 30+.
+Now that everything is clustered together, I'll do one final visual inspection to see if any other patterns jump out that allow us to tighten the rules up and avoid FP's.
+[Group 01] - [ t5wx-x064-mzdb ]
+In Group 1, we can actually refine this a bit once you see the underlying pattern.
+Almost every part of this one changed so I'll just go back over it: 1-3 alpha, 1 digit, 1-3 alpha, dash, 1-2 alpha, 2-3 digit, dash, 1-5 alpha.
+[Group 07] - [ LUqc663BAyN333-HoO ]
+In Group 7, the first part of the pattern can be refined: 1-4 alphanumeric, 3 digits, 1-5 alphanumeric, 3 digits.
+[Group 08] - [ NUDA-X-52454-DE ]
+In Group 8 they all end with "DE" so I'll convert that part to a static string.
+[Group 09] - [ CUST.-Document-YDI-04-GQ389557 ]
+In Group 9, every entry entry ends with 1-3 alpha(upper) followed by 4-6 digits.
+The final run for the PCRE's before FP testing.
+That leaves only 30 URL's that I was unable to reliably match - not too shabby!
+You can find the output of the pcre_check script showing the matches and non-matches HERE.
+The current PCRE list is below.
+The last step is to check the PCRE's against a corpus of random URL's and see if they appear strict enough in their matching to be used in a production environment.
+This is critical if you plan to use them for blocking instead of just identification.
+I can't stress enough how important this phase is; while it's nice to be alerted on access to one of these URL's, it's solid gold if you can prevent attacks and C2 from happening in the first place.
+Of course, with any blocking action, the caveat is that one wrong block could spell disaster so these need to be as close to perfect as possible.
+Ideally, you want to test against a large amount of URL's from your own environment that most closely resemble what traffic your users generate.
+Unfortunately that's not always possible, or you don't have users, so you need to either build your own corpus or find someone who can test the PCRE's for you.
+ There isn't much online in the way of random URL lists or logs but I've put together a few possible methods one could try to compile a fairly random set of URL's, and then I'll detail my preferred method.
+The Twitter option works nicely and can generate hundreds of thousands of unique URL's per day.
+Given enough time, you'll have a solid base to test your PCRE's against.
+To do this, you need to register an app with Twitter and get your API keys.
+Once you have those, I've included a Python script, twitter_scraper that you can input them into and run in a continous loop with a one-liner like the below.
+I've also included 2 million URL's on GitHub, which is just under the 25MB file limit compressed.
+These are ones that I've scraped in the past few days and should help you get started.
+Typically I'll check this every so often and filter out things like URL shortening services or other sites that, for one reason or another, have bubbled up to the top of my domain list.
+This keeps it filled with fairly unique sites and helps improve entropy.
+Below is a GIF of the sites streaming by in real time, showing some of the variety.
+Once we have our list, we can run pcre_check against the URL's and see how our PCRE's fare.
+Using the "-s" (show matches) flag in pcre_check will allow you to manually review the false positives.
+If the sites don't look legitimate or match a little too perfectly, you'll want to do a little manual research to make sure they are in fact FP's and not true positives you didn't know about.
+I've truncated the results but above shows a few under each to give you an idea of the kind of output I'm looking for to conclude it's not up-to-par.
+As you can see, Group 13 and 15 have numerous false-positives.
+This isn't surprising given Group 13 is simply 10 digits and Group 15 is a small range of alpha, digits, alpha, which continued to repeat itself throughout my analysis.
+Additionally, I sent these PCRE's to some fellow miscreant punchers who ran them through over billions of URL's from their environment and received similar output with FP's only for Group 13 and 15.
+The last check I'll perform for this set is to remove the trailing forward slash ("/") that was included in the PCRE's.
+The reason for this is that, while my Emotet seed list all included the forward slash, the URL's I'm scraping may not have it and I just want to try to further identify any potential issues.
+All in all, 13 total PCRE's make the cut and cover the seen Emotet download URL's.
+These will provide good historical forensic capability and good passive blocking for future victims of these campaigns.
+With that, the below is the final list for publishing and available on GitHub, along with all of the above iterations.
+Hopefully this was helpful to some and demonstrated the ease in which these can be created to identify malicious patterns.
+The more the merrier in the sharing community!

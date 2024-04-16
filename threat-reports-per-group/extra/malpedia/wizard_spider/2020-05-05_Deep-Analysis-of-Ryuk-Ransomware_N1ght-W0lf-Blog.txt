@@ -1,0 +1,55 @@
+Malware Analysis & Reverse Engineering Adventures
+Ryuk has been know to be a part of a bigger "Triple Threat" attack that involves Emotet and TrickBot.
+The first stage of this attack is the delivery of Emotet through phishing emails that contain a weaponized word document, this document contains a macro code that downloads Emotet.
+Once Emotet executes, it downloads another malware (usually TrickBot)  which can collect system information, steal credentials, disable AV, do lateral movement, …
+The third stage of the attack is to connect to the C&C server to download Ryuk which makes use of the lateral movement done by TrickBot to infect and encrypt as many systems on the network as possible.
+I will give a brief overview of how Ryuk operates then I will go into details in the upcoming sections.
+Ryuk operates in two stages.
+The first stage is a dropper that drops the real Ryuk ransomware at another directory and exits.
+Then the ransomware tries to injects running processes to avoid detection.
+We can also see that it launches a cmd.exe process to modify the registry.
+After that, Ryuk goes through encrypting the system files and network shares, it drops a "Ransom Note" at every folder it encrypts under the name RyukReadMe.txt.
+Enough introduction, let’s dive into Ryuk.
+The dropper first checks the windows MajorVersion and if it’s equal to 5 (windows 2000 | windows XP | Windows Server 2003), it drops the ransomware executable at C:\Documents and Settings\Default User\ , otherwise it drops it at C:\users\Public\.
+The name of the dropped executable is five randomly generated characters.
+If the creation of this file failed, Ryuk drops the executable at the same directory of the dropper with replacing the last character of its name with the letter ‘V’ (If the dropper name is ryuk.exe, the dropped executable will be ryuV.exe).
+Next we can see a call to IsWow64Process() and if it returns true (which means Ryuk is running at a 64 bit system), it writes the 64 bit binary to the dropped executable, else it writes the 32 bit binary.
+The 2 binary files are stored at the .data section.
+The last step is a call to ShellExecuteW() to execute the second stage executable with passing it one argument which is the dropper path (This is used later to delete the dropper).
+Before the dropper exits, it passes its path to the second stage executable as a command line argument which in turn deletes the dropper.
+Ryuk uses the very well know registry key to achieve persistence, It creates a new value under the name  "HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\Run\svchos" and its data is set to the executable path which in my case is "C:\users\Public\BPWPc.exe".
+Here is the full command:
+Ryuk uses AdjustTokenPrivileges() function to adjust its process security access token.
+The requested privilege name is SeDebugPrivilege and according to Microsoft docs:
+Required to debug and adjust the memory of a process owned by another account.
+With this privilege, the user can attach a debugger to any process or to the kernel.
+This method is usually used by malware to perform process injection (which is done next).
+Ryuk goes through all running processes and stores (ProcessName, ProcessID, ProcessType) in a big array, ProcessType is an integer that is set to 1 If the domain name of the user of the process starts with “NT A” (which is “NT AUTHORITY”), otherwise the ProcessType is set to 2.
+To make it easier, I created a structure in IDA called ProcessInfo.
+After that, Ryuk loops through the processes’ stored data to perform the process injection.
+If the process name is (csrss.exe | explorer.exe | lsaas.exe), Ryuk ignores that process.
+The process injection technique used here is very simple, Ryuk allocates memory for its process at the target process memory space using VirtualAllocEx(), then it writes its process to that allocated memory using WriteProcessMemory().
+Finally it creates a new thread using CreateRemoteThread() to run Ryuk’s thread at the injected process.
+Ryuk imports its necessary functions dynamically using LoadLibraryA() and GetProcAdress().
+The names of the imported functions are obfuscated so static analysis won’t do very well here.
+We can use a debugger to get these names rather than reversing the obfuscation algorithm.
+Here is the list of imported functions:
+Ryuk has a long list of predefined services and processes to kill using net stop and taskkill /IM respectively.
+Here is the list of services:
+And here is the list of processes:
+Ryuk drops a batch script at C:\Users\Public\window.bat which deletes all shadow copies and possible backups, then the script deletes itself.
+Ryuk uses a multi threading approach for the encryption process, it creates a new thread for each file it encrypts which makes it very fast.
+It starts enumerating files using FindFirstFileW() and FindNextFileW() then it passes each file name to a new encryption thread.
+Note that Ryuk avoids encrypting these file extensions:
+Each encryption thread starts by generating a random 256 AES encryption key using CryptGenKey(), Ryuk utilizes the WindowsCrypto API for the encryption.
+Then it goes into the typical encryption loop, the files are encrypted in chunks with a chunk size of 1000000 bytes.
+Finally Ryuk write a metadata block of size 274 bytes at the end of the file.
+The first 6 bytes are the keyword HERMES.
+After that, The AES key is encrypted with an RSA public key before it’s written to the end of the file and then exported using CryptExportKey(), This function generates 12 bytes of Blob information + 256 bytes (the encrypted key).
+The RSA public key is embedded in the executable, it’s imported using CryptImportKey() and passed to every encryption thread.
+We can see at the end of the encryption routine a check if the keyword HERMES is present at the end of the file (which indicates the file is encrypted).
+This check is actually done before encrypting the file to avoid encrypting it twice.
+Here is an example of the complete metadata block:
+Ryuk enumerates network shares using WNetOpenEnumW() and WNetEnumResourceA() respectively.
+For each network resource found, the resource’s name will be appended to a list separated by a semicolon.
+This list will be used later to encrypt these network shares with the same encryption process above.

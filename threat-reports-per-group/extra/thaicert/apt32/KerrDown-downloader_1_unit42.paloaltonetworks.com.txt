@@ -1,0 +1,84 @@
+
+          By Vicky Ray and Kaoru Hayashi
+February 1, 2019 at 6:00 AM
+This post is also available in: 
+    日本語 (Japanese)
+OceanLotus (AKA APT32) is a threat actor group known to be one of the most sophisticated threat actors originating out of south east Asia.
+Multiple attack campaigns have been reported by number of security organizations in the last couple of years, documenting the tools and tactics used by the threat actor.
+While OceanLotus’ targets are global, their operations are mostly active within the APAC region which encompasses targeting private sectors across multiple industries, foreign governments, activists, and dissidents connected to Vietnam.
+This blog will cover a new custom downloader malware family we’ve named “KerrDown” which OceanLotus have been actively using since at least early 2018.
+We also show how the jaccard-index algorithm was used to quickly find similarities between the new KerrDown malware family within our datasets.
+This method has proven to be very useful to extract similarities from large sample datasets and connecting attack campaigns together.
+Given the large number of “KerrDown” samples found, we were also able to discern possible patterns in OceanLotus’ working hours and days of a week which is discussed in the later sections of this blog.
+We identified two methods to deliver the KerrDown downloader to targets.
+One is using the Microsoft Office Document with a malicious macro and the other is RAR archive which contains a legitimate program with DLL side-loading.
+For RAR archive files, the file names used to trick targets are all in Vietnamese as shown in Figure 11.
+Our analysis shows that the primary targets of the ongoing campaign discussed in this blog are either in Vietnam or Vietnamese speaking individuals.
+Our analysis began with an active mime document, something we've seen OceanLotus use before but this time involving a new payload, KerrDown.
+Figure 1 below shows a snapshot of the lure file.
+Once the victim opens the lure document, which includes an image file with a message in Vietnamese which that asks the victim to enable macros to view the contents of the file.
+At first glance the document may look like there is no other content other than the notification to enable macros.
+However, a closer look reveals two different base64 blobs inserted in the page in separate tables and the font size has been changed to 1 which may deceive victims to overlook the content.
+Another reason for this technique may be that many automated tools are able to detect the presence of an embedded binary within the streams of such files and this technique may allow them to go undetected.
+Once we increase the font size, the base64 blobs are visible in two different tables.
+Once decoded you can see the MZ header of the PE DLL at the beginning of each table, as shown in Figure 2.
+Figure 2: Base64 encoded pedll files embedded as text in the document.
+Figure 3 shows a code excerpt from the embedded macro that checks which base64 blob should be decoded based on the iCheck variable, a Boolean value which is set to true if the victim system is running on a 64-bit system and false on a 32-bit system.
+If the system is found to be 64-bit, the base64 encoded blob on the left is decoded otherwise the base64 encoded blob on the right is decoded.
+Figure 3: Base64 blob selection based on system check
+We also noticed that the actors reused the VBS decode function published by Motobit.
+Figure 4 shows the comparison between the base64 function used in the macro code and the VBS base64 decoder function published by Motobit.
+Figure 4: Base64 decoder comparison
+Once we decoded and extracted both DLL files from the document we used a similarity analysis algorithm using the Jaccard index to check the binaries against known set of malware families used by OceanLotus  which yielded no matches with any previous OceanLotus malware families.
+However, we were able to find multiple other samples in our datasets using the imphash value of the KerrDown samples and the accompanying C2 domains.
+Given the high number of samples found, we again used a similarity analysis algorithm using Jaccard Index to extract similarities between all the samples found.
+At this stage we were not sure if the DLL files were a backdoor or had any other functionality.
+Hence, we included a few other known OceanLotus malware family samples used no earlier than 2017 to our similarity test, and in most cases samples which were final payloads dropped in victim machines.
+One of the main objectives was to quickly discern if KerrDown could have been variants of the known malware families we have been tracking or was OceanLotus employing a new malware family in their playbooks and in the recent campaigns.
+Plotting the Jaccard index results using networkx we can quickly visualize the similarities extracted.
+As you can see from Figure 5, there is a thick cluster of samples at the top right of the networkx graph which did not have any similarities with the other known OceanLotus malware family samples.
+Therefore, this observation was helpful for us to understand that the samples we were looking into were likely a new malware family being employed by the OceanLotus group at the time of analysis, which we have now named KerrDown.
+Figure 5: Similarity analysis using Jaccard Index
+As discussed in the delivery document analysis above, depending on the OS architecture either of the embedded KerrDown DLLs will be dropped in the victim machine.
+The DLL is dropped in the directory location ‘Users\Administrator\AppData\Roaming\’ as ‘main_background.png’.
+The DLL retrieves the payload from the URL, decrypts it by using DES algorithm and execute it in the memory.
+Therefore, it is observed that only the KerrDown DLL downloader is saved in the system and the payload directly gets executed in the memory without being written in the system.
+Table 1 shows the URL the downloader will attempt to download the payload from depending on the OS architecture of the victim machine.
+Table 1 : Payload DLL selection based on architecture
+The link to the final payload of KerrDown was still active during the time of analysis and hence we were able to download a copy which turned out to be a variant of Cobalt Strike Beacon.
+Cybereason also published previously on OceanLotus using Cobalt Strike in their campaigns and it is interesting to see the use of a new downloader malware family being used to still deliver the final payload of Cobalt Strike.
+As we can see in this case, the purpose of the malware is to download and execute the Cobalt Strike Beacon payload in memory.
+Though Cobalt Strike is a commercial penetration testing tool, various threat actors are known to have used it in their campaigns.
+While investigating KerrDown we found multiple RAR files containing a variant of the malware.
+We haven’t yet identified the delivery method or targets of this variant.
+The attacker changed the downloader code by adding more stages and hiding each stage by compression and encryption.
+They also changed the way to execute the malicious code from an Office macro to the DLL side-loading technique through a legitimate program.
+has the Vietnamese file name ‘Don khieu nai.rar’ which translates to 'Complaint letter' in English.
+The archive contains a legitimate older version of Microsoft Word (Microsoft Word 2007) executable file that is named ‘Noi dung chi tiet don khieu nai gui cong ty.exe’ which translates to ‘Learn more about how to use your company’ in English.
+The attacker used the DLL side loading technique to load a malicious DLL by the older version of Microsoft Word.
+When opening the executable file in the archive, it loads the malicious DLL in the same directory.
+The DLL executes multi-stage shellcodes and each shellcode employs various technique to hide the next stage.
+The overall installation steps are below:
+Figure 6: Execution flow of sideloaded malicious downloader
+Looking at the compile timestamps of all the KerrDown samples in our datasets we were able to discern a couple of observations:
+Figure 7: Downloader DLL compile time lines
+Figure 8: Malware compilation times in GMT +7
+Figure 9: Malware compilation during weekdays
+OceanLotus has been an active threat actor group for a number of years and remains one of the most sophisticated threat actors in the APAC region.
+As we have seen with the new KerrDown downloader being used in their recent campaigns, the group continues to build and employ new tools and techniques in their overall operations and playbooks.
+It is therefore imperative to understand and keep a track of the group’s ongoing operations and capability to better defend against such threats.
+Given the high number of samples observed, we were also able to discern possible working hour patterns which shows us that the group likely has formal working hours and operating out of a region which is like Vietnam or nearby countries.
+While most of the targeting observed is towards Vietnamese speaking victims, given the known broader geographic and industry wide target base of OceanLotus, the group may use similar tools and playbooks against other targets.
+ Palo Alto Networks customers are already protected via:
+Cobalt Strike Beacon contains the hard-coded configuration data in its body.
+JPCERT published an article about the structure of the configuration.
+The sample we obtained has the following configuration (Figure 10) and connects to the C2 server, https:// b.cortanazone[.
+Figure 10: Cobalt Strike Beacon configuration
+Figure 11 shows some of the contents of the individual RAR files.
+All the .exe files are copies of Windows Word and the associated ‘wwlib.dll’ file is the malicious downloader DLL KerrDown, which is sideloaded when the .exe file gets executed.
+Figure 11: RAR archives with malicious DLL for sideloading
+Sign up to receive the latest news, cyber threat intelligence and research from us
+Please enter your email address!
+Please mark, I'm not a robot!
+By submitting this form, you agree to our Terms of Use and acknowledge our Privacy Statement.
+© 2021 Palo Alto Networks, Inc. All rights reserved.

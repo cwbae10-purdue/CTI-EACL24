@@ -1,0 +1,125 @@
+The TrickBot malware family has been live for several years, mainly focused on stealing victim’s online banking information.
+In new samples recently collected by FortiGuard Labs, we found a new TrickBot variant, with a new module pwgrab, which attempt to steal credentials, autofill data, history and so on from browsers as well as several software applications.
+I did a deep analysis on this pwgrab module, and in this blog I will explain how it works on a victim’s system.
+TrickBot downloaded by opening an excel file
+The new TrickBot variant is spread by an Excel file (originally named “Sep_report.xls”) using a malicious Macro VBS code that is executed when the victim opens the file in Microsoft Excel.
+We captured this sample on October 19th, 2018.
+Figure 1 shows that “Sep_report.xls” is opened in Microsoft Excel where it requests that the victim enable the embedded Macro by clicking on the “Enable Content” button.
+The VBA code is password protected for viewing.
+To analyze the code, I manually modified the protected flag to bypass the password protection.
+The VBA code starts with the function “Workbook_Open”, which is called automatically when the Excel file is opened.
+It then reads data from Text control, which is encoded Powershell code.
+In Figure 2 you can see part of the decoded Powershell code.
+Finally, the Powershell code is executed to download the file from “hxxp://excel-office.com/secure.excel” and save it to a local temporary folder with the name “pointer.exe” whereupon it runs it.
+As you may have guessed, the “pointer.exe” file is actually TrickBot.
+Task Schduler Starts TrickBot to load pwgrab32
+When “pointer.exe” runs for the very first time, it creates the “%AppData%\VsCard” folder as its home folder, then copies “pointer.exe” into it and renames it as “pointes.exe”.
+In this version it also changes its module folder: the new one is “%AppData%\VsCard\Data” instead of the previous “%AppData%\[random folder name]\Modules”.
+Figure 3 is a screenshot of the new folder.
+As with its previous version, it installs itself into the system “Task Scheduler” so it can run automatically by “Task Scheduler”.
+To learn more about the packet format of command “5” and the command’s purpose, you can refer to my previous blog.
+All files downloaded through command “5” in older versions are AES encrypted.
+Recent versions have added one more XOR encryption on AES encrypted data .So to get to the original pwgrab32 module we had to go through two-layer decryption.
+The pwgrab32 module was generated on October 16th, 2018 and was developed with Borland Delphi 3.0.
+Figure 4 shows the pwgrab32 module analyzed in a PE tool.
+During my analysis of “pointes.exe” I can see that it uses some anti-analysis techniques to make it harder to be analyzed.
+For example, it encrypts all string information to protect itself from being analyzed statically and dynamically loads APIs during running time.
+From the file name of “pwgrab32” we can guess it will grab password information from the victim’s system.
+Let’s go on to see how it will do this.
+After downloading and decrypting “pwgrab32”, “pointes.exe” continues to load “pwgrab32”.
+Just like when loading other modules, it calls the API “CreateProcessAsUserW” to create a suspended “svchost.exe” process.
+It then injects a piece of code from the “pointes.exe” memory to this svchost.exe process memory by calling the API “WriteProcessMemory”.
+By calling the API “ZwQueryInformationProcess”, “pointes.exe” can get “svchost.exe”’s ProcessBasicInformation from which it can locate the OEP (Original Entry Point) of “svchost.exe” in its PE structure.
+Furthermore, it can modify the code at OEP to execute the copied piece of code.
+It then calls “ResumeThread” to resume running “svchost.exe”.
+Figure 5 is a code snippet of finding “svchost.exe”’s OEP.
+Finally, “pwgrab32!10006634” (the OEP of pwgrab32) is called by the copied piece of code mentioned above.
+From this point on, the pwgrab32 takes over the work to collect any password related data.
+pwgrab32 Collects Credentials from Browsers of Victim’s System
+At first “pwgrab32” decodes the “core-parser.dll” module , loads into the memory, and makes it ready for use.
+It has several export functions, as shown in Figure 6.
+Function “EnumDpostServer” returns the C&C server IP address, which will be called by “pwgrab32” when it wants to send data to the C&C server.
+It launches three threads to grab credentials from three different browsers.
+They all share the same thread function but different parameters.
+From my analysis, parameter 1 is for Internet Explorer, 2 is for Firefox, 3 is for Chrome, and 4 is for Edge.
+However, in this version Edge is disabled.
+There is also a very huge function, “pwgrab32!sub_100137F8”, which executes the operation of collecting saved credentials from all browsers.
+There are different code branches for different browsers.
+I will show you how it works.
+One interesting thing I found in the “pwgrab32” code is that it encrypts plain text byte by byte, decrypts it back to plain text, and uses that decrypted plain text.
+Is this a joke by the Trickbot author?
+No, it should be an anti-analysis technique to hide plain text.
+However, I think the author simply forgot to remove the decryption function and replace the plain text with the encrypted one before compiling this module.
+This error appears many times throughout the pwgrab32 module.
+Figure 7 shows a code snippet of that.
+1>   Thread Parameter 1 for Internet Explorer:
+According to the Windows system version, there are two different code branches for IE.
+Figure 8 is a screenshot of the “Storage2” sub-key on my Windows 7 system.
+Calling the APIs “FindFirstUrlCacheEntryW” and “FindNextUrlCacheEntryW”, this malware can enumerate all cached websites.
+Furthermore it can calculate SHA1 hash code for each website host (for example “http://www.fortinet.com/”) through comparison with the hash code from the sub-key “Storage2”, whereupon it can obtain the website’s host.
+It then parses the third column data to get the credential for the website.
+Finally, it saves the collected credentials in this format:
+When the victim’s system is another version, it calls some additional APIs to get credentials.
+Here is a pseudo code of this process for getting credentials.
+2> Thread Parameter 2 for Mozilla Firefox:
+“pwgrab32” continues to load nss3.dll of Firefox and read some Firefox files from its AppData folder, such as "%AppData%\Mozilla\Firefox\Profiles\e375zm7t.default\logins.json".
+It then calls the APIs of nss3.dll, like “PK11_GetInternalKeySlot”, “PK11_Authenticate”, and “PK11SDR_Decrypt” to parse saved credentials in the file, “logins.json”.
+Below is a piece of data from “logins.json”.
+Finally, it saves the credentials in a format like IE’s.
+3> Thread Parameter 3 for Google Chrome:
+Before the thread function is created, pwgrab32 makes two file backups of the files “Login Data” and “Web Data”.
+Both of them are located in the "%LocalAppData%\Google\Chrome\User Data\Default\” folder.
+Chrome stores the login credentials of the victim in the file “Login Data”, and saved autofill and credit card information is stored in the file “Web Data”.
+It makes a backup of the two files so it can read data from backup files instead of the original files to avoid a reading conflict when the victim is using Chrome.
+The two backup files are “Login Data.bak” and “Web Data.bak”.
+They are both SQLite database files.
+“pwgrab32” uses the open source project SQLite database engine to handle the two SQLite files.
+In Figure 9, you can see that the data of the SQLite database engine is linked in “pwgrab32”.
+Next, “pwgrab32” executes an SQL expression like "select origin_url, username_value, password_value, length(d_value) from logins where blacklisted_by_user = 0" to obtain the credentials from “Login Data.bak”.
+“pwgrab32” continues to execute three SQL expressions to grab autofill information, credit card information, email address, country, company, street address, full name, phone number, etc.
+The SQL expressions are decrypted from three local variables:
+The grabbed credentials and form autofill information collected from the browsers is sent to the C&C server immediately when one is done.
+Next, I’ll discuss the packet format and how it’s sent to its C&C server in the “Report Credentials” section below.
+pwgrab32 Collects Credentials from some Clients
+After all of the three threads above are finished, “pwgrab32” steals credentials from three client software sources: “Outlook”, “FileZilla”, and “WinSCP”.
+In Figure 10 you can see the functions being called to collect credentials from them.
+“Outlook”’s profile is stored in the system registry.
+According to different versions, its registry paths are "HKCU\Software\Microsoft\Windows NT\CurrentVersion\Windows Messaging Subsystem\Profiles\Outlook",
+“pwgrab32” then goes through all the keys and reads and parses the values to grab the credentials.
+Figure 11 shows an Outlook credential grabbed by “pwgrab32” from my test system.
+The format is “Host|Account name|Password”.
+FileZilla is an FTP client software that stores its history as plain text in file "%APPDATA%\\filezilla\\recentservers.xml", and stores its login data as plain text in file "%APPDATA%\\filezilla\\sitemanager.xml".
+“pwgrab32” can easily obtain their history records and credentials by parsing these two XML files.
+WinSCP is another FTP client software.
+Its credentials are stored in the system registry under the registry path “HKCU\Software\Martin Prikryl\WinSCP 2\Sessions\”.
+“pwgrab32” can grab its credentials by enumerating all of the sub-keys and reading out their values “HostName”, “PortNumber”, “UserName”, “Password”, and “FSProtocol”.
+Trickbot has many C&C commands.
+I have talked about these commands in detail in my previous blog.
+In module “pwgrab32”, however, I observed that it has new command numbers: 81 and 83.
+    Command 81 is for reporting grabbed credentials of Browsers, FTP clients, and Outlook.
+    Command 83 is for reporting grabbed form autofill information from Google Chrome.
+It uses HTTP POST method to report the plain text credentials to the C&C server.
+The POST URI format is like this:
+The body part is the grabbed credentials or form autofill information in plain text.
+    “Client_ID” is generated with the computer name, Windows version and random string.
+Figure 12 shows reporting “chrome password” using command 81.
+Figure 13 shows reporting “chrome autofill information” using command 83.
+Below is an IP list of the C&C servers that are used to handle the credential data.
+The IP list was decrypted by “pointes.exe” from the file “dpost”, and was passed to “pwgrab32” by calling the API WriteProcessMemory.
+Calling the API EnumDpostServer(fun_index) of core-parser.dll, we can get one IP of them by using the fun_index.
+"hxxp://excel-office.com/secure.excel " is rated as Malicious Websites by the FortiGuard Webfilter service, and Sep_report.xls is detected as VBA/Agent.JHAZ!tr.dldr and pointer.exe as W32/GenKryptik.COMA!tr by the FortiGuard Antivirus service.
+How to remove this malware:
+1) Open Task Scheduler and go to Task Scheduler(Local) -> Task Scheduler Library
+2) Select the item named “Msnetcs”, press the Delete key, and then click Yes.
+3) Restart your system and delete the entire folder of %AppData%\VsCard.
+ [secure.excel] or [pointer.exe] or [pointes.exe]
+Sign up for our weekly FortiGuard Threat Brief.
+Know your vulnerabilities – get the facts about your network security.
+A Fortinet Cyber Threat Assessment can help you better understand: Security and Threat Prevention, User Productivity, and Network Utilization and Performance.
+
+advanced malware, 
+    
+      threat research, 
+    
+      TrickBot
+Copyright © 2021 Fortinet, Inc. All Rights Reserved

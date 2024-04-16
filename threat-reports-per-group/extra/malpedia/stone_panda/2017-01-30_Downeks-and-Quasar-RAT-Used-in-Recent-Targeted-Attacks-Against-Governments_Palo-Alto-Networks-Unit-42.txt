@@ -1,0 +1,185 @@
+
+          By Mashav Sapir, Tomer Bar, Netanel Rimer, Taras Malivanchuk, Yaron Samuel and Simon Conant
+January 30, 2017 at 4:00 PM
+Tags: Downeks, DustySky, Government, Quasar RAT, threat research
+This post is also available in: 
+    日本語 (Japanese)
+Palo Alto Networks Traps Advanced Endpoint Protection recently prevented recent attacks that we believe are part of a campaign linked to DustySky.
+DustySky is a campaign which others have attributed to the Gaza Cybergang group, a group that targets government interests in the region.
+This report shares our researchers’ analysis of the attack and Remote Access Tool (RAT).
+We also discovered during our research that the RAT Server used by this attacker is itself vulnerable to remote attack, a double-edged sword for these attackers.
+The initial infection vector in this attack is not clear, but it results in installing the “Downeks” downloader, which in turn infects the victim computer with the “Quasar” RAT.
+Downeks uses third party websites to determine the external IP of the victim machine, possibly to determine victim location with GeoIP.
+It also drops decoy documents in an attempt to camouflage the attack.
+Quasar is a .NET Framework-based open-source RAT.
+The attackers invested significant effort in attempting to hide the tool by changing the source code of the RAT and the RAT server, and by using an obfuscator and packer.
+Unit 42 researchers observed the Quasar RAT being prevented from executing on a Traps-protected client in September 2016.
+We observed these Quasar samples:
+File Name:  f-secure.exe
+SHA256: 99a7cb43fb2898810956b6137d803c8f97651e23f9f13e91887f188749bd5e8f
+Note: connects to hnoor.newphoneapp[.
+File Name:  HD_Audio.exe
+SHA256: 0c4aa50c95c990d5c5c55345626155b87625986881a2c066ce032af6871c426a
+Note: connects to manual.newphoneapp[.
+File Name: HD_Audio.exe
+SHA256: 86bd78b4c8c94c046d927fb29ae0b944bf2a8513a378b51b3977b77e59a52806
+Note:  crashes upon execution
+File Name: sim.exe
+SHA256: 723108103ccb4c166ad9cdff350de6a898489f1dac7eeab23c52cd48b9256a42
+Note: connects to hnoor.newphoneapp[.
+Further research found other Quasar examples, an attack earlier in the month 2016 on the same target:
+We found the same Quasar code in an additional attack on the same day, but upon a different target.
+A second Quasar sample was also observed attacking this new victim:
+We do not have detailed visibility into the specific host attacked, and have not been able to reproduce the second stage of the attack in our lab.
+However, based upon the timeframe of subsequent telemetry we observe, we understand the attack chain as follows:
+File Name: Joint Ministerial Council between the GCC and the EU Council.exe"
+SHA256: 0d235478ae9cc87b7b907181ccd151b618d74955716ba2dbc40a74dc1cdfc4aa
+File Name: ati.exe
+SHA256: f19bc664558177b7269f52edcec74ecdb38ed2ab9e706b68d9cbb3a53c243dec
+Further research identified dozens of Dowenks and Quasar samples related to these attackers.
+All included decoy documents written in Arabic (all related to Middle Eastern politics) or Hebrew.
+Most of them use the same mutex structure, share the same fake icon and unique metadata details, file writes, registry operations, and fake common program metadata, as seen in DustySky samples.
+The Downeks downloader and Quasar C2 infrastructures are each self-contained and independent of each other.
+However, we did find a single shared IP address demonstrably connecting the Downeks downloader and Quasar C2 infrastructure s. The below chart (Figure 1) shows Quasar infrastructure (top), Downeks (bottom), and the shared IP link.
+Figure 1- Quasar and Downeks
+Charting the samples and infrastructure clearly shows the separate Downeks campaigns, and infrastructure links (Figure 2):
+Figure 2- Infrastructure Patterns and Connections
+In Figure 2, top-right (green) has the Quasar infrastructure (Figure 3), with a link to the Downeks infrastructure.
+Left (yellow) is DustySky infrastructure (Figure 4) and the links to this Downeks campaign.
+As well as similarities in the code, decoys and targets, we also identified C2 infrastructure links between DustySky and this campaign.
+The remainder is sub-campaigns of Downeks samples, their infrastructure, their links – and a favored ISP (center) (Figure 5).
+The timing of the attacks is commensurate with the Middle-Eastern working week (Figure 6):
+Figure 6- Attacks by day-of-the-week
+The sample build days-of-the-week follow an almost identical pattern (Figure 7):
+Figure 7- Builds by day-of-the-week
+We saw five samples built on the same date in December 2015, and six on the same date in January, further solidifying the link between each sample.
+We analyzed a Quasar sample we found that was communicating with an active C2 server at the time of analysis:
+Quasar is a publicly-available commodity RAT, an evolution of his earlier xRAT, by German developer “MaxXor”.
+This sample is a modified version of Quasar, most likely forked from open source version 1.2.0.0 on GitHub.
+The client was likely built using the Quasar server client builder.
+We observed the following customizations:
+]com, which resolved to 185.141.25[.
+The malware uses fake version information to appear as a Microsoft update program, as well as Google Desktop once unpacked.
+This sample is packed by “Netz”, a simple .NET Framework packer which stores the original executable compressed (zlib) as a resource.
+At runtime, the packer decompresses the resource and uses Reflection to load the assembly, find its Entry point, and Invoke it.
+Extracting the payload is straight forward – we simply dump the resource and decompress it.
+After decompilation, the packer looks like this:
+Find the resource and call InvokeApp:
+Get the assembly object by decompressing the resource and loading it with Reflection:
+And finally, find the entry point and invoke it:
+This layer uses obfuscation in an attempt to avoid detection/analysis.
+We discovered that the sample was obfuscated using .NET reactor.
+It is possible to decompile the deobfuscated sample and retrieve most of the original source code but not enough to compile it easily.
+After decompiling the sample, we were able to document the modifications from the open-source Quasar.
+The configuration of Quasar is stored in the Settings object, which is encrypted with a password which is itself stored unencrypted.
+The sample we analyzed is using RijndaelManaged with ECB mode and PKCS7 padding.
+The key is the SHA256 hash of the hard-coded password.
+The password of the sample we analyzed is:
+Although at first glance this appears somewhat complex, it is in fact a rather simple, repeated keyboard sequence.
+We observe similar keyboard patterns in other samples: “567%^&”, “zxc!
+Quasar contains the NetSerializer library that handles serialization of high level IPacket objects that the client and server use to communicate.
+The serialization assigns unique IDs for serializable objects types.
+The open source and several other samples we found give a dynamically-assigned 1 byte ID at compile time.
+The sample we analyzed changed that behavior and hard-coded DWORD for each object type.
+This is a better implementation, as it allows servers and clients from different versions to communicate with each other to some extent.
+The sample we analyzed is most likely forked from open source quasar 1.2.0.0.
+We find multiple file/object names hinting at the version, but must compelling:
+Other samples we analyzed had different combinations of modification to cryptography and serialization.
+Our decompilation of the serialization library was not complete enough to allow simple recompilation.
+Instead, we downloaded and compiled the 1.2.0.0 server of the open-source Quasar RAT, having determined that this seemed likely the most similar version.
+The out-of-the-box server could not communicate with the client sample owing to the previously documented modifications that we had observed.
+We incorporated those changes into our build, discovering that this worked for most sample versions with almost no further modification.
+Both the client and the server use the same code to serialize and encrypt the communications.
+Instead of compiling a different server for each client, our server uses the code from within the client to communicate with it.
+Using Reflection, the server can load the assembly of the client to find the relevant functions and passwords.
+Rather straight forward, as the server version uses the same API as the sample client.
+Both the client and server uses the same API, but the client serializer cannot serialize server objects, because they are not the same as their "mirrored" objects inside the client.
+In some cases these objects are completely different, for example the server commands to get the file system.
+Our sample communicates with app.progsupdate[.
+]com, which resolved to 185.141.25[.
+]68, over TCP port 4664.
+This is the communication architecture between quasar client and server (Figure 8):
+Each of these layers seems to be different to some extent in the various samples we found.
+The IPacket, Serialization and Encryption framework code is shared between the client and the server, therefore we can use it with Reflection.
+However the Server handlers and command function are not, so we cannot create a completely perfect simulation.
+After the TCP handshake completes, the server starts another handshake with the client by sending packets in the following order (Figure 9):
+The client returns data to the server about the victim computer, which is displayed in the server GUI (Figure 10):
+Figure 10- Quasar RAT Server GUI
+The server and client then enter into a keep-alive mode, where the attacker can send commands to the client and receive further responses.
+The attacker can issue commands (not all commands appear in different samples) through the Quasar server GUI for each client:
+Our server build was able to successfully execute most of the commands.
+The file system commands underling handlers and IPacket were modified to support more features, so these commands don’t work out of the box and required manual implementation from us.
+With further analysis of the Quasar RAT C2 Server, we uncovered vulnerabilities in the server code, which would allow remote code execution.
+This might allow a second attacker to install code of their choice – for example, their own Quasar RAT – on the original attacker’s server.
+We refer to this (somewhat ironic) technique as a “Double Edged Sword Attack”.
+We did not apply this to any live C2 servers – we only tested this with our own servers in our lab.
+In the lab, we changed our Quasar RAT source code to use the known encryption key, and to send fake victim IP address, City, Country code, Flag, and Username.
+The Quasar server does not verify the RAT data, and displays this data in the RAT Server GUI when the RAT is executed and connects to the server.
+We found this could be used to supply compelling “victim data” to convince the attacker to connect to this “victim” via the GUI.
+Quasar server includes a File Manager window, allowing the attacker to select victim files, and trigger file operations – for example, uploading a file from victim machine to server.
+Uploaded files are written to the server sub directory “clients\user_name@machine_name_ipaddress”.
+Quasar server does not verify that the size, filename, extension, or header of the uploaded file is the same as requested.
+Therefore, if we convince the attacker to request the file “secret_info.doc (20KB)”, we can instead return to the server any file of our choice, of any size or type.
+When the Quasar server retrieves the name of the uploaded file from the victim, it does not verify that it is a valid file path.
+Therefore sending the file path "..\..\ secret_info.doc " will result in writing our file instead to the same directory as the Quasar server code.
+Quasar server does not even verify that a file was requested from the victim.
+Immediately when the File Manager window is opened by the attacker, the Quasar server sends two commands to the RAT: GetDrives and listDirectory (to populate the list of the victim’s files in the RAT Server GUI).
+We can respond to those commands by instead sending two files of our choice to the Quasar server.
+Again, we control the content of the file, the size and the path and filename.
+Quasar is a .NET Framework assembly, loading multiple DLLs upon launch, for example “dnsapi.dll”.
+Quasar server is vulnerable to a simple DLL hijacking attack, by using this technique to replace server DLLs.
+When the attacker restarts the Quasar application, our uploaded “dnsapi.dll” will instead be loaded.
+Through this vector, we could drop our own Quasar client on the attacker’s server and execute it.
+Our Quasar RAT will connect to our own (secured, of course) Quasar server, allowing us to control that attacker’s server with his own RAT.
+We can also replace “shfolder.dll” (and add a DLL export proxy to avoid a crash), which is loaded whenever the attacker clicks the builder tab – allowing us to infect the server while it runs, without the need to wait for application restart.
+Although Downeks has been publicly examined to some extent, our analysis found several features not previously described.
+Earlier Downeks samples were all written in native code.
+However, among our Downeks samples, we found new versions apparently written in .NET.
+We observe many behavioral similarities and unique strings across both the native-Downeks versions, and the new .NET Downeks versions.
+Almost all of the strings and behaviors we describe in this analysis of a .NET version are also present in the native version.
+We observed these samples deployed only against Hebrew-speaking targets.
+Downeks .NET internal name is “SharpDownloader”, “Sharp” may be a reference to the language it was written in – C#.
+As seen in previous Downeks versions, it uses masquerades with icons, filenames and metadata imitating popular legitimate applications such as VMware workstation (Figure 1) and CCleaner, or common file formats such as DOC and PDF.
+Figure 11 - Application metadata masquerading as VMWare Workstation
+All 3 samples were compiled with the same timestamp.
+Downeks.NET is obfuscated using “Yano” and can be easily de-obfuscated using the de4dot utility.
+SHA256: 4dcf5bd2c7a5822831d9f22f46bd2369c4c9df17cc99eb29975b5e8ae7e88606
+SHA256: 905f6a62749ca6f0fd33345d6a8b1831d87e9fd1f81a59cd3add82643b367693
+SHA256: c885f09b10feb88d7d176fe1a01ed8b480deb42324d2bb825e96fe1408e2a35f
+Downeks is a backdoor with only very basic capabilities.
+It communicates with the C2 server using HTTP POST requests.
+It runs in an infinite loop, in each iteration it requests a command from the C2, and then it sleeps for a time period it receives in the C2 response (defaulting to 1 second if no sleep-time sent).
+The data that is sent in the POST is serialized with json, which is then is encrypted, and finally encoded in base64.
+The json format is typically {“mth”:”some_method”, “data”:”some_encrypted_data”}.
+The C2 server responds using the same format and serialization/encryption/encoding.
+As described in earlier analyses, Downeks’ main purpose is as a downloader.
+Unfortunately, we were unable to get any C2 servers to issue download commands to any samples that we tested in our lab.
+The download is initiated upon receiving json with a “download” command, which includes the URL of the file to be downloaded.
+Downeks can also be instructed to execute binaries that already exist on the victim machine.
+After successful execution, Downeks returns the results to the C2 server.
+Downeks also has a self-update capability, if instructed by the C2.
+Downeks can be instructed with the “img” command to capture the victim screen and transmit it back to the C2.
+The parameters “wth” and “qlt” specify “width” and “quality”.
+Downeks .NET creates a file in the “Appdata” directory, based on certain properties of the machine.
+During our analysis, Downeks created a file in “Appdata\Roaming” containing only “SD{new line} 0” (“SD” possibly for “SharpDownloader”).
+Although this file itself is not particularly interesting, the older (native) Downeks versions also creates a file in Appdata\Roaming, with identical data.
+The filenames across the two variants bear striking similarities.
+The .NET variant creates “1FABFBFF0000065132F71D94”, while the native version creates “000206511FABFBFF”.
+We observed the string “1FABFBFF0000065132F71D94” in memory during debugging of the native variant (Figure 12).
+This is a pseudo-unique ID for each machine, based on install date taken from the registry, volume serial number, OS version and service pack, Processor architecture, and computer name.
+Figure 12 - Machine ID in memory
+Downeks enumerates any antivirus products installed on the victim machine and transmits the list to the C2.
+It constructs this list using the WMI query:
+Downeks achieves host persistence through either the registry “run” key or with a shortcut in the start-up folder.
+In another similarity between both variants, Dowenks assesses the victim’s external IP using an HTTP request to http://www.myexternalip.com/raw.
+Downeks can be instructed by the C2 to perform a few other commands:
+Downeks has static encryption keys hardcoded in the code.
+These keys are initialized in the “Defaults” class constructor, suggesting that the author of this malware has great affection for stackoverflow:
+We observed some typos in the code, such as “responce” ( “response”) and “GroubID” (“GroupID”) in this version.
+Palo Alto Networks customers are protected from Downeks and Quasar used in this attack:
+A list of Indicators of Compromise can be found in Appendix C - IoCs.
+Sign up to receive the latest news, cyber threat intelligence and research from us
+Please enter your email address!
+Please mark, I'm not a robot!
+By submitting this form, you agree to our Terms of Use and acknowledge our Privacy Statement.
+© 2021 Palo Alto Networks, Inc. All rights reserved.

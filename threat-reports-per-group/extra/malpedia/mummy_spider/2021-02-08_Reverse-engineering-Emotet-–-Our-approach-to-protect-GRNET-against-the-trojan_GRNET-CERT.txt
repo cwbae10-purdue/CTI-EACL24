@@ -1,0 +1,382 @@
+In October 2020 we observed an outbreak of malicious e-mails reaching GRNET employees’ inboxes.
+Meanwhile, similar campaigns were also targeting several public and private sector organizations in Greece.
+After acquiring dozens of such e-mails, we started planning our defensive strategy.
+To do so, we started analyzing the malware that was attached to the emails and realized that were dealing with the infamous Emotet trojan.
+In this document, we describe the steps of our analysis including the reverse engineering process of the malware executables, how we overcame the binary obfuscation techniques it employed, and how we determined the malware’s internals.
+In the course of our work, we were able to discover the list of IP addresses that constituted the network of Command-and-Control (C2) servers of Emotet.
+This information was very useful because we utilized it to detect any network connections from the GRNET network to the Emotet C2 network.
+Such connections  would indicate a potential compromised workstation in our premises.
+Overall, the goals of our analysis were to (a) create an infrastructure that received new updates of the Emotet trojan and keep our list of C2 IP addresses up-to-date and (b) understand the trojan’s persistence mechanism to perform forensic invastigations on compromised workstations.
+On January 27, 2021 Europol announced that it had completely taken down Emotet.
+The same day our update-monitoring infrastructure received an update which was Europol’s clean-up payload scheduled to be executed on April 25, 2021 at 12:00 p.m.. Hopefully, this will be the last time that we hear about Emotet.
+Meanwhile, we had been working on analyzing Emotet up to the time of Europol’s announcement.
+We release our analysis results hoping that IT professionals will find them useful when trying to protect against similar trojans in the future.
+In Chapter 1 we describe the malicious e-mails and the malware dropper (a macro-enabled MS Word document) delivered via those e-mails.
+If you are already familiar with Emotet’s dropper you may directly skip to the next chapters.
+In Chapter 2 we analyze the malware’s multi-layer Protector responsible for unpacking, decrypting and running the trojan for the first time.
+In Chapter 3 we describe the binary obfuscation techniques incorporated in the trojan itself as well as the ways to bypass them.
+In Chapter 4 we provide an in-depth description of the trojan’s inner-workings, its persistence mechanism, the communication with the Command-and-Control servers network and the way we discovered the C2 network.
+Finally, in Chapter 5 we briefly describe the process we followed to retrieve and analyze new payloads served by the C2 network.
+We have published the de-compiled code of referenced functions as well as the utilities that we implemented during the analysis in a GitHub repository.
+This work was carried out under the supervision of GRNET’s Chief Information Security Officer, Dimitris Mitropoulos.
+Dimitris Kolotouros – Head of IT Security Department, GRNETMarios Levogiannis – Senior IT Security Engineer, GRNET
+Seven months have passed since the first COVID-19 lockdown in Greece.
+The pandemic finds GRNET with a largely broadened IT Security agenda heavily linked with the state’s current digital transformation (involving several new applications being developed and maintained in house).
+The aforementioned developments, together with the work-from-home style that has just arrived, completely redefined the security perimeter and priorities of GRNET CERT.
+A new era comes with new challenges.
+Somewhere in between the various ongoing tasks, a number of weird looking e-mails that reached GRNET employees came to our notice.
+They all had a similar form, i.e., replies to legitimate mails that either contain a URL or an encrypted ZIP attachment and its password.
+First, to raise awareness, we notified all GRNET employees.
+Then, we started collecting and analyzing the suspicious e-mails.
+Initially, we inspected their source code looking for similarities.
+Our analysis led to several interesting remarks:
+Up to this point, we had already been informed about similar cases affecting other public and private sector organizations in Greece.
+Thus, a conventional incident response was not enough; we wanted to further analyze the malware.
+Our analysis started with the Word documents.
+When opening one of the documents, the victim sees a fake pop-up window.
+In fact, this is just an image inside the document imitating a legitimate pop-up window.
+In each document the fake pop-up window phrasing was different, but in every case it was there to persuade the victim to enable the Macro execution.
+We will continue by analyzing one of the MS Word documents.
+All other documents were similar to the one examined; albeit with minor differences.
+To see what would happen when a user enabled the macros, we examined the corresponding VBScript.
+The entry-point Document.Open() called function Q4hxwcihtett() of module Iauesnh6lzhaf:
+The function code, as we observe below, was obfuscated:
+We started following the code flow manually to understand it.
+This manual process revealed that most of the code was indeed irrelevant.
+Specifically, for each meaningful code instruction, the obfuscation process had generated a bunch of meaningless instructions placed before the meaningful one.
+So, most of the de-obfuscation effort was to identify each block and isolate the meaningful code instruction out of the block.
+Luckily enough, the attackers had left some traces that were helpful for us.
+As we noticed, their obfuscating tool had a serious issue (nobody’s perfect).
+In particular, it did not apply the indentation of the original instruction on the instructions of the replacement block.
+As a result, the original indentation could be found on the first instruction of each block.
+This issue gave us a way to automatically detect the blocks and isolate the last instruction of each block, which we knew it was the meaningful instruction of the block.
+The following obfuscation techniques were identified:
+Then, we only had to manually de-obfuscate some lines of code (the original number of lines was a little more than 400).
+The result was the following:
+Hence, we were able to answer an important question: “What happens when the user executes this macro?”
+Well, it spawns a process calling the Win32_Process.Create() method (line 10).
+The startup information parameter says “do not show a window” (line 9).
+Further, the command line parameter holds the command that will be invoked by the spawned process.
+As we can observe in the code, the command is already in the document (lines 4-5) together with some junk that is removed (line 6).
+So there was something more in the document itself apart from the fake popup window.
+First, we removed the formatting.
+In this way we revealed a paragraph that was kept out of the victim’s sight (it was formatted with a font size of 2px and a white font color):
+But we already know how to de-obfuscate it, i.e.
+Replace(commandLine, "][ 1) jjkgS [] []w", Empty):
+The result would attempt to run a PowerShell script that is encoded in base64 format.
+We decoded it to discover the actual PowerShell script:
+After performing a proper indentation, i.e.
+split lines on each ‘;‘ and perform indentations on code blocks ‘{‘ and ‘}‘, we got the following:
+We then noticed some common obfuscation techniques:
+We then used a PowerShell interpreter to evaluate strings and after removing irrelevant instructions and renaming the variables, we had the de-obfuscated code:
+The outcome was a script that was pretty simple.
+Actually, it attempts to download an executable file from several URLs and store it in the following path: $HOME\Pjq6t3_\Jvnk7yk\N1pjur3u.exe (the URLs and the path were different in each Word document).
+The size of each downloaded file is checked against a minimum value to ensure that if the executable has been removed from the compromised website, the 404 HTML page will be ignored and the next URL will be tried.
+When a file has been downloaded, it gets executed in a new process by calling the Win32_Process.Create() method.
+After following the same de-obfuscation procedure on every Word document available, we fetched the actual malware executables from the URLs described in the PowerShell scripts.
+To do so, we imitated the PowerShell User-Agent in a way; we needed to look like a malicious PowerShell script after all!
+During the course of our analysis we came across several compromised e-mail accounts and websites.
+In all cases, we sent abuse reports to the corresponding abuse contacts informing them of their compromised assets.
+In the previous chapter we documented the detection and preliminary analysis of a malware that was distributed via e-mails.
+We saw that the e-mails included an MS Word document with macros that spawn a new process running a PowerShell script in the victims machine.
+We also observed that the PowerShell script spawns one more process running an executable file downloaded from the Internet.
+Finally, we downloaded several of those executable files.
+With the executable files at hand, we wanted to examine their internals without running them.
+Thus, we continued with our reverse engineering process.
+At this point we started working with Ghidra, a free, open-source, reverse engineering tool that was released last year.
+First, we loaded some of the executable files and observed that they were PE (Portable Executable) files compiled for the x86 LE architecture.
+We started looking for meaningful data such as imported symbols and defined strings.
+To our surprise we observed a number of different programs.
+Also, we noticed that in every executable file there was one defined string looking like a random key.
+Apart from that, all the other strings seemed to differ between the executable files.
+Assuming that this is not a coincidence, we looked for references to these strings in the de-compiled code.
+While looking, we noticed one more similarity: although the surrounding code also seemed to differ between the executable files, there was an identical code pattern that consumed the alleged key.
+We reverse engineered this part of the code, and ended up with the following code:
+The code above has the following functionality:
+In deriveKey.c and decryptResource.c we include the reverse engineered code of the functions.
+The attackers hid the actual payload in the resource described by the following RESOURCE_INFO variable:
+We found the payload in the resources section of the executable file, just below this mouse icon:
+At that point we had the encrypted payload, the main key, the key derivation function and the decryption function.
+The only thing left was to decrypt the payload.
+So we reused the reversed engineered DeriveKey() and DecryptResource() functions to write a small decryption tool.
+After that we were able to decrypt the resource.
+Loading the decrypted resource in Ghidra was not just a drag-n-drop task.
+Apparently, there were no executable headers to let Ghidra infer the architecture details.
+However, we knew that this payload was loaded in the memory space of the initial executable so we only had to define the architecture to be the same as the initial executable.
+Furthermore, we knew that the executable starts with a function (the pointer to the memory was handled as a function pointer as previously described).
+With a little manual work, we managed to analyze the payload with Ghidra:
+As shown above, the code pushes some values in the stack and then calls function FUN_0000002d().
+The values pushed in the stack must be the function arguments.
+Among these values we noticed 0x529 and 0x31529 which Ghidra analyzed as memory references (DAT_0000052e and DAT_0003152e).
+DAT_0003152e contains the last 5 bytes of the executable representing the null-terminated string “dave” that looked like a magic value.
+The first two bytes were the printable characters “MZ”.
+As you probably know this is the header signature of DOS MZ executables.
+This was a very good lead.
+The file can be identified by the ASCII string “MZ” (hexadecimal: 4D 5A) at the beginning of the file (the “magic number”).
+“MZ” are the initials of Mark Zbikowski, one of leading developers of MS-DOS.
+By further examining the contents of DAT_0000052e, we identified some known MS-DOS stub strings, such as the “This program cannot be run in DOS mode”.
+Of course this resembles a PE executable.
+We went on reversing the FUN_0000002d() function assuming that its first argument is a reference to a PE executable.
+The first difficulty was the mysterious function named FUN_00000456().
+This function is invoked several times at the beginning of FUN_0000002d() with a different argument each time.
+The return values are stored on local variables and later on they are used as function pointers.
+Apparently, the function somehow resolved these arguments to function addresses.
+Thus we needed to reverse engineer FUN_00000456().
+Examining FUN_00000456(), we came across a technique for resolving library symbols.
+Specifically, the function retrieves the list of loaded libraries (InLoadOrderModuleList) from the Process Environment Block (PEB) and loops over each exported symbol of each library.
+On each loop a combined hash (32-bit value) of the library name and symbol name is calculated.
+If this value matches the function argument, a pointer to the address of the corresponding function is returned (in resolveImportByHash.c we include the reverse engineered code of the function).
+As soon as we understood the internals of the hashing mechanism, we wrote a short script, generate_symbol_hashes1.py, that calculates these hash values for every symbol of several common libraries (ntdll.dll, kernel32.dll, etc) and exports them to a proper (and long) C enumeration:
+After importing the generated enum in our Ghidra project (and properly retyping the function), we had a clear view of which library functions are called later on:
+We were now able to continue reversing the FUN_0000002d() function.
+After some good amount of analysis we concluded that the function is a pretty basic binary image loader with the following function signature (in loadBinary.c we include the complete reverse engineered code):
+The code at the beginning of the encrypted payload could now be translated into something meaningful:
+In this way, we knew that the executable included at address 0x0000052e will be loaded.
+Then, the entry-point is invoked:
+When the entry-point returns, its exported symbol, i.e., an exported function with a name matching the 0xed1c7b90 hash value, will run.
+We exported the executable included at address 0x0000052e in a separate file and loaded it into Ghidra.
+We loaded the nested executable in Ghidra and went straight to the entry-point.
+The entry-point just calls a function with a couple of parameters.
+You might wonder what is this DAT_10004070 value.
+As a result, we had a quick look into its contents:
+That “MZ” signature on the right looks familiar, doesn’t it?
+Well, this is another nested PE executable!
+It was like opening a matryoshka doll.
+We reverse engineered the FUN_10001000() function and, as you can probably guess, it was yet another binary image loader with the following function signature:
+Internally, it performs the following tasks:
+Once again we exported the executable included at address 0x10004070 in a separate file that we had to explore.
+In the previous chapter, we explored the steps until the actual trojan is executed.
+We observed that the downloaded executable, decrypts part of itself and executes the second stage payload.
+This payload in turn, executes another payload, i.e.
+the executable that we will analyze in this chapter and Chapter 4.
+In this Chapter, we’ll fast-forward and describe the obfuscation techniques employed by the latter executable.
+This will provide us with the necessary background to further explain its functionality in Chapter 4.
+The first thing that we noticed after loading the executable in Ghidra was that it does not import any symbols.
+In particular, it is not feasible for an executable of only 369 KB, to have a Windows API implementation statically linked.
+Hence, it became obvious that it was probably using a custom mechanism to resolve symbols from system libraries.
+Starting from the entry-point, we noticed the following lazy initialization pattern, the result of which is stored in a global variable and is used as a function pointer.
+The same pattern (and some variations of it) is used all over the executable.
+Could this be the custom symbol resolution mechanism employed by the trojan to hide the APIs that it uses?
+To find out, we reversed engineered functions FUN_00404190() and FUN_004040f0().
+Indeed, these two functions work almost like FUN_00000456() described in Chapter 2:
+This technique is called API Hashing.
+In findModuleByHash.c and findModuleExportByHash.c we include the reverse engineered code of the functions.
+Again, we wrote a short script, generate_symbol_hashes2.py, that calculates the hashes for every symbol of some common libraries (e.g.
+and exports them to two C enumerations:
+After importing the enumerations in Ghidra, we had a clear view of the modules and functions imported by these calls.
+We noticed that the binary did not contain any strings.
+This made us suspicious because it is impossible for an executable that performs a meaningful functionality, not to contain any strings.
+As a result, we assumed that some kind of string obfuscation is used.
+The following is the full list of the strings that we identified.
+The first time we met the use of a string was in a call to LoadLibraryW(), the only parameter of which is the name of the library to be loaded.
+The value passed to LoadLibraryW() is returned from function FUN_004035f0(), which in this case operates on binary data at memory address 0x40d7f0.
+It became apparent that this function must be doing some kind of transformation (see decryption) to the data pointed to by its input.
+We reversed engineered the function and we confirmed our guess, its purpose is to decrypt the input binary data to a Unicode string.
+The first 4 bytes of the binary data are the XOR key, the next 4 bytes are the string’s encrypted length and the rest are encrypted string itself.
+After decrypting the length, the function iterates over all quadruples of encrypted characters (remember that the key is 4 bytes long) until all have been decrypted.
+For the sake of completeness, in decryptWideString.c we included the reverse engineered code of that function.
+Two more versions of this function exist in the executable: one that decrypts the ciphertext to an ASCII string and one to a byte array.
+Luckily, all are compatible with each other as ciphertexts are processed as 32-bit integers.
+Only their output types differ.
+We implemented a tool to decrypt any string or byte array in the executable.
+The source code can be found in decrypt_bytes.py.
+We continued our analysis with function FUN_0406860(), the first function that the entry-point calls, and observed some kind of control flow obfuscation.
+Specifically, the function’s body is split into multiple if blocks, wrapped in a while loop.
+The flow is determined by a control variable that is set at the end of each block.
+Furthermore, as seen from the function graph below, the majority of the blocks have the same predecessor and successor blocks.
+This technique resembles the Control Flow Flattening technique, in which each function is split into basic blocks that are encapsulated in a switch block wrapped in a while loop.
+This technique is also applied to the vast majority of the functions in the executable.
+We were aware of techniques to automatically de-obfuscate control flow flattening (e.g.
+the technique described in this quarkslab blog post), but since the size of the code was small enough we decided to follow the flow manually.
+In the previous chapter we had a look at the trojan executable.
+We identified several obfuscation techniques incorporated in the executable and described the methods we used to overcome them.
+In this chapter, we will discuss the trojan’s inner functionalities.
+We followed a depth-first approach to reverse engineer the executable.
+We started from the function FUN_0406860(), the one called by the executable’s entry-point, which we called “main”.
+Then, we followed the flow examining each function call.
+We did this until we reached a function that either made no further calls or only invoked already examined functions.
+After a couple of weeks we had completely studied the executable’s code.
+As a result, we were able to draw the code flow of the main function in a meaningful manner.
+Below, we present the main control loop of the trojan:
+The basic groups of states are highlighted:
+Initially, the trojan loads the required libraries (states 1 and 2) and initializes its internal variables (state 3).
+Then, it checks whether it will run with command line arguments or not (state 4).
+The existence of command line arguments indicates that this is the first run of a self-update.
+The command line arguments contain the file path where the executable will have to migrate to.
+In that case, states 8-13 perform a series of actions related to the persistence of the trojan.
+Specifically, any existing file in the target file-path is renamed (state 8), the current executable is stored in the target file-path and its Zone Identifier ADS is removed (state 9).
+The created file is marked as “old” by changing its timestamps (state 10).
+If the process runs with administrative permissions, a new Service for the executable is created (state 11).
+Then, it waits until it receives a signal from its parent process (state 12).
+Finally, it runs itself from the newly created executable (state 13).
+In case that command line arguments are absent it’s either the first run after the Protector extracted the trojan or it’s any later run.
+This is inferred by checking the executable’s timestamp (state 5).
+In case it’s indeed a first-run, any existing Services for the executable are removed provided that the executable has administrative permissions (state 6), and then a random legitimate-looking file-path is picked as the target for the executable file (state 7).
+Then, states 8-13 run performing the series of actions described earlier.
+In case it not a first-run (indicated by a “recent” timestamp) and the trojan runs with administrative permissions, it checks whether its parent process name is “services.exe” (state 14).
+If so, it runs itself in a new process (state 13) and terminates the current process.
+Finally, if this is not the first run (indicated by an “old” timestamp), and the trojan runs without administrative rights or its parent process name is not “services.exe“, the C2 communication flow happens.
+First, a new thread that monitors the changes of the current process’ executable filename is started (state 15).
+Then the control reaches state 16 and always returns to it until the current process’ executable filename changes.
+That will be the result of a self-update and after that, the trojan will wait for any threads to terminate (state 39) and then will terminate its process.
+While no changes of the filename are detected, the trojan will repeatedly communicate with C2.
+First, the C2 communication parameters are initialized once (states 17-20).
+Furthermore, the request data regarding the host system information are also initialized once (states 21-26).
+On each communication attempt, the list of the processes currently running on the system as well as the list of active payload IDs will be included in the request (states 27-28).
+Then the actual communication with C2 is performed (states 29-31).
+Upon a successful communication the trojan will first check if a termination flag was received.
+In that case it will immediately move its executable to the Temp folder and terminate itself (state 38).
+Otherwise, any existing files in the folder containing the trojan’s executable are deleted and a new auto-run Registry Key is created (state 32).
+Then, the trojan will loop over the received payloads and execute them (state 33).
+On the rest of the chapter we will focus on two main functionalities of the trojan, the persistence mechanisms and the communication with the Command-and-Control servers.
+To identify its first run, the trojan should either run with command line arguments, or the LastWriteTime of its executable file needs to be less than 8 days old.
+The timestamp is retrieved by calling GetFileInformationByHandleEx() on the handle returned by GetModuleFileNameW().
+Upon its first run, the trojan places its executable file in a sub-folder inside one of the following Windows Special Folders:
+The names given to sub-folder names and the filename of the malware, depend on whether the executable did run with command line arguments or not:
+Furthermore, it deletes the corresponding Zone.Identifier Alternate Data Stream (which is added by the web client to mark files downloaded from external sites as possibly unsafe to run).
+Finally, all the timestamp attributes of the file (CreationTime, LastAccessTime, LastWriteTime and ChangeTime) are set to 8 days in the past.
+In this way, the next time the malware runs, will be aware that it is not the first time.
+To achieve persistence, two different methods are used:
+After achieving persistence, the trojan tries to communicate with one of the Command and Control (C2) servers to inform it about the compromised system and retrieve the payloads to execute.
+Emotet’s C2 network consists of multiple C2 servers with different C2 servers having different up-times, achieving redundancy and lowering the probability of detection.
+In total, we identified 126 unique C2 servers spread all over the world, mainly located in Europe, the Americas and south-east Asia:
+The trojan binaries come with the list of IPv4 addresses and ports of all C2 servers embedded.
+The C2 servers are tried sequentially, until one responds successfully.
+On the first run, the trojan starts from the first C2 server of the list.
+On all subsequent runs, it continues from the last C2 server that responded successfully.
+We again wrote a short script to automatically extract the IPv4 addresses and ports from the binaries, which can be found in extract_c2_socket_addresses.py.
+Finally, all C2 servers share a common private key which is used for protecting the communication between the trojan and the C2 server.
+The public key is also embedded in the trojan binaries, albeit encrypted.
+Data exchange between the trojan and the C2 server utilizes a complex serialization and deserialization mechanism, which includes compression and encryption of both the request and response data.
+The actual communication takes place over plain HTTP, presumably to evade protections based on flagged TLS certificates.
+During the trojan’s initialization phase, the C2’s RSA-768 public key is decrypted (using the decryption function described in the previous chapter) and a random AES-128 session key is generated (using the Windows Crypto API).
+The public key is used to encrypt the session key and verify the response and the session key to encrypt the request and decrypt the response.
+The encrypted session key is included in the request so that the C2 server can decrypt the request payload.
+Finally, SHA-1 is used for hashing.
+The primitive data types used in the exchanged messages are the byte, the char and the uint (32-bit).
+The non-primitive data types are struct Bytes and struct String, as shown in the following code snippet:
+All primitive data types are serialized in little-endian byte order.
+A struct Bytes is serialized to the size of the buffer followed by the actual bytes of the buffer.
+A struct String is serialized to the length of the string followed by the characters of the string, excluding the null terminator.
+The trojan uses information gathered from the compromised system to assemble the request payload.
+This includes information that can be used to uniquely identify the system, information about the operating system and the running processes as well as the current state of the trojan itself.
+Upon analyzing the binary, we concluded that the structure of the request payload as used internally by the trojan is the following:
+The request payload struct is serialized to the serialized request payload by serializing and concatenating its fields in the order they appear, as shown in the image below.
+The ID assigned to the compromised system.
+It is constructed using the format string %s_%08X, where the first specifier corresponds to the computer name and the second specifier to the volume serial number of the disk partition where Windows are installed.
+To get the computer name, GetComputerNameA() is used.
+To get the volume serial number, GetWindowsDirectoryW() is used to get the drive letter of the partition where Windows are installed and then GetVolumeInformationW() is utilized to get the volume serial number of that partition.
+Non-letter and non-digit characters in the computer name are replaced by the character X.
+For example, for the compromised system with computer name DESKTOP-K1C601 and volume serial number B4A6-FEC6 the value of systemId would be DESKTOPXK1C601_B4A6FEC6.
+A numeric value that encodes information regarding the OS and the architecture of the compromised system.
+The trojan uses RtlGetVersion() and GetNativeSystemInfo() to get the OSVERSIONINFOEXW and SYSTEM_INFO structures, respectively.
+The numeric value is constructed as shown below:
+For example, the systemInfo value of 110009 means that the operating system is Windows 10 and the processor architecture is x64:
+The Remote Desktop Services session under which the current process is running.
+The trojan uses GetCurrentProcessId() to get the current process ID and ProcessIdToSessionId() to convert the process ID to the RDP session ID.
+The value 20200416 is hardcoded in the request payload, which can presumably be decoded to the date April 16, 2020.
+This could be the date that the current campaign started, however this cannot be confirmed.
+The value 1000 is hardcoded in the request payload.
+A comma-separated list of the names of all processes running in the system, except for the current and the parent processes.
+The trojan uses CreateToolhelp32Snapshot() to take a snapshot of all processes in the system and Process32FirstW()/Process32NextW() to iterate over them.
+The current and the parent processes are filtered out.
+The IDs of the payloads received from the C2 server that are currently running.
+To support this functionality, the C2 server assigns an ID to every payload and the trojan maintains an in-memory list of the active payloads.
+Using this value, the C2 server is informed about the payloads that are currently running.
+The list of IDs is represented as an array of unsigned integers.
+For example, if the payloads with IDs 2643, 2647, and 2759 are currently running, the value of payloadIds would be:
+The hash of the full path of the current process’ executable, lower-cased.
+The trojan uses GetModuleFileNameW() to get the path and a custom hash function to hash the path, the reverse engineered version of which can be found in hashLowercase.c.
+For example, if the path of the trojan’s executable was C:\Users\IEUser\AppData\Local\dxdiag\reg.exe, the hash value would be 0x9f955b9.
+The request encapsulates the request payload described before as well as the request flags.
+The request flags are used to specify the type of the request payload.
+Before serializing the request struct, the serialized request payload is compressed using a LZ77-style algorithm, forming the compressed request payload.
+The request struct’s fields are serialized in the order they appear to form the serialized request, following again the aforementioned serialization rules.
+Finally, the session key is encrypted with the C2 servers’ public key (96 bytes), the serialized request is hashed (20 bytes) and then encrypted with the session key to form the encrypted request.
+The encrypted session key, the request hash and the encrypted request form the request body.
+This is illustrated in the following image.
+The trojan communicates with the C2 server over plain HTTP, using the WinINet API.
+In preparation of the communication, the trojan generates a random URL path, a random boundary for the multipart/form-data body and random field and file names for the form part to be submitted.
+the Accept header) are hardcoded, while others (e.g.
+the User-Agent header) are system-dependent.
+Following is a sample HTTP request sent by the trojan to a C2 server:
+And the corresponding HTTP response:
+Just like the request body, the response body consists of three parts, the compressed response’s signature, the compressed response’s hash and the encrypted response.
+The signature is generated by the C2 servers’ private key and the compressed response is encrypted using the session key submitted to the C2 server as part of the request.
+Upon decrypting the encrypted response, the trojan retrieves a uint representing the decompressed response size followed by the compressed response, which can be decompressed to the serialized response using the same LZ77-style algorithm that was used to compress the request.
+Finally, the serialized response can be deserialized to the following struct, adhering again to the common serialization rules.
+The response flags are used to inform the trojan whether to continue or terminate its operation after executing the payload.
+The serialized response payload is a series of serialized struct Bytes, each of which contains a serialized response payload struct.
+Every payload has a unique ID.
+As discussed in the subsection about the request payload, this is used to keep track of the payloads that are being executed by each compromised system.
+Payload IDs are incremental integers.
+Each received payload is handled based on the payloadType property.
+There are 4 payload types:
+For types 1, 2 and 4, the file is stored the same directory where the executable of the trojan resides.
+Its filename is generated by concatenating the name without the extension of a random .exe or .dll file in the CSIDL_SYSTEM (C:\Windows\System32) directory, the payload ID in a hexadecimal format (%x) and the “.exe” extension.
+For type 3, the entry-point is called with a non-standard reason (10) and the reserved argument is a pointer to a struct with the system ID and the C2 servers’ public key in DER format, as shown below.
+For type 4, the executable is called with a single command line argument, which is a base64-encoded serialized struct with a handle to the calling process and the parent directory and name of the calling process’ executable, as shown below.
+This type is used for updating Emotet to newer versions.
+The actual data of the payload.
+In the previous chapter we thoroughly described the internals of the trojan.
+Having a good understanding of the communication protocol between the trojan and the C2 network we could now communicate with any C2 server, posing as an instance of the trojan.
+In this final chapter we show the custom client that we developed in order to communicate with the C2 servers with arbitrary requests and describe the responses that we received.
+Furthermore, we briefly describe how we used the Ghidra Scripting API in order to automate repeated processes of reverse-engineering which proved to be helpful for extracting useful information out of the received update payloads (e.g.
+new IP addresses of the C2 network).
+We have already described the communication between the trojan instances and the C2 network, including the detection of the C2 servers, the structure of the requests and responses as well as the compression and encryption algorithms.
+Based on this analysis we could develop our own Emotet client, which allowed us to perform requests with arbitrary request payloads.
+Like the rest of the scripts, the client was implemented in Python.
+The source code can be found in client.py.
+Using this client, we could monitor the uptime of each of the listed C2 servers and parse the C2 responses.
+Most of the C2 responses were loadable DLL extensions to the trojan (type 3).
+The payloads received from different C2 servers at the same point in time were identical or almost identical, differing only in the first 48 bytes of the read-only data section.
+Some of the payloads were obfuscated using variations of the techniques described in Chapter 3, while others were not.
+The only update (type 4) that we received during our analysis was Europol’s clean-up client.
+From the collected statistics, only a fraction of the C2 servers were online at each time.
+The set of active C2 servers was changing over time, pressumably to avoid triggering alerts and being detected.
+On each received payload we had to repeat the processes that we followed to overcome the incorporated obfuscation techniques.
+Since these techniques were slightly different for each payload (e.g.
+different XOR keys were used, algorithm constants were modified, variables were stored in different memory addresses, etc.)
+we had to develop some pieces of code implementing some basic logic.
+We used the Ghidra scripting API and developed Python scripts that automated repeated process that required considerable manual effort.
+Specifically, the two main processes that were automated are the decryption of the strings and the resolution of the imported symbols.
+These basic automations made the analysis of the received updates significantly easier.
+Implementation of the algorithms can also be found in decrypt_bytes.py and generate_symbol_hashes2.py.
+In this analysis we documented our defensive strategy against a large trojan-spreading campaign.
+Our approach was based on static analysis and reverse engineering.
+We initially avoided running any of the trojan’s stages.
+This was an intentional choice because with dynamic analysis certain conditions and corner cases could not have been triggered and whole code paths could have been skipped.
+After many hours of reverse engineering and building enough confidence that we had a full understanding of the trojan’s inner workings, we used dynamic instrumentation to confirm our observations.
+For the latter we used the Frida dynamic instrumentation toolkit.
+Nevertheless, as shown by our work, the dynamic analysis of a malware is not always required in order to undestand and analyze its functionality.
+Notice that in this analysis we only focused on analyzing the trojan itself and intentionally skipped the analysis of payloads spread by the C2 network.
+From the analysis of the trojan’s internals in Chapter 4, it became apparent that Emotet enables the C2 servers to run arbitrary payloads on infected computers.
+It is known that Emotet had been used in order to spread banking-related malware, e-mail harvesting malware, as well as ransomware.
+However, analyzing those payloads was considered out of the scope of planning a generic defense against Emotet.
+Finally, we did not include any analysis of the last payload that our update-monitoring infrastructure received, which according to our observations and combined with public reports is Europol’s clean-up payload.
+We hope that IT Security professionals will find our work useful for defending against similar malware in the future.
+Thank you for the hard work and for publishing it!
+Thank you for the hard work and of course, thank you for publishing!
+Thanks for sharing your work.
+Simply incredible work, thank you for sharing!
+I’m a newbie learning RE and malware and have so much to learn from this article
+Fantastic article thank you for publishing it!
+This is the most thorough blog I’ve read on Emotet.
+[…] I see this countless time which bothers me to no end.
+For example, this company posted their documentation about the Emotet malware found here: https://cert.grnet.gr/en/blog/reverse-engineering-emotet/ […]
+Because they are compromised websites and we had no intention to discredit them.
+Did you had a data breach, or any other exploit from the attackers ?
+It seems like a serious attack that may affect GRNET users, do you also have a press release about the incident ?
+From what I understand there was no data breach identified regarding GRNET.
+They did all this to protect their infrastructure from being exploited and identify any breaches that might occur.
+First of all, the goal of this analysis was to enable us to detect compromised employees’ workstations and/or compromised assets in high-risk networks as a precaution measure.
+Essentially, it was an attempt to generate our own generic IoCs for an ongoing threat.
+Of course, we incorporate other lines of defense, too.
+No data breach related to this campaign and affecting GRNET clients and/or users was identified.
+[…] Reverse engineering Emotet […]
+any chance to get the HASH of the files?
+We found no point on publishing hashes of the files since they are probably unique for each payload (the ways that uniqueness of each stage of the malware is achieved is described in the analysis above).
+Tel: + 30 210 7474274, Fax: +30 210 7474490
+Email: info-at-grnet.gr
+ This site uses cookies to deliver our services.
+If you want to know more about cookies or would like to delete your Cookies, visit our Cookie 				Policy.

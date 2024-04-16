@@ -1,0 +1,87 @@
+Check Point Research discovered a new campaign against the Mongolian public sector, which takes advantage of the current Coronavirus scare, in order to deliver a previously unknown malware implant to the target.
+A closer look at this campaign allowed us to tie it to other operations which were carried out by the same anonymous group, dating back to at least 2016.
+Over the years, these operations targeted different sectors in multiple countries, such as Ukraine, Russia, and Belarus.
+In this report, we will provide a full analysis of the TTPs utilized throughout this campaign, the infrastructure, and the new tools we uncovered during our research, of what we believe to be a Chinese-based threat actor.
+The investigation started when we identified two suspicious RTF documents sent to the Mongolian public sector.
+The documents were written in the Mongolian language, with one of them allegedly from the Mongolian Ministry of Foreign Affairs:
+Document 1: Information about the prevalence of new Coronavirus infections
+Document 2: Purchases for buildings in documentary projects
+These RTF files were weaponized using version 7.x of a tool named RoyalRoad (aka 8.t).
+This tool, which is commonly used by various Chinese threat actors, allows the attacker to create customized documents with embedded objects that exploit the Equation Editor vulnerabilities of Microsoft Word.
+After the victim opens the specially crafted RTF document, and the Microsoft Word vulnerability is exploited, a file named intel.wll is dropped into the Word startup folder: %APPDATA%\Microsoft\Word\STARTUP.
+This persistence technique is often used by newer versions of the so-called RoyalRoad.
+Every time that Microsoft Word application is launched, all the DLL files with a WLL extension in the Word Startup folder would launch as well, triggering the infection chain we describe below:
+This not only serves as a persistence technique, but also prevents the infection chain from fully “detonating” if run inside a sandbox, as a relaunch of Microsoft Word is required for the full execution of the malware.
+After it’s loaded, the malicious intel.wll DLL proceeds to download and decrypt the next stage of the infection chain, from one of the threat actor’s servers: 95.179.242[.
+The next stage downloaded is also a DLL file, and it serves as the main loader of the malware framework developed by the attackers.
+It is executed using Rundll32, and it communicates with another one of the threat actor’s C&C servers (95.179.242[.
+]27) to receive additional functionality.
+The threat actor operates the C&C server in a limited daily window, going online only for a few hours each day, making it harder to analyze and gain access to the advanced parts of the infection chain.
+At the final stage of the infection chain, after the appropriate command is received, the malicious loader downloads and decrypts a RAT module, also in the form of a DLL file, and loads it into memory.
+This plug-in like architecture might hint at the existence of other modules, in addition to the payload we received.
+The RAT module appears to be a custom and unique malware, though it also includes some rather common core capabilities, listed below:
+At the beginning of our research, one of the attacker’s servers, which served the next stage malware, had directory listing enabled for a limited time.
+This allowed us to download all hosted files, as well as to gain some insight into the operation timeline and the working hours of the attackers.
+Even though they were available for download, all the files on the server came encrypted.
+Luckily, by utilizing the same encryption scheme seen in our infection chain, we were able to decrypt most of the files stored on the server.
+Decryption scheme derived from “intel.wll”
+The dozen of files that we were able to decrypt can be divided into four main clusters of malware loader families.
+Their embedded internal names and core functionality are described below:
+Payload types found on the server
+After gaining access to the additional decrypted files, we were able to hunt for similar samples.
+Searching for similar files by the internal names (http_dll, Rundll32Templete and minisdllpub), unique exported functions (Engdic, WSSet and MSCheck) and code similarities (decryption methods, communication patterns, etc.
+), allowed us to find more samples related to the attacker:
+One of the samples found (92de0a807cfb1a332aa0d886a6981e7dee16d621) led us to an article covering a similar initial infection chain, which appears to be after Ukrainian targets.
+Another sample (9ef97f90dcdfe123ccb7d9b45e6fa9eceb2446f0) was originally dropped by an RTF document which appears to be targeting entities in the Russian Federation, back in late 2018.
+Analyzing the newly discovered samples introduced us to a larger part of the infrastructure utilized by the threat actor, and a common TTP: All the C&C servers were hosted on Vultr servers and the domains were registered via the GoDaddy registrar.
+As we analyzed this campaign, in addition to the infrastructure used, we also noticed an interesting behavior by the attackers
+At a certain point, the C&C server 95.179.242[.
+]6 stopped serving the open directory listing.
+A few days later dw.adyboh[.
+]com became an open directory:
+Open directory listing at dw.adyboh[.
+This might indicate that the attackers are enabling directory listing, when one of their payload delivery servers is in active use.
+From the payload perspective, on the other hand, once we found the additional related samples mentioned in the Hunting section above, we were able to connect it to a known threat group.
+In the NWCWorkstation.dll sample mentioned above, we observed a unique string as part of the logging functionality: “V09SS0lO”.
+This led us to an article from 2017 by Palo Alto Networks, titles Threat Actors Target Government of Belarus, which describes an attack that utilizes a RAT named BYEBY.
+The article itself also connects to a previous article dating back to 2016, where the same tools were used in an attack targeting the Mongolian government.
+The article also explores the connections between these attacks and previous attacks related to the Enfal Trojan.
+By comparing the IOCs from the 2017 attack to our campaign we observed several similarities:
+The servers from the 2017 publication were set on the same infrastructure as all the other samples found during our investigation, and utilize Vultr and GoDaddy services.
+When analyzing one of the files from the open directory (bf9ef96b9dc8bdbc6996491d8167a8e1e63283fe), we noticed that it decrypts and loads a DLL named wincore.dll.
+By investigating this dropped file, we were able to make several correlations to the BYEBY sample from 2017:
+To recap, the second stage payload in the attack chain, is an encrypted DLL file named minisdllpub.dll.
+The DLL, downloaded from 95.179.242[.
+]6, is a downloader for an additional payload.
+In the following section, we go over its implementation and highlight the characteristics which are unique to this payload.
+Minisdllpub.dll begins by creating a mutex with the name Afx:DV3ControlHost.
+This is a unique indicator that can later be used to hunt for more samples in the wild.
+It then defines a structure of size 0x5f8 to store system and environment information such as the name of the running computer, IP addresses, the username, and OS Version.
+Next, another structure of size 0x3FC is created, this time to store pointers to loaded DLLs and API functions, as well as the command and control IP address (95.179.242[.
+After setting up these structures, the flow continues and a new thread is created.
+First, it fetches several lists of API functions, and dynamically loads them.
+As can be seen in the following image, each list is comprised of the name of a library followed by a sequence of API functions to load from this library.
+Pointers to these functions are then added to the previous structure which are used to dynamically invoke them when needed.
+Comma-separated lists of API functions, prepended with the library name
+The second stage payload then sets up HTTP or HTTPS communication, depends on several checks, and starts communicating with its remote control in new threads.
+When the server replies, it sends XOR encoded DLL to the malware, with the key 0x51.
+Minisdllpub.dll then decodes the given payload and dynamically loads the new PE to memory.
+When loaded, it searches for an export function with the name e. The malware then keeps listening to commands from the server, and when those are received, it passes them to the "e" function of the newly loaded payload.
+By doing so, the second-stage is operating as a middle-man between the C&C and the final payload – a remote access tool.
+The malware is searching for the export function “e”, in order to invoke it
+At this point, we have a unique layout of modules loaded on the victim’s computer.
+First, is the Minisdllpub.dll that was initially loaded using Rundll32 by http_dll.dll (intel.wll) when a Microsoft Office application was executed.
+Next, we have the RAT payload itself which receives its control commands not directly from the C&C, but through Minisdllpub.dll that acts as a mediator.
+Interestingly, in addition to the commands to execute, Minisdllpub.dll also passes several structures to the final payload.
+The structures which were previously built and filled, are now used by the RAT to dynamically invoke API functions and deliver data to the C&C server.
+This unique approach of re-using function pointers that were loaded in the previous module makes the analyzing the RAT hardly possible without having the previous stage as well.
+The supported functionalities of the final payload, as well as the respective commands it receives and sends, are described in the table in Appendix A.
+In this campaign, we observed the latest iteration of what seems to be a long-running Chinese-based operation against a variety of governments and organizations worldwide.
+This specific campaign leverages the COVID-19 pandemic to lure victims to trigger the infection chain.
+The attackers updated their toolset from documents with macros and older RTF exploits to the latest variation of the “RoyalRoad” RTF exploit-builder observed in the wild.
+The full intention of this Chinese APT group is still a mystery, but it is clear they are here to stay and will update their tools and do whatever it takes to attract new victims to their network.
+Check Point SandBlast Agent protects against this APT attack, and prevents it from the very first steps.
+Appendix A: RAT Module – Supported Commands
+Appendix B: Files on the server
+© 1994 Check Point Software Technologies LTD. All rights reserved.
+Property of CheckPoint.com | Privacy Policy

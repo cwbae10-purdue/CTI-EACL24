@@ -1,0 +1,118 @@
+ESET’s Anton Cherepanov analyzes the work of TeleBots, a malicious toolset that was used in focused cyberattacks against targets in Ukraine’s financial sector.
+In the second half of 2016, ESET researchers identified a unique malicious toolset that was used in targeted cyberattacks against high-value targets in the Ukrainian financial sector.
+We believe that the main goal of attackers using these tools is cybersabotage.
+This blog post outlines the details about the campaign that we discovered.
+We will refer to the gang behind the malware as TeleBots.
+However it’s important to say that these attackers, and the toolset used, share a number of similarities with the BlackEnergy group, which conducted attacks against the energy industry in Ukraine in December 2015 and January 2016.
+In fact, we think that the BlackEnergy group has evolved into the TeleBots group.
+As with campaigns attributed to BlackEnergy group the attackers used spearphishing emails with Microsoft Excel documents attached that contain malicious macros as an initial infection vector.
+This time malicious documents don’t have any content with social engineering directing potential victims to click an Enable Content button.
+It seems that the attackers are depending on the victims to decide entirely on their own whether to click it or not.
+Figure 1: One example of a malicious XLS document used in the spearphishing attack.
+Usually, the malicious documents don’t contain meaningful information in the metadata, but this time the metadata of the document contains the nickname of the person who is responsible for its modification.
+Moreover, this nickname matches that of an individual who is actively communicating within a Russian-speaking community of cybercriminals.
+However, we should say that it is possible that this was intended deceptively as a false flag or a coincidence.
+Figure 2: Metadata reveals what might be the attacker’s nickname.
+Once a victim clicks on the Enable Content button, Excel executes the malicious macro.
+Our analysis shows that the code of the macro used in TeleBots documents matches the macro code that was used by the BlackEnergy group in 2015.
+Figure 3 illustrates these similarities.
+The main purpose of the macro is to drop a malicious binary using the explorer.exe filename and then to execute it.
+The dropped binary belongs to a trojan downloader family, its main purpose being to download and execute another piece of malware.
+This trojan downloader is written in the Rust programming language.
+It should be noted that during the first stages of the attack, the TeleBots group abuse various legitimate servers in order to hide malicious activity in the network.
+For example, the trojan downloader fetches data from a hardcoded URL that points to a text file on the putdrive.com service (which allows anyone to upload and share files online).
+The text file that is hosted on the online service is a final payload, encoded using the Base64 algorithm.
+The final payload is a backdoor written in Python and detected as the Python/TeleBot.AA trojan.
+This backdoor is the main piece of malware used by these attackers, which is why we’ve named the TeleBots group as such.
+Figure 3: Similarities between malicious macro code used by BlackEnergy and TeleBots.
+In January 2016 we published our analysis of a spearphishing attack against energy companies in Ukraine.
+That attack probably has a connection to the infamous BlackEnergy attacks in 2015 because the attackers used exactly the same mail server to send spearphishing messages.
+However, the attacks in January 2016 were different.
+Instead of using the BlackEnergy malware family, the attackers used a relatively simple open-source backdoor, written in the Python programming language, called GCat.
+The Python code of the GCat backdoor was obfuscated, then converted into a stand-alone executable using the PyInstaller program.
+The Python/TeleBot malware uses exactly the same approach; the Python backdoor code is obfuscated and packed into a standalone executable using PyInstaller.
+In addition, the Python code is ROT13 encoded, AES encrypted, compressed using zlib library and then Base64 encoded.
+But what really makes this backdoor interesting is the way in which it communicates with attackers in order to receive commands.
+Python/TeleBot abuses the Telegram Bot API from Telegram Messenger to communicate with the attackers.
+The Telegram Bot API is based on HTTP and to a network administrator within a compromised network, the communication between the infected computer and the attackers will look like HTTP(S) communication with a legitimate server, specifically api.telegram.org.
+We have informed Telegram of this abuse of their communication platform.
+Figure 4: The Python/TeleBot.AA malware code that uses Telegram Bot API.
+Each of the samples we discovered has a unique token embedded in its code, which means that each sample uses its own Telegram Messenger account.
+Python/TeleBot uses private chats for communicating with the cybercriminals.
+This scheme allows the control of infected computers through any device with Telegram Messenger installed, even from a smartphone, just by issuing commands via chat.
+By this means, attackers can push additional malicious tools to an infected computer.
+During our research, we were able to find a Telegram account belonging to one of the attackers.
+Figure 5: Profile of one of the attackers in Telegram Messenger.
+It should be noted that the Telegram Bot API was not the only legitimate protocol that was used by these attackers.
+We have seen at least one sample of this backdoor that uses an outlook.com mailbox as C&C.
+After successful compromise of the network, attackers use various malicious tools in order to collect passwords, allowing them to subsequently perform a lateral movement within the compromised LAN.
+A string, that contains a PDB-path to debug symbols, suggests one such tool was named CredRaptor by the attackers.
+This tool collects saved passwords from various browsers such as Google Chrome, Internet Explorer, Mozilla Firefox, and Opera.
+Figure 6: PDB-Path reveals the name of the password stealer.
+The attackers are using a tool with name plainpwd in order to dump Windows credentials from memory.
+This tool is a slightly modified version of the open-source project mimikatz.
+In addition to plainpwd and CredRaptor the toolkit includes a keylogger.
+The keylogger uses a standard technique to capture keystrokes, specifically the SetWindowsHookEx function.
+In order to also sniff passwords in network traffic, the attackers use a console version of Interceptor-NG.
+Since it requires WinPcap drivers to be installed, the attackers made a custom tool to install them silently.
+Figure 7: Intercepter-NG password sniffing tool.
+The combined use of all these tools allows attackers to gain a foothold in a compromised network, with the objective of gaining full control by obtaining domain administrator privileges.
+Another interesting discovery was a tool that was used during attacks to make queries to Active Directory using LDAP.
+This tool is able to dump detailed information about computers and usernames listed in Active Directory, and is tailored for a specific victim’s domain.
+Figure 8: Disassembled code of the tailored LDAP query tool.
+Further research revealed that the attackers deployed additional backdoors in order to regain access to the compromised network, should their main Python/TeleBot backdoor be discovered and removed.
+This additional backdoor is written in VBS and some samples we discovered were packaged using the script2exe program.
+Figure 9: Source code of additional backdoor written in VBS.
+There are several samples of this VBS backdoor, but all of them have pretty straightforward functionality.
+The backdoor sends the computer name and MAC address of the computer executing it to its C&C server using HTTP.
+The variable timeout defines the period of time in minutes between calls to the server.
+The server can push additional commands for execution.
+The attackers also used a malicious tool that they named BCS-server.
+This tool allows them to open a tunnel into an internal network and then this tunnel can be used to send and receive data between the C&C server and even non-infected computers in the network.
+The main idea of this tool is based on the same principles as the XTUNNEL malware used by the Sednit group.
+During our analysis we discovered that the attackers used a guide for this specific tool.
+Interestingly, the guide was written in Russian.
+Figure 10: Guide for BCS-server in Russian.
+The guide in Russian can be roughly translated as:
+Parameters
+-saddr – address of BCS server
+-hport – port of a host, which we did setup on the server, this how we bypass firewall
+Examples:
+phost_win.exe –saddr=10.10.10.10 –hport=80
+Debug versions:
+phost_cnv.exe – console version
+phost_win_log.exe – version that logs to file
+So attackers specify an external C&C server in the command line and the tool connects to this server using HTTP.
+This remote server is used as a proxy by attackers: the connection that goes to this server is redirected to the internal network by the tool and any response that the tool gets from a computer in the internal network goes to the C&C server.
+Thus, attackers can communicate with internal servers that are normally unreachable from the internet.
+The communication traffic between the BCS-server tool and the C&C server is base64 encoded and encapsulated in HTML tags.
+Figure 11: The captured handshake of BCS-server tool and C&C server.
+The KillDisk is a destructive component that is used by these attackers as the final stage of an attack.
+Previous versions of this component were used in attacks against media companies in November 2015 and against power grid companies in Ukraine in December 2015.
+KillDisk is designed to run with high privileges, this time it registers itself as a service under Plug-And-Play Support name.
+Since at the final stage attackers have probably collected network administrator level credentials, that’s why they are using Microsoft PsExec in order to execute KillDisk with the highest possible privileges on servers and workstations.
+The attackers may specify an activation date of KillDisk via the command line.
+However, one of the samples had a predefined activation time that is set to 9:30am, 6 December 2016.
+There are improvements in the code, however the main idea of KillDisk hasn’t change so much – it deletes important system files and makes computer unbootable.
+Beside that it also overwrites files with specific file extensions – those defined by the malware authors in this version of KillDisk are:
+The KillDisk malware may create new, small files instead of deleted ones with the exact same filename and these new files will contain one of two strings mrR0b07 or fS0cie7y instead of the original content.
+This is not the only reference to the Mr.
+Robot TV show, in addition this KillDisk variant displays the picture that is illustrated in Figure 12.
+Figure 12: Picture displayed by KillDisk component.
+Interestingly, the KillDisk malware does not store this picture anywhere: rather it has code that draws this picture in real-time using the Windows GDI.
+It looks like attackers put a lot of effort just to make the code that draws this picture.
+The cybercriminals behind these targeted attacks demonstrate serious intention to conduct cybersabotage attacks.
+To be able to mount such attacks, they are constantly inventing new malware and techniques, such as the use of the Telegram Bot API instead of a more conventional C&C server for example.
+Special thanks to David Gabris for help with the analysis.
+TeleBots IoCs are also available on ESET’s GitHub repository.
+Legitimate servers abused by malware authors:
+srv70.putdrive.com (IP: 188.165.14.185)
+api.telegram.org (IP: 149.154.167.200, 149.154.167.197, 149.154.167.198, 149.154.167.199)
+smtp-mail.outlook.com (IP: 65.55.176.126)
+XLS documents with malicious macro SHA-1:
+F00F632749418B2B75CA9ECE73A02C485621C3B4
+06E1F816CBAF45BD6EE55F74F0261A674E805F86
+35D71DE3E665CF9D6A685AE02C3876B7D56B1687
+F22CEA7BC080E712E85549848D35E7D5908D9B49
+C473CCB92581A803C1F1540BE2193BC8B9599BFE
+Intercepter-NG and silent WinPCAP installer SHA-1:

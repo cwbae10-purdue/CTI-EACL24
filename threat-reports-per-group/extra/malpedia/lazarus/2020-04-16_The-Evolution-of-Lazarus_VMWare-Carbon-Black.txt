@@ -1,0 +1,99 @@
+On February 14, 2020 the U.S. Department of Homeland Security (DHS) released a Malware Analysis Report (MAR-10271944-1.v1) which provided information about a trojan they referred to as HotCroissant.
+DHS attributed the trojan to a threat group based in North Korea, often referred to as Hidden Cobra.
+This group, also known as the Lazarus Group, continues to be very active.
+Over the previous year they’ve targeted organizations in South Korea, Russia, and the United States with motives that range from espionage and sabotage to attacks purely for financial gain.
+At first glance HotCroissant might appear as a new tool in the Lazarus Group’s tool box but as we’ll see it holds many similarities to an earlier trojan they’ve used before.
+The HotCroissant trojan is a fairly straightforward remote access trojan (RAT).
+On startup, it decodes the address of its C2 server and then attempts to connect to it.
+If it is successful then it will send out basic host information to the C2 and await further commands.
+The HotCroissant sample shared in the DHS Malware Analysis Report had a compilation timestamp of 2019-07-25 15:38:54.
+During this research we were able to find samples with compilation timestamps dating back to 2018-10-26 15:38:22 as well as a newer sample with a compilation timestamp of 2019-07-29 07:08:01.
+HotCroissant samples with a compilation timestamp older than the one listed in the DHS report are all almost identical.
+The main difference in samples is the C2 server IP address.
+There are a few interesting differences that are worth mentioning.
+One of the samples appeared to have the basic string obfuscation disabled and in turn the C2 server IP address is easily identifiable.
+Another of the samples had a C2 server IP address in the reserved private IP address range along with a few additional debug messages.
+This appears to be a testing version of the trojan.
+The most recent HotCroissant sample found, while almost functionally equivalent to the DHS sample, is far more obfuscated.
+First, the sample is UPX packed.
+Next, in addition to the basic string obfuscation of earlier samples, this newer sample has a second string obfuscation technique used.
+Some of the strings are RC4 encrypted with the key ANONYBR and then base64 encoded.
+FInally, the newest sample uses dynamic API lookups to attempt to make static disassembly harder to understand.
+The most recent sample does have some new functionality as well.
+When the trojan starts up it will attempt to install a scheduled task with the name of “Java Maintenance64” to keep itself running.
+There are also a handful of new C2 commands not seen in earlier versions.
+The C2 protocol is fairly robust.
+Requests from the C2 server and responses from the trojan make use of a specific command format as seen below:
+The Opcode field indicates the action the C2 server is requesting or information the trojan is sending back to the C2.
+TxnID is a transaction number sent from the C2 server that is echoed back in some responses from the trojan.
+Opt1 and Opt2 get used in commands as additional parameters.
+The Size field indicates how many bytes are expected in the Data field.
+The Data field is used for string parameters for the commands to be executed.
+The entire command structure gets compressed with zlib and then encrypted using a custom stream cipher.
+This encoded information then gets an additional header added and sent across the network.
+The encoded structure can be seen below:
+A full list of Opcodes and command descriptions can be found at the end of this document.
+According to an AhnLab report, Rifdoor dates back to a 2015 attack on exhibitors in the Seoul International Aerospace & Defense Exhibition (ADEX).
+It was sent to exhibitors in an email with an Excel or Word document containing macros, pretending to be from the organizer of the event.
+This trojan continued to be seen in attacks well into 2016.
+Rifdoor is another basic remote access trojan.
+On first launch the trojan will make a copy of itself, adding four additional bytes to the end of the file.
+This changed version is then saved as C:\ProgramData\Initech\Initech.exe.
+A new registry entry is created at HKEY_CURRENT_USERS\Software\Microsoft\Windows\CurrentVersion\Run\Graphics with a value of “C:\ProgramData\Initech\Initech.exe” /run.
+When the trojan is launched with the /run flag it will decode its C2 server IP address and attempt to connect to it.
+If it is successful then it will send out basic host information and await further commands.
+The C2 protocol is a string based request and response type.
+Commands like “$exec <filename>” are sent to the trojan and the trojan sends back responses.
+The requests sent over the network have some additional header information included as seen in the structure below:
+The Opcode field indicates the type of request.
+The Checksum is calculated based on host system information.
+TxnID is a transaction number sent from the C2 server that is echoed back in some responses from the trojan.
+The Size field indicates how many bytes are expected in the Data field.
+The Data field contains the string commands or the responses.
+The Data field is encrypted using a custom stream cipher.
+A full list of commands can be found at the end of this document.
+Even though the Rifdoor and HotCroissant campaigns are separated by more than two years there are numerous similarities in the code of the two trojans.
+As mentioned previously, both HotCroissant and Rifdoor have a form of basic string obfuscation.
+If we take a look at when the trojans decode their C2 server IP addresses we can see that they both use the same technique, a simple one byte XOR with the value 0xF.
+Figure 1: HotCroissant string decoding
+Figure 2: Rifdoor string decoding
+After decoding their C2 server IP addresses, from obfuscated strings, both trojans will attempt to collect host information and send it to the C2 server.
+The trojans do not collect identical host information.
+However, as can be seen in the functions collecting the Windows product name below, some functions are almost identical, including the use of the same obfuscated strings.
+Figure 3: HotCroissant product name collection
+Figure 4: Rifdoor product name collection
+Every application using sockets for network communication will have similar API calls in order to connect to a server.
+What is interesting about the socket code below is that we see both trojans setting the same socket options.
+Both call setsockopt to enable SO_KEEPALIVE and then call WSAIoctl to set the keep alive time and interval to the same values of 180000 and 5000 respectively.
+Figure 5: HotCroissant server connect
+Figure 6: Rifdoor server connect
+Both trojans encrypt the data that they send to the C2 servers.
+While the encryption is not identical, they do have similarities.
+Both encryption algorithms are, at their core, a stream cipher.
+Seed values are used to generate a keystream the same length as the data to be encrypted.
+This keystream is then XOR’ed with the data.
+Both algorithms make use of 3 different 32-bit seed values for the keystream.
+The difference lies only with how the keystream is derived.
+Figure 7: HotCroissant stream cipher
+Figure 8: Rifdoor stream cipher
+While the commands that each trojan understands are different there are some similarities in the C2 protocol that are worth mentioning.
+Both protocols make use of a 32-bit Opcode field to identify what type of request should be processed.
+In the case of Rifdoor there is only a very limited number of opcodes.
+Both trojans also support a TxnID field.
+This field is included in requests and will be echoed back to the C2 server in responses.
+This appears to be a way for the C2 server to keep track of requests and responses.
+Whether HotCroissant and Rifdoor are truly the same malware family or not is hard to say with certainty.
+It is safe to say that they both share sections of code as well as similarities in their network protocol.
+More importantly, HotCroissant shows a clear evolution of the sophistication of the Lazarus Group’s toolset.
+With Rifdoor we saw a basic trojan that supported three or four different commands.
+With HotCroissant there are over twenty different commands that the trojan understands, including more sophisticated ones like real time screen viewing.
+With the most recent HotCroissant sample we see the Lazarus Group working to make detection more complicated by using additional obfuscation, dynamic API usage and packers.
+One thing is certain, they show no signs of slowing down, and we will continue to monitor their activity to provide insight and information to our customers.
+By default if the command data doesn’t start with any of the previous keywords then the string will simply be sent to a command prompt for execution.
+rule lazarus_hotcroissant_2020_Q1 : TAU APT Lazarus
+        author = “CarbonBlack Threat Research” // sknight
+        TID = “T1140, T1082, T1033, T1005, T1113, T1094, T1024, T1132, T1065”
+        description = “Lazarus HotCroissant backdoor”
+        $b1 = { 8b d6 b8 00 [1-6] 17 [1-6] 29 70 49 02 }
+        $b2 = { 8A 1C 3E 32 DA 32 D8 32 D9 88 1C 3E 8A D8 32 D9 22 DA 8B 55 FC 8D 3C D5 00 00 00 00 33 FA 81 E7 F8 07 00 00 C1 E7 14 C1 EA 08 0B D7 8D 3C 00 33 F8 22 C8 C1 E7 04 33 F8 32 CB 8B D8 83 E7 80 C1 E3 07 33 FB C1 E7 11 C1 E8 08 }
+0 Comments have been added so far

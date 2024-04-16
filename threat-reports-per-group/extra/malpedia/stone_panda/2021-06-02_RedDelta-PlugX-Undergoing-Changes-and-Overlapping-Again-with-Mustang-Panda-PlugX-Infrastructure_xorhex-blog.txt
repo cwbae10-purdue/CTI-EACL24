@@ -1,0 +1,70 @@
+Focus on Threat Research through malware reverse engineering
+New RedDelta PlugX variant undergoes revisions to slow down analysis.
+Extracted C2s link back to two known Mustang Panda command and control servers.
+Mustang Panda (aka RedDelta, BRONZE PRESIDENT) is striving to make their PlugX variant more challenging to reverse statically.
+This RedDelta PlugX variant overlaps with instrastructure tied to Mustang Panda’s PlugX variant, something we’ve seen before.
+Mustang Panda is believed to be a Chinese nation-sponsored espionage group.
+Public reporting shows MustangPanda targeting non-government organizations (NGOs), including religious entities.
+They appear to focus locations in close proximity like Mongolia, Hong Kong, and Vietnam.
+Mustang Panda is known for making use of PlugX, Posion Ivy, and Cobalt Strike.
+The PlugX sample covered in this blog demonstrates how this group is continuing to evolve their toolset in a likely attempt to slow down researchers and avoid security automation tools.
+When Recorded Future reported on RedDelta last year they differentiated between Mustang Panda and RedDelta.
+They both make use of PlugX binaries, and due to binary similarities and overlapping infrastructure, we track them as the same group.
+The key binary differences in the RedDelta PlugX version are:
+The config block check is how we primarily distinguish between the Mustang Panda variant and the RedDelta variant.
+The “original” Mustang Panda variant usesXXXXXXXX.
+Overlapping features between both of these variants include:
+This sample contains all of these features including the RedDelta PlugX ones.
+We believe with moderate confidence that this sample is tied to the Mustang Panda/RedDelta threat actor group.
+On May 24 2021 an encrypted DAT file was uploaded to VirusTotal from Vietnam.
+The file was uploaded with the name SmadDB.dat and is encypted with a 21 byte XOR key prepended to the binary.
+While the majority of the RedDelta PlugX variants we have seen use a 10 byte prepended XOR key; this is not the first deviation.
+There are three others in our collection that have a prepended XOR key longer than 10 bytes.
+This is not the only change; control flow obfuscation is also being added to the malware.
+Mustang Panda is working on adding control flow obfuscation to their PlugX variant.
+This first example shows control flow obfuscation added to the config decrypting routine.
+We don’t see this when comparing it to a prior sample (Figure 4).
+In addition to control flow obfuscating being added, the newest sample’s function (Figure 3) is updated to directly house the decryption routine versus it being in a separate function, as seen in the prior sample (Figure 5).
+Our second control flow obfuscation example in this binary is pulled from an API hashing algorithm.
+Notice the multiple comparison statements controlling which branches are taken (Figure 6), making it harder to follow the exection flow.
+Mustang Panda appears to be adding control flow obfuscation to parts of their code but it does not exist in all of the functions yet.
+They don’t stop with control flow obfuscation; they are also modifing how the dynamic Windows API lookup is being performed.
+The binary also contains deviations in how it dynamically resolves Windows API functions.
+Figure 7 shows how the previous samples did this.
+Notice the API name is built on the stack and then resolved using GetProcAddress.
+They do this consistantly throughout the binary when dynamically resolving API calls.
+The new sample, ec1c29cb6674ffce989576c51413a6f9cbb4a8a41cbd30ec628182485a937160, changes things up a bit by using two slightly different variations on the same pattern to resolve Windows API calls.
+The first method involves using API hashing to get LoadLibraryA and GetProcAddress function pointers.
+The API hashing code is placed inline with the rest of the function.
+It’s not separated into its own function.
+This is an important distinction as the next method does separate it out.
+The API name is built on the stack between resolving GetProcAddress and LoadLibraryA.
+The final step is to execute the Windows function hidden in the stack string.
+The diagram below outlines the process in more detail.
+The second method is similar to the first but the Windows API hashing algorithm is placed into a separate function.
+The Windows API names may or may not be encrypted.
+Figure 9 shows the function’s flow with the stack strings being encrypted.
+The unencrypted strings follow this same pattern minus the decryption loop.
+The next difference noted is around string obfuscation.
+The older samples primarily make use of stack strings to hide from tools like strings.exe.
+This new sample uses a mixture of stack strings with and without XOR encryption.
+The index of the character being decrypted makes up one part of the XOR key for that letter.
+The second part is a constant they add to it to get the final XOR key.
+The string decryption function (for example, Figure 9) can be represented in Python as:
+To call it, pass an array of bytes and the constant to add to the XOR key.
+They don’t always modify the XOR key by 0x68; sometimes they use other values like 0x2c.
+This PlugX’s config contains two previously seen Mustang Panda command and control servers;
+There are 7 samples in our repository that share the IP, 101.36.125.203, and one other sample that shares the domain, vitedannews.com.
+All of these samples contain the XXXXXXXX config value check making them the Mustang Panda variant.
+This RedDelta variant (ec1c29cb6674ffce989576c51413a6f9cbb4a8a41cbd30ec628182485a937160) makes the second instance where the IP/Domains overlap with the “original” Mustang Panda PlugX variant.
+More about the first instance can be found on ThreatConnect’s blog.
+This second infrastructure overlap further strenghtens our theory of them being the same group or at least sharing personnel/infrastructure.
+Over all we believe Mustang Panda will continue evolving the RedDelta variant to help further thwart detection as time goes on.
+Historically the .dat file (the encrypted PlugX file) is loaded using a sideloaded dll which does the loading, decrypting, and passing execution on to this PlugX binary.
+These three files are sometimes packaged using a self extracting SFX file.
+We can’t be certain that the updated variant was delivered in the same fashion, but that would be something to look for.
+Taking our knowledge of API hashing algorithms (most, if not all, API hashing routines loop through each character of the API name and apply the hashing algorithm to it) we can find the only part of the algorithm we really care about, the hashing routine.
+The GIF starts from a zoomed out position to identify a loop for inspection before zooming in on the hashing algorithm loop.
+The API hashing algorithm can be re-written in Python as:
+Hosting my custom tools, threat research, and general reverse engineering notes.
+© 2021 Custom Tools, Reverse Engineering, and Threat ResearchTheme: Hugo Future Imperfect SlimA HTML5 UP port | Powered by Hugo

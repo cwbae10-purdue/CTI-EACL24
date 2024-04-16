@@ -1,0 +1,23 @@
+Malware authors uses extensive obfuscation techniques such as packing, junk code insertion, opaque predicates to harden malware analysis.
+Binary ninja has recently released a plugin to remove opaque predicates – that is, branch paths that are never taken.
+Thanks to Medium Level Intermediate Language (MLIL), only few lines of python of code are required to detect and remove opaque predicates.
+Following this blog post, we decided to implement a similar plugin to de-obfuscate CFGs by removing useless jump chains.
+A basic block can be merged with its child if the basic block ends with a jump instruction and its child has only one parent.
+For example, in the following figure, the top basic block can be merged with its direct child.
+Binary Ninja API provides facilities to check incoming and outgoing edges.
+This allows us to detect useless jumps:
+The simplest way to remove useless jumps (and occasionnaly superfluous nop instructions), is to rewrite the basic blocks by travsersing the CFG, and then re-assemble the instructions:
+For each basic block, we create a label at the top of the block (‘loc_’ + basic_block.start).
+Then we process each instruction in the block by discarding nops, mapping symbols (and tokens such as ‘sub_’ and ‘data_’) to their addresses, and remove the jump if the block can be merged with its child.
+Note that if the block ends with a branch instruction, we have to substitute the target address of the branch instruction with its corresponding label.
+For instance, the instruction ‘je 0x404142’ will be substituted by ‘je loc_0x404142’.
+This is required since original instruction offsets are shifted due to instruction removal (nops and useless jumps).
+Once all basic blocks have been processed, we assemble the resulting code with:
+Please note that sometimes Binary Ninja fails to assemble it’s own disassembled code.
+This is the case for example for stos{b,w,d} instructions.
+Binary Ninja uses its own disassembler and sometimes instructions does not round-trip when assembled with yasm (default x86 assembler in Binary Ninja).
+We have applied the plugin on some functions of the Locky-ransomware (a92e469b45331c7102f4981df9699843) which intensively relies on jump chains to obfuscate the binary.
+For example, the CFG of the main Locky function (‘sub_929ba0’) is made of 1102 basic blocks.
+After applying the plugin, we got a CFG made of 65 basic blocks.
+Shoutout to the Binary Ninja developers for fixing quickly some issues related to code assembly.
+The plugin is available for download here

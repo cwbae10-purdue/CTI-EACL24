@@ -1,0 +1,166 @@
+Warning: this blogpost contains malicious URLs, don't open 'em.
+Note: Scroll down if you're only interested in the Emotet results.
+Due to a high number of Powershell droppers in our public cloud
+we’ve implemented an engine for Powershell that translates Powershell into an
+AST, deobfuscates it,
+and runs various high-level static analysis algorithms on the deobfuscated AST.
+For specific use-cases a limited Powershell emulator has also been implemented.
+With that out of the way we wanted to share some """InTErEstInG""" features of
+the Powershell language (naturally accompanied with various obfuscation
+techniques) and provide results and statistics from Powershell-related samples
+submitted to tria.ge.
+We’re going to start out with the simplest version to download a file in
+Powershell.
+Almost all Powershell droppers use this technique (or the
+DownloadString version that fetches the URL in-memory) to obtain the real
+payload from a URL that’s often only online for a very limited period of time.
+Keeping that in mind, most simple Powershell droppers are structured as
+follows; determine some payload filename, set up one or more URLs, iterate
+through each URL and try to download it, and if successful (the file size is
+more than a couple of kilobytes), then execute it as a new process.
+Powershell being a dynamic scripting language and all that, it’s possible
+to do things in multiple ways.
+For example, calling the New-Object cmdlet
+can also be expressed with its string obfuscated through the
+dot expression.
+Or through the similar amp expression.
+Naturally, Powershell allowing
+escape sequences, there can be backticks in the identifier.
+Or at the beginning of an identifier.
+Or at the end of an identifier.
+In order to make Powershell a truly dynamic language, it shall be possible to
+use a string as method/field identifier (this calls DownloadFile on
+the net.webclient object).
+This string identifier may also contain
+backticks.
+There are many ways to obfuscate a string or an array.
+Most of the time the
+split method is called on a string to obtain an array of URLs.
+There’s also a string formatting operator for “smart” concatenation operations,
+in this case resulting in the string "hello".
+In practice this may look as follows.
+Clearly building upon earlier constructs, the "split" method
+identifier may also be obfuscated with string concatenation.
+To make matters
+more interesting, object methods have methods of their own, in this case
+Invoke to execute the method with the arguments provided to the
+Invoke method.
+Also note that it’s possible to do Powershell programming without the space
+bar as most operators can be put right behind each other without whitespaces
+in-between.
+The -split operator is interesting, because the assumption is that it
+would return a list of strings, which it probably does.
+But then if you have
+multiple -split operators following one another, you appear to get a
+flat list too, so probably -split can work on both strings and arrays.
+Note that the string separator may also be an integer, internally probably
+casted to be a string.
+Like most scripting languages, it’s possible to execute arbitrary Powershell
+code at runtime (like eval() in Javascript).
+This is the
+Invoke-Expression cmdlet or iex short and looks as follows.
+Since Powershell can handle command-line invocations, it also has a built-in
+pipe operator.
+To avoid specifically mentioning the iex string, many droppers use
+global Powershell variables to construct the string at runtime paired with the
+dot and amp expressions.
+One may find the $ENV variable to
+be interesting too or at least how it’s pretty much the only thing that’s
+indexed with a colon identifier (:comspec, with COMSPEC being
+a Windows environment variable).
+Each of the following expressions are
+equivalent to just writing out Invoke-Expression directly.
+Additionally, yes, there’s also a Set-Alias cmdlet (or sal short)
+that’s capable of essentially symlinking a method or cmdlet to another name in
+Powershell.
+With the knowledge from all the above, we can now move into deobfuscating the
+first layer of the following Powershell dropper.
+It first removes garbage
+characters through the -split operator and then iterates over each
+character using the foreach-object cmdlet and -bxor operator,
+that performs a binary xor operation, to get the deobfuscated string.
+Interestingly, both operands to the -bxor operator are integer
+strings, one regular number (base10) and one hexadecimal number (base16).
+Snippet somewhat shortened for improved visibility.
+(This calls Invoke-Expression with the following string, shortened for
+visibility).
+The next step in obfuscation includes adding a base64 blob that’s executed
+(snippet shortened) using [System.Convert]::FromBase64String(...).
+(This calls Invoke-Expression with the following string, shortened for
+visibility).
+And if that’s not enough, one can always spice it up with a deflate/zlib
+stream (snippet shortened) using
+New-Object System.IO.Compression.DeflateStream(...).
+But what if we obfuscate the Set-Alias parameter?
+This example casts
+an array of integers to an array of characters and then to a string (the
+string "ieX").
+The Set-Alias command then aliases the sy
+identifier to the "ieX", which is equivalent to iex and thus
+Invoke-Expression.
+Next to the foreach-object { ... } construct, there’s also the shorter
+% { ... } construct, both working with the pipe operator,
+accepting an item or an array of items.
+The following results in hello.
+Fun fact: if you replace [char] [int] in the snippet above with
+[ChAR] [iNt] (as was the case in the sample where this example
+originated from), then Powershell on Windows 10 may avoid running it and throw the
+This script contains malicious content and has been blocked by your antivirus software.
+This is what we call the Spongebob filter :-)
+Now that you’ve seen almost everything, we’re introducing the foreach
+language construct as obfuscated string.
+One might expect this to be a
+language keyword / statement, but well, here goes.
+This also results in
+hello.
+In case you’re not convinced by the power of Powershell yet,
+Powershell has a concept of generic strings that
+essentially represent plaintext code that can’t possibly be correct Powershell
+code.
+In other words, it’s possible to write down URLs without quotes as one
+would normally define one or more strings.
+Not unsurprisingly the comma is
+actually interpreted correctly and the below -Source parameter of
+Start-BitsTransfer results in an array of 3 URLs.
+Fortunately for us, the .NET engine also knows the concept of Secure Strings.
+Since some of our samples in production decrypt “secure strings” and then
+execute the plaintext code resulting from it, we have implemented this
+behavior too.
+While we were initially startled by the fact that the SecureString took around
+a 10x increase in size when compared to the plaintext string, this fact is
+quickly explained by the decryption process.
+The SecureString is essentially a
+hex encoded AES CBC encrypted UTF16 encoded string.
+This string is then
+joined with the SecureString version number and the Initialization Vector
+(which itself is base64 encoded), UTF16 encoded, base64 encoded, and finally
+a magic header is slapped onto it.
+The following image regarding the
+decryption process better explains the logic:
+In terms of Powershell fun & quirks this is it for today, although there’s
+plenty more to talk about.. wildcards, reflection, powershell executing
+x86 shellcode, etc.
+We’ve had quite some people submit Powershell-based payloads to our public
+cloud, partially due to our Emotet configuration extractor, but also
+due to numerous other malware samples that are being uploaded on a daily
+basis.
+Furthermore, we implemented a Powershell static analysis library capable of
+handling the above Powershell quirks and around 99% of the Powershell payloads
+that we’ve seen in our production environment at tria.ge.
+Combining these two facts, we arrived at the following conclusion:
+Giving back to the community, we’re releasing polished sandbox results on more
+than 50,000 unique malware samples that we believe to be Emotet-related.
+The data can be found here.
+An example entry of polished analysis with all artifacts available (with
+sha256 and sha512 hashes removed for visibility):
+Some more information on the data file:
+We’ve implemented a Powershell deobfuscator and emulator that’s capable of
+handling the vast majority of Powershell payloads that we see in our public
+cloud.
+As always, we will continue to improve our sandboxing tooling to
+improve handling specific use-cases and we’re going to keep an eye on all
+newly submitted (Powershell and other) samples!
+If any customers or (potential) users would like to use any of our static
+analysis capabilities standalone from the sandboxing side of things or if
+there are other requests related to our sandbox, please do reach out to us.
+Happy hunting & analyzing and stay tuned for our upcoming blogposts!

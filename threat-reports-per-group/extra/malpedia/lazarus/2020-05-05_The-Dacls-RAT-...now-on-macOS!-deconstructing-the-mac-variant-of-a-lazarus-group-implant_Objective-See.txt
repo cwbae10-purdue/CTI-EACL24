@@ -1,0 +1,108 @@
+I’ve added the sample (‘OSX.Dacls’) to our malware collection (password: infect3d)
+Early today, the noted Mac Security researcher Phil Stokes tweeted about a “Suspected #Lazarus backdoor/RAT”:
+In his tweet he noted various details about the malware and was kind enough to post hashes as well.
+Mahalo Phil (and Thomas Reed, who initially noticed the sample on VirusTotal)!
+As noted in his tweet, current detections for both the malware’s disk image and payload are at 0% (though this is likely to change as AV engines update the signature databases):
+The Lazarus APT group (North Korea) is arguably to most prevalent (or perhaps just visible) APT group in the macOS space.
+In fact the majority of my recent macOS malware blogs have been about their creations:
+Though not remarkably sophisticated, they continue to evolve and improve their tradecraft.
+In this blog post, we deconstruct the their macOS latest creation (a variant of the Dacls RAT) , highlighting its install logic, persistence mechanism, and capabilities!
+We’ll also highlights IOCs and generic methods of detection.
+Currently (at least to me), it is unknown how the Lazarus actors remotely infect macOS systems with this specimen (OSX.Dacls).
+However as our analysis will show, the way the malware is packaged closely mimics Lazarus group’s other attacks …which relied on social engineering efforts.
+Specifically, coercing macOS users to download and run trojanized applications:
+Thanks to Phil’s tweet and hashes, we can find a copy of the attackers’ Apple Disk Image (TinkaOTP.dmg) on VirusTotal.
+To extract the embedded files stored on the TinkaOTP.dmg we mount it via the hdiutil command:
+…which mounts it to /Volumes/TinkaOTP.
+Listing the files in the TinkaOTP directory reveals an application (TinkaOTP.app) and an (uninteresting) .DS_Store file:
+Both appear to have a creation timestamp of April 1st.
+The application, TinkaOTP.app is signed “adhoc-ly” (as the Lazarus group often does):
+This also means that on modern versions of macOS (unless some exploit is first used to gain code execution on the target system), the application will not (easily) run:
+…so, it is conceivable that macOS users were targeted by this (or similar) exploits.
+Source: Dacls, the Dual platform RAT.
+TinkaOTP.app is a standard macOS application:
+Examining its Info.plist file, illustrates that application’s binary (as specified in the CFBundleExecutable key), is (unsurprisingly) named TinkaOTP:
+As the value for the LSMinimumSystemVersion key is set to "10.10" the malicious application will execute on macOS systems all the way back to OS X Yosemite.
+Now, let’s take a closer look at the TinkaOTP binary (which will be executed if the user (successfully) launches the application).
+As expected, it’s a 64-bit Mach-O binary:
+Before hopping into a disassembler or debugger, I like to just run the malware is a virtual machine (VM), and observe its actions via process, file, and network.
+This can often shed valuable insight into the malware actions and capabilities, which in turn can guide further analysis focus.
+Firing up these analysis tools, and running TinkaOTP.app quickly reveals its installation logic.
+Specifically the ProcessMonitor records the following:
+This output shows bash being spawned by TinkaOTP.app with the following arguments:
+…in other words, the malware is copying the Base.lproj/SubMenu.nib file (from the application’s Resources directory) to the user’s Library directory (as the “hidden” file: .mina).
+The process monitor then shows TinkaOTP.app setting the executable bit on the .mina file (via chmod +x /Users/user/Library/.mina), before executing it:
+A partial sequence of these commands is hardcoded directly in the TinkaOTP.app's binary:
+Hopping into a disassembler (I use Hopper), we can track down code (invoked via the applicationDidFinishLaunching method), responsible for executing said command:
+The decompilation is rather ugly (as TinkaOTP.app is written in Swift), but in short the malware is invoking the installation commands (cp ...) via Apple’s NSTask API.
+We can confirm this via a debugger (lldb), by setting a breakpoint on the call to [NSTask launch] (at address 0x10001e30b) and querying the NSTask object to view its launch path, and arguments:
+We now turn our attention to SubMenu.nib, which was installed as ~/Library/.mina.
+It’s a standard Mach-O executable:
+As there turned out to be a bug in the code (ha!
+), we’re going to start our analysis in the disassembler at the malware’s main function.
+First we noted a (basic) anti-disassembly/obfuscation technique, where strings are dynamically built manually (via hex constants):
+In Hopper, via Shift+R we can covert the hex to ascii:
+…which reveals a path: /Library/LaunchAgents/com.aex.lop.agent.plist
+However, the malware author(s) also left this string directly embedded in the binary:
+Within the disassembly of the main function, we also find an embedded property list:
+Seems reasonable to assume that the malware will persist itself as a launch agent.
+And in fact, it tries to!
+However, if the ~/Library/LaunchAgent directory does not exists (which it does not on default install of macOS), the persistence will fail.
+Specifically, the malware invokes the fopen function (with the +w option) on /Library/LaunchAgents/com.aex.lop.agent.plist …which will error out if any directories in the path don’t exist.
+This can be confirmed in a debugger:
+…I guess writing malware can be tough!
+If we manually create the ~/Library/LaunchAgent directory, the call to fopen succeeds and the malware will happily persist.
+Specifically, it formats the embedded property list (dynamically adding in the path to itself), which is then written out to com.aex-loop.agent.plist:
+Our FileMonitor passively observers this:
+As the value for the RunAtLoad key is set to true the malware will be automatically (re)started by macOS each time the system is rebooted (and the user logs in).
+Ok, so now we understand how the malware persists, let’s briefly discuss its capabilities.
+So far we know that the trojanized TinkaOTP.app installs a binary to ~/Library/.mina, and persists it as a launch item.
+…but what does .mina actually do?
+The good news (for me as a somewhat lazy malware analyst), is that this has already be answered!
+Running the strings command on the .mina binary reveals some interesting, well, strings:
+When analyzing an unknown malicious piece of software it’s (generally) a good idea to Google interesting strings, as this can turn up related files, or even better, previous analysis reports.
+Here we luck out, as the latter holds!
+The c_2910.cls string matches on a report for a Lazarus Group cross-platform RAT named Dacls …and as we’ll see other strings, and functionality (as well as input by other security researchers) confirm this.
+📝 The noted Mac Malware Analyst Thomas Reed, is (AFAIK) the first to identify this specimen, and note that it was a “Mac variant of Dacls RAT”
+The initial report on the Dacls RAT, was published in December 2019, by Netlab.
+Titled, “Dacls, the Dual platform RAT”, it comprehensively covers both the Windows and Linux variants of this RAT (as well as notes, “we speculate that the attacker behind Dacls RAT is Lazarus Group”).
+…however there is no mention of a macOS variant!
+As such, this specimen appears to be the first macOS variant of Dacls (and thus also, this post, the first analysis)!
+As noted, the Netlab report provides a thorough analysis of the RATs capabilities on Windows/Linux.
+As such, we won’t duplicate said analysis, but instead will confirm that this specimen is indeed a macOS variant of Dacls, as well as note a few macOS-specific nuances/IOCs.
+Looking at the disassembly of the malware’s main function, after the malware persists, it invokes a function named InitializeConfiguration:
+After seeding the random number generator, the malware invokes a function named LoadConfig.
+In short, the LoadConfig function attempts to load a configuration file from /Library/Caches/com.apple.appstore.db.
+If found, it decrypts the configuration via a call to the AES_CBC_decrypt_buffer function.
+If the configuration is not found, it returns a non-zero error.
+Looking at the code in InitializeConfiguration we can see that if LoadConfig fails (i.e.
+no configuration file is found), code within InitializeConfiguration will generate a default configuration, which is then saved via a call to the SaveConfig function.
+We can see three IP addresses (two unique) that are part of the default configuration: 67.43.239.146 and 185.62.58.207.
+These as the default command & control servers.
+Returning to the Netlab report, it states:
+“The Linux.Dacls Bot configuration file is stored at $HOME/.memcache, and the file content is 0x8E20 + 4 bytes.
+If Bot cannot find the configuration file after startup, it will use AES encryption to generate the default configuration file based on the hard-coded information in the sample.
+After successful Bot communicates with C2, the configuration file will get updated.”
+It appears the macOS variant of Dacls contains this same logic (albiet the config file is stored in /Library/Caches/com.apple.appstore.db).
+The Netlab researchers also breakdown the format of the configuration file (image credit: Netlab):
+Does our macOS variant conform to this format?
+This means we can also extract the (build?)
+date from the default configuration (offset 0x8): 0x84 0x3b 0x34 0x01
+…which converts to 0x01343b84 -> 20200324d (March 24th, 2020).
+The Netlab report also highlights the fact that Dacls utilizes a modular plugin architecture:
+“[Dacls] uses static compilation to compile the plug-in and Bot code together.
+By sending different instructions to call different plug-ins, various tasks can be completed.”
+…the report describes various plugins such as a file plugin, a process plugin, a test plugin, a “reverse P2P” plugin, and a “LogSend” plugin.
+The macOS variant of Dacls supports these plugins (and perhaps an addition one or two, i.e.
+At this point, we can readily conclude that the specimen we’re analyzing is clearly a macOS variant of the Dacls implant.
+Preliminary analysis and similarity to the Linux variant indicates this affords remote attackers the ability to fully control an infected system, and the implant supports the ability to:
+“The main functions of …Dacls Bot include: command execution, file management, process management, test network access, C2 connection agent, network scanning module.” -Netlab
+Though OSX.Dacls is rather feature complete, it is trivial to detect via behavior-based tools …such as the free ones, created by yours truly!
+For example, BlockBlock readily detects the malware’s launch item persistence:
+While LuLu detects the malware’s unauthorized network communications to the attackers’ remote command & control server:
+Finally, KnockKnock can generically detect if a macOS system is infected with OSX.Dacls, by detecting it’s launch item persistence:
+To manually detect OSX.Dacls look for the presence of the following files:
+If you system is infected, as the malware provide complete command and control over an infected system, best to assume your 100% owned, and fully reinstall macOS!
+Today, we analyzed the macOS variant of OSX.Dacls, highlighting its installation logic, persistence mechanisms, and capabilities (noting the clear similarities to its Linux-version).
+Though it can be somewhat worrisome to see APT groups developing and evolving their macOS capabilities, our free security tools can help thwart these threats …even with no a priori knowledge!
+You can support them via my Patreon page!

@@ -1,0 +1,145 @@
+APT actors are known for the frequently targeted nature of their attacks.
+Typically, they will handpick a set of targets that in turn are handled with almost surgical precision, with infection vectors, malicious implants and payloads being tailored to the victims’ identities or environment.
+It’s not often we observe a large-scale attack conducted by actors fitting this profile, usually due to such attacks being noisy, and thus putting the underlying operation at risk of being compromised by security products or researchers.
+We recently came across unusual APT activity that exhibits the latter trait – it was detected in high volumes, albeit most likely aimed at a few targets of interest.
+This large-scale and highly active campaign was observed in South East Asia and dates back to at least October 2020, with the most recent attacks seen around the time of writing.
+Most of the early sightings were in Myanmar, but it now appears the attackers are much more active in the Philippines, where there are more than 10 times as many known targets.
+Further analysis revealed that the underlying actor, which we dubbed LuminousMoth, shows an affinity to the HoneyMyte group, otherwise known as Mustang Panda.
+This is evident in both network infrastructure connections, and the usage of similar TTPs to deploy the Cobalt Strike Beacon as a payload.
+In fact, our colleagues at ESET and Avast recently assessed that HoneyMyte was active in the same region.
+The proximity in time and common occurrence in Myanmar of both campaigns could suggest that various TTPs of HoneyMyte may have been borrowed for the activity of LuminousMoth.
+Most notably though, we observed the capability of the culprit to spread to other hosts through the use of USB drives.
+In some cases, this was followed by deployment of a signed, but fake version of the popular application Zoom, which was in fact malware enabling the attackers to exfiltrate files from the compromised systems.
+The sheer volume of the attacks raises the question of whether this is caused by a rapid replication through removable devices or by an unknown infection vector, such as a watering hole or a supply chain attack.
+In this publication we aim to profile LuminousMoth as a separate entity, outlining the infection chain and unique toolset it leverages, the scale and targeting in its campaigns as well as its connections to HoneyMyte through common TTPs and shared resources.
+We identified two infection vectors used by LuminousMoth: the first one provides the attackers with initial access to a system.
+It consists of sending a spear-phishing email to the victim containing a Dropbox download link.
+The link leads to a RAR archive that masquerades as a Word document by setting the “file_subpath” parameter to point to a filename with a .DOCX extension.
+
+The archive contains two malicious DLL libraries as well as two legitimate executables that sideload the DLL files.
+The second infection vector comes into play after the first one has successfully finished, whereby the malware tries to spread by infecting removable USB drives.
+This is made possible through the use of two components: the first is a malicious library called “version.dll” that gets sideloaded by “igfxem.exe”, a Microsoft Silverlight executable originally named “sllauncher.exe”.
+The second is “wwlib.dll”, another malicious library sideloaded by the legitimate binary of “winword.exe”.
+The purpose of “version.dll” is to spread to removable devices, while the purpose of “wwlib.dll” is to download a Cobalt Strike beacon.
+The first malicious library “version.dll” has three execution branches, chosen depending on the provided arguments, which are: “assist”, “system” or no argument.
+If the provided argument is “assist”, the malware creates an event called “nfvlqfnlqwnlf” to avoid multiple executions and runs “winword.exe” in order to sideload the next stage (“wwlib.dll”).
+Afterwards, it modifies the registry by adding an “Opera Browser Assistant” entry as a run key, thus achieving persistence and executing the malware with the “assist” parameter upon system startup.
+Registry value to run the malware at system startup
+Then, the malware checks if there are any removable drives connected to the infected system.
+If any are found, it enumerates the files stored on the drive and saves the list to a file called “udisk.log”.
+Lastly, the malware is executed once again with the “system” parameter.
+If the provided argument is “system”, a different event named “qjlfqwle21ljl” is created.
+The purpose of this execution branch is to deploy the malware on all connected removable devices, such as USB sticks or external drives.
+If a drive is found, the malware creates hidden directories carrying non ascii characters on the drive and moves all the victim’s files there, in addition to the two malicious libraries and legitimate executables.
+The malware then renames the file “igfxem.exe” to “USB Driver.exe” and places it at the root of the drive along with “version.dll”.
+As a result, the victims are no longer able to view their own drive files and are left with only “USB Driver.exe”, meaning they will likely execute the malware to regain access to the hidden files.
+Copying the payload and creating a hidden directory on the removable drive
+If no argument is provided, the malware executes the third execution branch.
+This branch is only launched in the context of a compromised removable drive by double-clicking “USB Driver.exe”.
+The malware first copies the four LuminousMoth samples stored from the hidden drive repository to “C:\Users\Public\Documents\Shared Virtual Machines\”.
+Secondly, the malware executes “igfxem.exe” with the “assist” argument.
+Finally, “explorer.exe” gets executed to display the hidden files that were located on the drive before the compromise, and the user is able to view them.
+The second library, “wwlib.dll”, is a loader.
+It gets sideloaded by “winword.exe” and emerged two months prior to “version.dll”, suggesting that earlier instances of the attack did not rely on replication through removable drives but were probably distributed using other methods such as the spear-phishing emails we observed.
+“Wwlib.dll” fetches a payload by sending a GET request to the C2 address at “103.15.28[.]195”.
+The payload is a Cobalt Strike beacon that uses the Gmail malleable profile to blend with benign traffic.
+Downloading a Cobalt Strike beacon from 103.15.28[.
+We discovered an older version of the LuminousMoth infection chain that was used briefly before the introduction of “version.dll”.
+This variant’s “wwlib.dll” offers two execution branches: one triggered by the argument “Assistant” and a second one with no arguments given.
+When this library is sideloaded by “winword.exe”, it creates an event called “fjsakljflwqlqewq”, adds a registry value for persistence, and runs “PrvDisk.exe” that then sideloads “DkAr.dll”.
+The final step taken by “wwlib.dll” is to copy itself to any removable USB device.
+To do so, the malware checks if there are any files carrying a .DOC or .DOCX extension stored on the connected devices.
+If such a document is found, the malware replaces it with the “winword.exe” binary, keeping the document’s file name but appending “.exe” to the end.
+The original document is then moved to a hidden directory.
+The “wwlib.dll” library is copied to the same directory containing the fake document and the four samples (two legitimate PE files, two DLL libraries) are copied to “[USB_Drive letter]:\System Volume Information\en-AU\Qantas”.
+If the malware gets executed without the “Assistant” argument, this means the execution was started from a compromised USB drive by double-clicking on the executable.
+In this case, the malware first executes “explorer.exe” to show the hidden directory with the original documents of the victim, and proceeds to copy the four LuminousMoth samples to “C:\Users\Public\Documents\Shared Virtual Machines\”.
+Finally, it executes “winword.exe” with the “Assistant” argument to infect the new host, to which the USB drive was connected.
+Since this variant relies on replacing Word documents with an executable, it is possible that the attackers chose the “winword.exe” binary for sideloading the malicious DLL due to its icon, which raises less suspicions about the original documents being tampered with.
+However, this means that the infection was limited only to USB drives that have Word documents stored on them, and might explain the quick move to a more pervasive approach that infects drives regardless of their content.
+The attackers deployed an additional malicious tool on some of the infected systems in Myanmar.
+Its purpose is to scan the infected systems for files with predefined extensions and exfiltrate them to a C2 server.
+Interestingly, this stealer impersonates the popular Zoom video telephony software.
+One measure to make it seem benign is a valid digital signature provided with the binary along with a certificate that is owned by Founder Technology, a subsidiary of Peking University’s Founder Group, located in Shanghai.
+Valid certificate of the fake Zoom application
+To facilitate the exfiltration of data, the stealer parses a configuration file called “zVideoUpdate.ini”.
+While it is unclear how the malware is written to disk by the attackers, it is vital that the .ini file is dropped alongside it and placed in the same directory in order to work.
+The configuration parameters that comprise this file are as follows:
+Each field in the configuration file (with the exception of Version, ArgName and zCrashReport) is encoded with Base64.
+While the authors incorporated logic and parameters that allow the decryption of some of the fields specified above with the AES algorithm, it remains unused.
+The stealer uses the parameters in order to scan the three specified directories (along with root paths of fixed and removable drives) and search for files with the extensions given in the zKBCrypto parameter.
+Matching files will then be copied to a staging directory created by the malware in a path constructed with the following structure: “<zWebService>\%Y-%m-%d %H-%M-%S<zCrashReport>”.
+The string format in the directory’s name represents the time and date of the malware’s execution.
+In addition, the malware collects the metadata of the stolen files.
+One piece of data can be found as a list of original paths corresponding to the exfiltrated files that is written to a file named ‘VideoCoingLog.txt’.
+This file resides in the aforementioned staging directory.
+Likewise, a second file is used to hold the list of hashes corresponding to the exfiltrated files and placed in the path specified in the zzhost parameter.
+After collection of the targeted files and their metadata, the malware executes an external utility in order to archive the staging directory into a .rar file that will be placed in the path specified in the zWebService parameter.
+The malware assumes the existence of the utility in a path specified under the XmppDll parameter, suggesting the attackers have prior knowledge of the infected system and its pre-installed applications.
+Finally, the malware seeks all files with a .rar extension within the zWebService directory that should be transmitted to the C2.
+The method used to send the archive makes use of a statically linked CURL library, which sets the parameters specified below when conducting the transaction to the server.
+The address of the C2 is taken from the zAutoUpdate parameter.
+CURL logic used to issue the archive of exfiltrated files to the C&C
+The attackers deployed another tool on some infected systems that steals cookies from the Chrome browser.
+This tool requires the local username as an argument, as it is needed to access two files containing the data to be stolen:
+
+The stealer starts by extracting the encrypted_key value stored in the “Local State” file.
+This key is base64 encoded and used to decode the cookies stored in the “Cookies” file.
+The stealer uses the CryptUnprotectData API function to decrypt the cookies and looks for eight specific cookie values: SID, OSID, HSID, SSID, LSID, APISID, SAPISID and ACCOUNT_CHOOSER:
+Cookie values the stealer looks for
+Once found, the malware simply displays the values of those cookies in the terminal.
+The Google policy available here explains that these cookies are used to authenticate users:
+Google policy explaining the purpose of the cookies
+During our test, we set up a Gmail account and were able to duplicate our Gmail session by using the stolen cookies.
+We can therefore conclude this post exploitation tool is dedicated to hijacking and impersonating the Gmail sessions of the targets.
+For C2 communication, some of the LuminousMoth samples contacted IP addresses directly, whereas others communicated with the domain “updatecatalogs.com”.
+Infrastructure ties from those C2 servers helped reveal additional domains related to this attack that impersonate known news outlets in Myanmar, such as MMTimes, 7Day News and The Irrawaddy.
+]com” also impersonated the Foreign Economic Relations Department (FERD) of the Ministry of Planning, Finance and Industry (MOPFI) in Myanmar.
+]com” resolved to an IP address that was associated with a domain masquerading as the Zoom API.
+Since we have seen the attackers deploying a fake Zoom application, it is possible this look-alike domain was used to hide malicious Zoom traffic, although we have no evidence of this.
+Potentially related Zoom look-alike domains
+We were able to identify a large number of targets infected by LuminousMoth, almost all of which are from the Philippines and Myanmar.
+We came across approximately 100 victims in Myanmar, whereas in the Philippines the number was much higher, counting nearly 1,400 victims.
+It seems however that the actual targets were only a subset of these that included high-profile organizations, namely government entities located both within those countries and abroad.
+It is likely that the high rate of infections is due to the nature of the LuminousMoth attack and its spreading mechanism, as the malware propagates by copying itself to removable drives connected to the system.
+Nevertheless, the noticeable disparity between the extent of this activity in both countries might hint to an additional and unknown infection vector being used solely in the Philippines.
+It could, however, simply be that the attackers are more interested in going after targets from this region.
+Over the course of our analysis, we noticed that LuminousMoth shares multiple similarities with the HoneyMyte threat group.
+Both groups have been covered extensively in our private reports, and further details and analysis of their activity are available to customers of our private APT reporting service.
+For more information, contact: intelreports@kaspersky.com.
+LuminousMoth and HoneyMyte have similar targeting and TTPs, such as the usage of DLL side-loading and Cobalt Strike loaders, and a similar component to LuminousMoth’s Chrome cookie stealer was also seen in previous HoneyMyte activity.
+Lastly, we found infrastructure overlaps between the C2 servers used in the LuminousMoth campaign and an older one that has been attributed to HoneyMyte.
+Some of LuminousMoth’s malicious artifacts communicate with “updatecatalogs[.
+]com”, which resolves to the same IP address behind “webmail.mmtimes[.]net”.
+This domain was observed in a campaign that dates back to early 2020, and was even found on some of the systems that were later infected with LuminousMoth.
+In this campaign, a legitimate binary (“FmtOptions.exe”) sideloads a malicious DLL called “FmtOptions.dll”, which then decodes and executes the contents of the file “work.dat”.
+This infection flow also involves a service called “yerodns.dll” that implements the same functionality as “FmtOptions.dll”.
+]net” previously resolved to the IP “45.204.9[.]70”.
+This address is associated with another MMTimes look-alike domain used in a HoneyMyte campaign during 2020: “mmtimes[.]org”.
+In this case, the legitimate executable “mcf.exe” loads “mcutil.dll”.
+The purpose of “mcutil.dll” is to decode and execute “mfc.ep”, a PlugX backdoor that communicates with “mmtimes[.]org”.
+Parts of this campaign were also covered in one of our private reports discussing HoneyMyte’s usage of a watering hole to infect its victims.
+Therefore, based on the above findings, we can assess with medium to high confidence that the LuminousMoth activity is indeed connected to HoneyMyte.
+Connection between HoneyMyte and LuminousMoth C2s
+LuminousMoth represents a formerly unknown cluster of activity that is affiliated to a Chinese-speaking actor.
+As described in this report, there are multiple overlaps between resources used by LuminousMoth and those sighted in previous activity of HoneyMyte.
+Both groups, whether related or not, have conducted activity of the same nature – large-scale attacks that affect a wide perimeter of targets with the aim of hitting a few that are of interest.
+On the same note, this group’s activity and the apparent connections may hint at a wider phenomenon observed during 2021 among Chinese-speaking actors, whereby many are re-tooling and producing new and unknown malware implants.
+This allows them to obscure any ties to their former activities and blur their attribution to known groups.
+With this challenge in mind, we continue to track the activity described in this publication with an eye to understanding its evolution and connection to previous attacks.
+LuminousMoth APT: Sweeping attacks for the chosen few
+Your email address will not be published.
+Required fields are marked *
+ Save my name, email, and website in this browser for the next time I comment.
+Notify me when new comments are added.
+The hottest research right in your inbox
+While investigating a recent rise of attacks against Exchange servers, we noticed a recurring cluster of activity that appeared in several distinct compromised networks.
+With a long-standing operation, high profile victims, advanced toolset and no affinity to a known threat actor, we decided to dub the cluster GhostEmperor.
+We discovered a campaign delivering the Tomiris backdoor that shows a number of similarities with the Sunshuttle malware distributed by DarkHalo APT and target overlaps with Kazuar.
+This is our latest summary of advanced persistent threat (APT) activity, focusing on significant events that we observed during Q2 2021: attacks against Microsoft Exchange servers, APT29 and APT31 activities, targeting campaigns, etc.
+We recently came across unusual APT activity that was detected in high volumes, albeit most likely aimed at a few targets of interest.
+Further analysis revealed that the actor, which we dubbed LuminousMoth, shows an affinity to the HoneyMyte group, otherwise known as Mustang Panda.
+The hottest research right in your inbox
+© 2021 AO Kaspersky Lab.
+Registered trademarks and service marks are the property of their respective owners.
+The hottest research right in your inbox

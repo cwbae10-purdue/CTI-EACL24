@@ -1,0 +1,58 @@
+Remcos Remote Control - Control remotely your computers, anywhere in the world.
+I’m using the free version of Remcos and using MPRESS as a packer.
+You can download sample from hybrid-analysis.com
+As wee see it’s packed with MPRESS:
+Let’s look at it’s behavior, procmon:
+It creates folder remcos and PE file named remcos.exe in %APPDATA% directory, remcos uses Run key as persistence method, also creates file called install.bat in %TEMP% directory.
+From hybrid-analysis we get almost same information:
+install.bat pings C&C, executes remcos.exe from %APPDATA% directory, and removes itself:
+After this, we can connect to our C&C, we control the machine:
+Let’s dive deep and open in IDA Pro:
+such a few functions, suspicious entry point, few imports, high entropy, they are signs of the packed executable:
+Let’s open in x32dbg and unpack it.
+MPRESS makes programs and libraries smaller, and decrease start time when the application loaded from a slow removable media or from the network.
+MPRESS is a generic packer, it’s not created for protecting applications, because of it, it’s very easy to unpack apps packed with it.
+At the entry point, there is pushad instruction, it’s very common for packers, such as UPX,
+it saves all register values at the stack and after unpacking application it restores using popa(d) instruction.
+There are many ways to unpack such packed files, let’s use one of them, after saving register values at the stack, set the hardware breakpoint at any pushed register values and run:
+…and we hit popad instruction:
+Let’s follow to jmp, probably there are unpacked instructions:
+There is except_handler3 from C++ and several other normal functions.
+Let’s dump it using x32dbg’s built-in plugin Scylla.
+…and open in IDA pro:
+There are WinMain and std functions, it’s unpacked, you can download unpacked version from hyberid-analysis.
+Open unpacked sample in IDA pro and dive deep.
+In WinMain function it checks command line arguments, and if there is -l option it creates lic.txt file:
+At 00403BC7 it creates Mutex, and if there is one, it terminates itself:
+At 00403BDE gets function addresses using LoadLibraryA, GetProcAddress, at 00403C09 gets product name from SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProductName, at 00403C28 checks if process is under 64-bit windows:
+Checks if the process is executed with admin privileges:
+Possibly, RAT will send this information to C&C.
+Seems like at 00403D5D function gets directory path based on configuration:
+Function at 00403DEB creates directory remcos and copies file into it:
+Creates install.bat in %TEMP% directory:
+…and fills with following code:
+After successfull execuation application exits:
+install.bat creates new instance of remcos.exe from %APPDATA% directory:
+If we want to get information what happens when install.bat executes remcos.exe we must patch instruction at 00403D7A or manualy jump to loc_403DFA:
+At 00403E82 function adds one more entry in registry:
+Seems like the value of EXEpath is the encrypted path to original executable:
+Application disables DEP and calls function which is some kind of loop:
+Let’s see what’s inside function, which is called at 00403F14.
+Seems like it set ups connection:
+The most important call is at 00406277:
+recv_and_exec function recievs commands and executes them:
+lpStartAddress is passed as an argument to recv_and_exec, let’s investigate it,
+RunCommands function at 00406371 is a core of the RAT, it executes commands from C&C.
+Let’s investagete some of them.
+inside filemgr there are several other commands, such as newfolder, upload, download etc.
+
+downloadfromurltofile downloads file from C&C, saves to %TEMP% directory and executes it:
+Creates Uninstall.bat in %TEMP% directory and runs it:
+…and injects without writting on the disk using CreateFileMappingA and MapViewOfFileEx:
+I think it uses reflective dll injection, LoadLibrarA and GetProcAddress are used to get imports for injected dll:
+Uses functions from Shlwapi.dll to manipulate registry:
+Let’s see how it sends files and information.
+That’s data before encryption routine:
+We can inject into malicious application and see data before send using Echo Mirage:
+Maybe I overlook something, due to my limited knowledge, if you find something interesting please contact me.
+I’m new to reversing malware and any kind of feedback will be helpful for me.

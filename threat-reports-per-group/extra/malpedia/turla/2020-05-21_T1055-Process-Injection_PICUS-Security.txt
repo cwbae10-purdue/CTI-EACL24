@@ -1,0 +1,74 @@
+Your Handbook to Utilize the MITRE ATT&CK Framework
+Your Handbook to Utilize the MITRE ATT&CK Framework
+Your Handbook to Utilize the MITRE ATT&CK Framework
+Süleyman Özarslan, PhD
+     & Second Author
+     | May 21, 2020
+Süleyman Özarslan, PhD
+     & Second Author
+     | May 21, 2020
+In 2019, Picus Labs analyzed 48813 malware to determine tactics, techniques, and procedures (TTPs) used by adversaries in these malicious files.
+Picus Labs categorized each observed TTP by utilizing the MITRE ATT&CK® framework.
+As a result of the present research, 445018 TTPs observed in the last year were mapped to ATT&CK to identify the top 10 most common techniques used by attackers.
+Our research has found that Process Injection was the most prevalent MITRE ATT&CK technique used by adversaries in their malware.
+Adversaries emphasize an increased level of stealth, persistence, and privilege in their advanced cyber attacks.
+As a mechanism that can provide these features, it is not surprising that Process Injection is the most frequently used technique.
+The purpose of this blog post is to review:
+Explore our full research on the 10 Critical MITRE ATT&CK Techniques.
+It is easy to detect malware processes by listing the running processes and filtering out legitimate ones that are part of the operating system or installed software.
+If the malware can encapsulate its malicious code within a legitimate process, it will hide on the infected system.
+Process injection is in fact an “old but gold” technique consisting in running arbitrary code within the address space of another process.
+As a result, this technique enables access to the target process’s memory, system, and network resources.
+On this account, the technique provides three significant benefits for adversaries:
+Security controls may quickly detect custom processes.
+Therefore, threat actors use common Windows processes such as:
+Adversaries use the following methods when picking their target process for malicious code injection:
+RegAsm.exe, RegSvcs.exe, vbc.exe, AppLaunch.exe, cvtres.exe
+Government, Telecommunication, Defense, Research, Technology, Aerospace
+Healthcare, Technology, Telecommunications, Media, Education, Retail
+Europe, East Asia, Middle East, US
+Reflective DLL injection (loading) is one of the most used process injection methods employed by adversaries.
+This method allows injecting and executing a DLL inside another process by creating a DLL that maps itself into memory when executed, instead of relying on Window’s API’s loader calls.
+This technique avoids storing the DLL on disk and calling the Windows API’s LoadLibrary that might be detected by security tools.
+Powersploit’s Invoke-ReflectivePEInjection  [19] module can be used to simulate the reflective DLL injection technique.
+In addition to loading a DLL or EXE into the PowerShell,  It can reflectively load a DLL into a remote process.
+Because of its capabilities, adversaries are also using this module for injection, such as the Turla APT Group [20].
+The below command is a simulation of reflective DLL injection using the Invoke-ReflectivePEInjection module.
+With this command, contents of the calc.exe file are read into the $PEByte byte array using the ReadAllBytes [21] method.
+Then the byte array containing the calc.exe is loaded and executed locally using the -PEBytes parameter.
+Import-Module %TMP%\Invoke-ReflectivePEInjection.ps1;$PEBytes = [IO.File]::ReadAllBytes('%windir%\System32\calc.exe'); Invoke-ReflectivePEInjection -PEBytes $PEBytes"
+To detect the reflective DLL injection technique, we need logs that include PowerShell activities.
+Event log entries in the Microsoft-Windows-PowerShell/Operational log includes such activities.
+The Event ID 4104 (script block logging) records accurate blocks of code as they are executed by the PowerShell engine.
+Script block logging captures the de-obfuscated full contents of the code as it is executed, including scripts and commands, as shown in the following figure.
+When the DLL is injected into the target process, the malware has to map the DLL’s raw binary into virtual memory.
+It uses  kernel32.dll and VirtualAlloc, GetProcAddress, and LoadLibraryA functions to get the correct address of the injected export function.
+Picus Labs’ Blue team developed the following Sigma rule by taking advantage of this finding mechanism and utilizing the Microsoft-Windows-PowerShell/Operational log with the Event ID 4104.
+title: Reflective Portable Executable Injection via PowerShell
+status: stabledescription: Detects the attempt of reflective portable executable (DLL/EXE) injection by PowerShell that uses API calls.
+(source="WinEventLog:Microsoft-Windows-PowerShell/Operational" EventCode="4104" "*kernel32.dll*" "*LoadLibraryA*" "*GetProcAddress*" "*VirtualAlloc*")
+(LOGSOURCETYPENAME(devicetype)='Microsoft Windows Security Event Log' and EventID='4104' and UTF8(payload) ilike '%kernel32.dll%' and UTF8(payload) ilike '%LoadLibraryA%' and UTF8(payload) ilike '%GetProcAddress%' UTF8(payload) ilike '%VirtualAlloc%')
+The following YARA rule can be used to detect PowerShell scripts used for reflective DLL injection.
+This rule detects both Powersploit’s Invoke-ReflectivePEInjection module and Mimikatz’s PE Reflective Injection method [22].
+rule power_pe_injection{meta:description = "PowerShell with PE Reflective Injection"author = "Benjamin DELPY (gentilkiwi)"strings:$str_loadlib = "0x53, 0x48, 0x89, 0xe3, 0x48, 0x83, 0xec, 0x20, 0x66, 0x83, 0xe4, 0xc0, 0x48, 0xb9"condition:$str_loadlib}
+TG-3390, APT 27, Bronze Union
+[1] ESET Research, “Carbon Paper: Peering into Turla’s second stage backdoor | WeLiveSecurity,” WeLiveSecurity, 30-Mar-2017.
+[2] Minerva Labs LTD, ClearSky Cyber Security, “CopyKittens Attack Group.” [Online].
+[3] Symantec Security Response, “Dragonfly: Cyberespionage Attacks Against Energy Suppliers.” [Online].
+[4] F-Secure, “BlackEnergy & Quedagh The convergence of crimeware and APT attacks.” [Online].
+[5] J. Grunzweig, “Cardinal RAT Active for Over Two Years,” Unit42, 20-Apr-2017.
+[6] Cybereason, “Operation Cobalt Kitty.” [Online].
+[7] “En Route with Sednit Part 3: A Mysterious Downloader,” Eset.
+[8] CrowdStrike, “CrowdStrike Intelligence Report PUTTER PANDA.” [Online].
+[9] “Emotet Malware | CISA.” [Online].
+[10] B. Levene, R. Falcone, and T. Halfpop, “Kazuar: Multiplatform Espionage Backdoor with API Access,” Unit42, 03-May-2017.
+[11] nccgroup, “Emissary Panda – A potential new malicious tool.” [Online].
+[12] “Threat Analysis: ROKRAT Malware | VMware Carbon Black,” VMware Carbon Black, 27-Feb-2018.
+[13] T. Micro, “Tropic Trooper’s New Strategy - TrendLabs Security Intelligence Blog,” 14-Mar-2018.
+[14] FireEye, “Double Dragon APT41, a dual espionage and cyber crime operation.” [Online].
+[15] S2 Grupo, “Evolution of Trickbot.” [Online].
+[16] R. Falcone, D. Fuertes, J. Grunzweig, and K. Wilhoit, “The Gorgon Group: Slithering Between Nation State and Cybercrime,” Unit42, 02-Aug-2018.
+[17] D. Tarakanov, “The ‘Kimsuky’ Operation: A North Korean APT?” [Online].
+[18] Talos Group, “Threat Spotlight: Group 72, Opening the ZxShell - Cisco Blogs,” Cisco Blogs, 28-Oct-2014.
+[20] ESET, “A dive into Turla PowerShell usage.” [Online].
+[21] dotnet-bot, “File.ReadAllBytes(String) Method (System.IO).” [Online].

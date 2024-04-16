@@ -1,0 +1,196 @@
+In this blog post we will present the latest droppers of Formbook data stealing malware – an advanced malware that uses diverse and innovative techniques to evade security products.
+We will reverse engineer all the different droppers and suggest ways to detect them.
+We also show how Cyberbit EDR detects the latest Formbook dropper.
+Formbook is a data stealing malware which is capable of stealing data from web browsers and many other applications.
+Formbook has been for sale on underground hacking forums since early 2016.
+Recently, we came across a new sample of Formbook and dissected it.
+We noticed that its dropper was different from other Formbook samples we encountered.
+We dived deeper into the Formbook samples and in particularly – their droppers.
+A dropper is a malware file whose purpose is to install malware on the system.
+It may also achieve persistence for malware or perform other malicious activities.
+The dropper is used in the initial infection stage and is not usually involved in the final damage inflicting stage of the malware.
+To hide the malware within them, the droppers usually use packers, encryptions and obfuscations on the malware’s final payload.
+The final payload might come as PE or shellcode.
+We discovered substantial variation among the new Formbook droppers.
+They are written in several programming languages and use numerous packers and anti-analysis techniques.
+This is done to avoid signature based anti-malware products from detecting it.
+The final, non-encrypted and non-obfuscated payload of Formbook data stealing malware never resides on the disk, only in the memory and therefore makes detection much more difficult.
+Let’s reverse engineer the new Formbook droppers and share meaningful insights about them.
+At the end of this post, you will find a summary and suggestions for detecting the droppers.
+You will also see how Cyberbit EDR detects the latest dropper.
+We analyzed the samples uploaded to Malpedia, along with a new sample we found in the Cyberbit Malware Lab.
+Learn more about Cyberbit EDR Kernel-Based Endpoint Detection vs. Whitelisting
+Highlight: Use of mshta.exe to execute vbscript for persistence
+This is the newest Formbook sample we found.
+In contrary to many other samples of Formbook, the main sample doesn’t unpack itself to another process.
+Instead, it drops a file called “Rhododendrons8.exe” and creates two processes: one is mshta.exe running this visual basic script:
+mshta.exe (Microsoft HTML Application Host) is a Windows utility for executing HTML application files.
+It can also run Visual Basic scripts.
+The script is simple and adds the dropped copy of the malware to registry autorun key, so it will execute as Windows starts.
+ Notice the simple obfuscation: Instead of writing “CreateObject”, “CrXXteObject” is written and “XX” is later replaced with “ea”.
+This is done to prevent signature-based tools from detecting this method being in this script.
+ It is the first and currently only sample of Formbook data stealing malware we observed that achieves persistency via this method.
+The second process created is the dropped “Rhododendrons8.exe.”   This file unpacks the Formbook payload in its memory.
+Rhododendron is a genus of 1,024  species of woody plants in the heath family (Ericaceae).
+Quite an unusual name for a malware!
+Formbook’s payload lies encrypted at address 0x00402c34 within the code section of Rhododendrons8.exe and is decrypted using two algorithms.
+The first algorithm is proprietary, the second is RC4 with a 256-bytes key.
+RC4 is a symmetric stream cipher that is a favorite among malware authors.
+It is simple to implement, doesn’t require any external libraries, and can be written easily even in x86 assembly.
+There are 3 stages for generating the stream cipher that is used encrypt or decrypt the data:
+Initialize the S-box (256 bytes array with values 0x00-0xFF)
+Generate the key stream using the S-box and decrypt/encrypt the data
+ The three stages can be seen in Figure 5.
+You can read here in detail about this algorithm and its implementation in malware.
+Below are screenshots of the decryption process:
+The final Formbook payload performs injection to explorer.exe.
+Formbook’s injection is rather sophisticated and uses direct system calls to patch Explorer’s memory in an elegant way.
+It was researched in depth by Remi Jullian.
+The payload unpacked by the dropper has only a .text section (code) and looks like this in an initial analysis with PE-Bear:
+This is the actual Formbook payload, and we will see this payload in all the following samples as well.
+Process Hollowing: Yes – with chosen file as the sample itself
+Highlight: Unlike sample 1, it doesn’t drop another executable
+This sample performs process hollowing with the chosen file as the sample itself and unpacks the final Formbook payload in the hollowed process.
+The decryption is similar to sample 1 (same algorithm + RC4).
+Unlike sample 1, the main sample doesn’t drop another executable.
+As usual, the final payload contains a .text (code) section only.
+Compare figures 9 and 8 to see how similar they look.
+Anti-Analysis: Encryptions, Anti-Debug (PEB checks) Anti-Sandbox (User Interaction, Time acceleration, API checks), Anti-Memory analysis, Anti-VM (MMX check)
+Process Hollowing: Yes – with chosen file as the sample itself
+Highlight: A technique for evading detection of reflectively-loaded modules
+This sample performs process hollowing with the chosen file as the sample itself and unpacks the final Formbook payload in the hollowed process.
+This sample checks for the presence of debugger using two different checks.
+If one of the checks returns true – it jumps to address 0x1342EB5 (see explanation later)
+This sample has a User-Interaction check that checks the position of the mouse cursor using the GetCursorPos method.
+If the mouse cursor doesn’t change its position during an interval of 1 millisecond, the malware will keep running in a loop.
+This sample uses an Anti-VM trick – it checks if the CPU of the machine is able to run MMX instructions – that are usually not supported in virtual machines.
+To retrieve the information about the CPU features, such as MMX instructions capabilities.
+The malware executes the following code:
+Another nasty trick in this Formbook dropper can actually defeat plugins such as ScyllaHide.
+Let’s have a look at it:
+It calls GetTickCount – which returns the milliseconds elapsed since the system was started.
+let’s call this result X.
+It sleeps for 2 seconds and then calls it again – let’s call this result Y.
+Then, it calculates Y-X and check if it’s < 1.5 seconds.
+We would expect Y – X to be around 2 seconds.
+This way, the malware “kills two birds with one stone.”
+Here is why: Sandboxes usually hook the Sleep function for time acceleration.
+For example: if a malware tries to call sleep with 30 seconds, it can be reduced to 1 second by the hooked function.
+GetTickCount may also be hooked by sandboxes.
+Virtual machines have naturally lower GetTickCount result, because they were started a few minutes earlier.
+The sandbox may hook GetTickCount and return a result reasonable for a normal PC: a few hours or few days.
+The problem however, is that if the sandbox hooks GetTickCount or Sleep, you can still compare the time differences and know if the time was accelerated or slowed down.
+Not only sandboxes hook these functions – also plugins such as ScyllaHide.
+Naturally, we apply Anti-Anti-Debug plugins when debugging malware, but in this case, it will only ruin our debugging process.
+When applying ScylleHide plugin with “GetTickCount” hook, we got X = 0x010A0B3D = 17435453 milliseconds which is about 4.84 hours.
+A reasonable time for a machine to be up.
+On the second call to GetTickCount, we got Y = 0x010A0B3E = 17435454 – Just 1 millisecond longer, and that’s after 2 seconds of sleep!
+Of course, this doesn’t make sense and the malware is “smart” enough to detect it.
+Now, look what happens if this test fails, assuming ScyllaHide’s GetTickCount hook is on: it jumps to address 0x134022E (see figure 14).
+In the earlier Anti-Analysis checks (MMX, Anti-Debug) we saw it jumps to 0x1342EB5.
+So, we a have different address this time.
+First, let’s look at 0x1342EB5:
+It looks like junk code.
+The first instruction, stosb, already causes an exception, because it tries to copy the value at EAX to the address at the EDI register, but the address at the EDI register is located within a range of pages that doesn’t have write permissions.
+So, in this case we were directly stopped from being able to debug the program.
+Let’s look at 0x134022E, specifically at its first instruction.
+We know EAX = 1 because the difference between the two GetTickCounts calls is 1 millisecond.
+The execution continues as usual, but we will be punished later!
+Later in the execution, the value at ss:[ebp+C] is moved to the EDI register.
+Then, 0x400 is added and “rep movsb” (copy ECX number of bytes from the address at ESI to the address at EDI) instruction is executed, but since 0x401 is not a valid address, it will fail.
+Lastly, as an Anti-Sandbox technique, it checks if the SetErrorMode and SetLastError APIs work as expected:
+We didn’t witness the RC4 algorithm like in the previous VB samples, only proprietary decryption algorithms.
+This sample has another nice trick to avoid memory analysis – it first writes the Formbook payload to the suspended process without the “M” of its “MZ” header.
+It writes the “M” in a separate call.
+This trick is employed to avoid detection of reflective loading – since detection of newly loaded executables modules can be done by their magic number – “MZ” at their beginning offset in memory.
+When scanning this memory region for the first time, the scanner will not identify this is a reflective loaded module – because it misses the “M”.
+The unpacked payload looks similar to the one in samples 1 & 2 – and will be similar in all the following samples as well.
+Anti-Analysis: Same as in sample 3
+Process Hollowing: Injection – with the chosen file as the sample itself, but without hollowing.
+Highlight: Code injection without hollowing
+This sample is similar to sample 3 in its Anti-Analysis techniques.
+It performs injection to a remote process with the chosen file as the sample itself.
+In this case, the dropper does not hollow the original content of the file from the remote process (which means it doesn’t call NtUnmapViewOfSection on the main executable module) – but overwrites its code section.
+The fewer API calls used for injection – the better – as anti-malware products rely heavily on hooks to detect suspicious activities.
+Since the original dropper module is not unmapped from the targeted process and Formbook’s final payload is smaller than the dropper’s code – We can see part of the code of the original dropper still present in the unpacked payload:
+Process Hollowing: Yes – with chosen file as the sample itself
+Highlight: Leveraging NSIS installer to execute the dropper
+This sample comes packed in an NSIS (Nullsoft Scriptable Install System) installer and is written in C++.
+Unzipping the .exe with 7-zip, reveals 2 folders: $PLUGINSDIR and $TEMP.
+$PLUGINSDIR contains a file called System.dll which is a plugin for NSIS used to call functions inside third-party DLLs.
+$TEMP contains some images, probably to disguise the real intent of the executable, a .css file and two other files – Pym.dll (written in C++) and Marestail.bin.
+Marestail.bin contains Formbook’sfinal payload – and it is encrypted.
+When the sample is executed, System.dll is loaded and its “Call” function is used to load and execute the DLLMain of Pym.dll
+Once Pym.dll is executed – it reads and decrypts Marestail.bin to unveil Formbook’s payload.
+Then, the decrypted payload is injected to a hollowed process.
+Again, the file chosen for hollowing is the sample itself.
+Pym.dll uses a simple Anti-Sandbox technique (User Interaction).
+It checks if the mouse cursor had moved during a short time interval (50 milliseconds) or if 6 minutes and 30 seconds had passed without any mouse movement; a time interval long enough to evade most sandbox timeouts.
+Only if at least one of these conditions is met – it continues its execution.
+Anti-Analysis: Encryptions, Obfuscations, Anti-Debug, Running processes checks, Loaded modules check, Anti-Emulation
+Process Hollowing: Yes – with chosen file as Microsoft’s svchost.exe
+Highlight: Anti-Emulation (check for time acceleration), file chosen for process hollowing is Microsoft’s svchost.exe
+This sample is written in C#.
+It is obfuscated and contains a lot of functions with random looking names.
+It has an encrypted resource that is decrypted and then executed.
+The decrypted resource is another C# program.
+It has some Anti-Analysis checks.
+It checks the following conditions and if at least one of them is true, it terminates the process.
+If none of the checks above return true, it decrypts a DLL from its resource that achieves persistence for the sample:
+Its drops the original sample to:
+And an .xml file to:
+And creates a scheduled task using this command:
+“C:\Windows\System32\schtasks.exe” /Create /TN “SYRPSVT\SYRPSVT” /XML “%USERPROFILE%\AppData\Roaming\SYRPSVT\$X.xml”
+Where $X = ‘a’ + five times the same random_char, where random_char in A-Z,a-z,_,0-9 (e.g: abbbbb.xml)
+This DLL also injects the final Formbook payload (also lies encrypted in the resource section) into a hollowed Microsoft svchost.exe process.
+Process Hollowing: Yes – with chosen file as the sample itself
+Highlight: Usage of a less-common API in process hollowing (NtAlertResumeThread)
+Another sample written in C#.
+This one is packed with Confuser 1.9.0.0.
+Unpacking and looking at the unpacked sample – reveals the injection method, which is slightly different than in other samples.
+ One of the stages in process hollowing technique is resuming the main thread of the suspended process, after it has been filled with a new code.
+The usual API call which is used for this operation is ResumeThread.
+In this case, the malware chooses a less common API –NtAlertResumeThread.
+This API performs same operation as ResumeThread but also alerts the thread so that is returns immediately from the wait with status STATUS_ALERTED
+This was probably done to avoid being detected by a hook on the more common ResumeThread.
+The file chosen for hollowing is again the sample itself.
+Packed: Compiled obfuscated AutoIt script
+Process Hollowing: Yes – with chosen file as the sample itself
+Programming language: AutoIt scripting language
+Highlight: Scanning for presence of specific anti-malware products
+This is a compiled AutoIt script which is heavily obfuscated that contains Formbook’s encrypted payload.
+It checks for the existence of processes Anti-Virus vendor processes (figure 32) – avastui.exe (Avast), ekrn.exe (ESET NOD32) and seccenter.exe (BitDefender).
+However – it doesn’t try to terminate them.
+It nevertheless performs process hollowing with the upper level APIs (VirtualAllocEx, WriteProcessMemory…) and again the chosen file for the hollowing is the sample itself.
+Anti-Analysis: Encryptions, Anti-Sandbox (User interaction), Check for suspicious file names and running processes, Anti-Debug
+Process Hollowing: Yes – with chosen file as the sample itself
+Highlight: Check the file path for specific names as part of anti-analysis
+This sample copies itself to a file named “essentialize.exe” and executes it.
+The newly executed process “essentialize.exe” performs process hollowing with the chosen file as itself to unpack Formbook’s payload.
+Its injection technique to the hollowed process is slightly different.
+Instead of using VirtualAllocEx + WriteProcessMemory, it uses NtCreateSection + NtMapViewOfSection to the remote process.
+This sample also has a lot Anti-Analysis techniques – it won’t execute essentialize.exe if one of them returns true:
+Have a look here If you are interested  to learn more about the last two Anti-Debug techniques, which are a bit less common than the first one.
+The Anti-Analysis checks are performed both in the original sample and the executed “essentialize.exe” process
+Packed: Yes – with ASProtect
+Highlight: No use of process hollowing
+This sample is packed with ASProtect.
+Unpacking reveals that like Formbook sample 9, it was also written in Delphi.
+Contrary to the other droppers, it doesn’t perform process hollowing or drop another executable.
+It simply decrypts Formbook’s payload from its resource section and executes it.
+Removing the ASProtect protection, the resource section is revealed to us, it is encoded in base64:
+It also delays execution by calling Sleep, but only for 25 seconds, which is not enough to evade sandboxes.
+We analyzed 10 different samples and discovered lots of tricks used by the latest Formbook variants droppers to evade analysis:
+The use of so many techniques suggests detecting the Formbook’s payload on the disk by signatures is impossible.
+Behavioral analysis is the only way to fully detect Formbook data-stealing malware and its droppers’ malicious activities.
+It is unknown to us who is writing and selling Formbook malware combined with these droppers.
+It might be sold separately or combined.
+What is certain, a lot of work has been invested in developing these droppers, as they differ so much and employ a lot of different techniques.
+Following the techniques/IOCs we found, here are our suggested way to detect them.
+It should be taken into consideration that false-positives are also possible.
+After execution, the following graph will be generated:
+Formbook.exe is the dropper as mentioned in the first sample analysis.
+It drops and executes rhododendrons8.exe and also executes mshta.exe to gain persistency (registry – executable added).
+If we look at the event details of mshta.exe, we can see the full script:
+Hod Gavriel is a malware analyst at Cyberbit.
+Learn more about Cyberbit EDR Kernel-Based Endpoint Detection vs. Whitelisting

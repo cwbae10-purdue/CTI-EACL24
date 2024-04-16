@@ -1,0 +1,134 @@
+Since mid-October 2020, the BlackBerry Incident Response Team have been actively tracking MountLocker affiliate campaigns as part of ongoing investigations.
+The affiliates are typically responsible for the initial compromise, distribution of MountLocker ransomware, and exfiltration of sensitive client data during a breach.
+In coordination with the BlackBerry Research and Intelligence Team, our researchers and investigators have produced the following wide-ranging report on MountLocker.
+It covers this threat’s operators, affiliates, ransomware, decryptor, and associated tactics, techniques, and procedures (TTPs).
+Our investigations into MountLocker-related affiliate campaigns suggests that threat actors often used remote desktop (RDP) with compromised credentials to gain access to a victim’s environment.
+In one instance, after establishing a foothold in an organisation, there was a delay of several days before activity resumed.
+It is likely that the threat actors were negotiating with the MountLocker operators to join their affiliate program and obtain the ransomware during this pause.
+Upon obtaining the MountLocker ransomware, the threat actors were observed returning with several “public” tools, including CobaltStrike Beacon and AdFind from Joeware.
+Over a period of approximately 24 hours:
+The following crude batch script (sanitized for confidentiality reasons) was used by the attackers to perform exfiltration of sensitive data.
+The script starts by uploading a “desktop.ini” file to the sever using curl, then enumerates a hardcoded root directory (localdir) and all subdirectories.
+Each file is uploaded to the FTP server as it goes:
+MountLocker FTP exfiltration batch script
+Successful MountLocker affiliates have been known to seek multi-million-dollar payments for decryption services and to prevent public disclosure of stolen data.
+The MountLocker operators are currently hosting a site on the dark web where they announce their recent targets and supply links to leaked data.
+The site is currently listing five victims; we believe the actual number to be far greater:
+The MountLocker ransomware, at less than 100Kb in size, is lightweight and simple in construction.
+It is typically deployed as either an x86 or x64 Windows portable executable (PE) file, although occasionally as a Microsoft Installer (MSI) package:
+Composition of a x64 MountLocker PE file
+Upon execution, MountLocker will process any command-line arguments supplied by the operators:
+C = Log to console
+F = Log to file (.log extension)
+S = Network shares (currently unimplemented)
+Create a marker file with the specified filename in each volume's root directory before volume encryption begins
+Prevent MountLocker from deleting itself after execution (typically used when launched as an MSI)
+Next, MountLocker initializes debug logging and creates a run-once mutex.
+The mutex is based on the serial number of the volume containing the Windows directory, and yields a 32-character uppercase hexadecimal string:
+The ransomware then proceeds to initialize the encryption keys and create the ransom note.
+MountLocker contains an embedded 2048-bit RSA public key supplied by the attackers.
+It is imported and used to encrypt a random session key generated using the cryptographically insecure GetTickCount API.
+This offers the slim possibility that knowing the timestamp counter value during ransomware execution could lead to the session key being brute-forced.
+After initializing the encryption keys, MountLocker will create the ransom note from a template and add the ransomware file extension to the registry.
+When a user double clicks an encrypted file, the ransom note is opened via Explorer.
+The file extension is a hex encoded 4-byte (or 8 character) “Client ID”, which is unique per victim organization:
+Attackers' RSA public key embedded in MountLocker
+The ransom note can vary slightly between samples, and in some cases incorrectly states that AES encryption was used.
+It contains a Tor .onion URL to contact the MountLocker operators via a “dark web” chat service to discuss a price for decryption software:
+After initialization is complete, prior to encryption, MountLocker will attempt to terminate a range of processes belonging to security software, office applications, browsers, and databases:
+
+MountLocker then proceeds to enumerate first local and then remote volumes looking for files to encrypt.
+For each volume found, it takes the following steps:
+If specified via command-line (using /marker:) create a marker file on the root of the volume.
+Recursively iterate over all files/folders:
+If the FindFirstFile function returns ERROR_ACCESS_DENIED, try to change permissions of the root directory by setting the owner and DACL (discretionary access control list) values in its security descriptor to the same ones as the parent process.
+Check whether the parent folder path is one of the following, and therefore excluded from encryption:
+Check if the file extension is allowed.
+MountLocker contains a huge list of over 2600 file extensions that it will target for encryption, including known file extensions for databases, documents, archives, images, accounting software, security software, source code, games, backups and various custom data formats.
+Common file extensions for executable files (.exe, .dll, .sys) are not targeted.
+c.       Ensure the filename is not “RecoveryManual.html”.
+d.      Memory map the file.
+e.      Generate a random encryption key for the file, again using the cryptographically insecure GetTickCount API (via rdtsc, and without the use of a Sleep API call!
+a.      Encrypt the file key with the session key using ChaCha20, and write both the encrypted file key (32-bytes) and encrypted session key (256-bytes) to the file:
+Encrypt the file key with the session key and write the file header
+Memory map the input file and ChaCha20; encrypt it using the file key in 64MB chunks:
+Move the file and restore the owner and DACL:
+Move file after encryption and optionally set named security information
+Post encryption, the composition of a MountLocker encrypted file is as follows, where:
+After the encryption process is completed, MountLocker will delete volume shadow copies to prevent the restoration of the encrypted files:
+Finally, in the absence of the /nodel command-line argument, MountLocker will drop the following batch file to remove itself from disk:
+MountLocker version 2 first surfaced in the wild during late November 2020, with a compilation timestamp from earlier in the month (November 6th).
+It is considerably smaller in size than the previous versions (approximately 50% smaller, at 46Kb for the x64 build) owing to the removal of the vast file extension “include” list.
+Instead, MountLocker version 2 turns this process on its head, and targets a far smaller list of file extensions to explicitly exclude from encryption:
+Overall, the code bears approximately 70% similarity to the initial MountLocker release, with no apparent changes to:
+As for updates, the most obvious initial differences are the reworded debug messages:
+Updated debug messages in MountLocker version 2
+The biggest change is in the process termination code and deletion of volume shadow copies.
+This is now implemented using a PowerShell script that gets written to a temporary directory and executed via a PowerShell one-liner prior to encryption:
+Drop and launch PowerShell script from MountLocker version 2
+The script itself will simply Base64 decode and gzip decompress a further PowerShell script, which is then invoked using iex:
+Once decoded, the underlying PowerShell script deletes volume shadow copies then attempts to terminate all services and processes running outside of the Windows directory.
+The script will avoid terminating processes belonging to itself, Tor, PowerShell, several browsers, and a long list of security software (allowing the victim to still use Tor to­­­­ contact the MountLocker operators to negotiate payment):
+Process termination script in MountLocker version 2
+MountLocker aims to evade security software that is not configured to terminate the entire process tree when handling alerts.
+It does this through the deletion of volume shadow copies and termination of processes in a separate process (powershell.exe).
+Finally, in addition to removing the large file extensions list, MountLocker version 2 has an updated list of folders that are excluded from file encryption:
+Updated exclude folders in MountLocker version 2
+The only MountLocker decryptor we’ve observed in the public domain is heavily based on the first x86 MountLocker ransomware codebase.
+It shares about 70% of the original functionality, including the run-once mutex, process termination and volume traversal.
+During the decryption process, the program will search all local and network volumes, as well as mapped shares, looking for encrypted files.
+The encrypted file and session keys are read from each file, and a checksum of the session key is computed.
+If the checksum doesn’t match a global session key checksum then the attackers RSA private key will be imported and used to decrypt the session key.
+The decrypted session key is then used to decrypt the file key using ChaCha20:
+Attacker's RSA private key embedded in the decryptor
+Finally, the file key is used to ChaCha20 decrypt the file in 64MB chunks:
+The MountLocker Operators are clearly just warming up.
+After a slow start in July they are rapidly gaining ground, as the high-profile nature of extortion and data leaks drive ransom demands ever higher.
+MountLocker affiliates are typically fast operators, rapidly exfiltrating sensitive documents and encrypting them across key targets in a matter of hours.
+Since its inception, the MountLocker group have been seen to both expand and improve their services and malware.
+While their current capabilities are not particularly advanced, we expect this group to continue developing and growing in prominence over the short term.
+Our AI-based endpoint security solution BlackBerry® Protect® has thwarted several MountLocker attacks in customer’s environments, preventing the ransomware from ever being deployed.
+BlackBerry Protect uses machine learning to provide an automated safeguard against both simple and sophisticated threats.
+It does this without the need for signatures, heuristics, sandboxes, cloud connections, or extensive human intervention.
+MountLocker decryptor for 3005… and 3163…
+vssadmin.exe delete shadows /all /Quiet
+MountLocker - Delete volume shadow copies
+MountLocker – Register file extension to
+open readme with explorer.
+powershell.exe -windowstyle hidden -c $mypid='%u';[System.IO.File]::ReadAllText('%s')|iex
+MountLocker v2 – Used to execute
+process termination script
+powershell -nop -w hidden -encodedcommand
+Used to invoke encoded PowerShell
+(containing CobaltStrike beacon)
+Suspected initial compromise using stolen credentials
+RDP used to leverage a foothold
+Command and Scripting Interpreter: PowerShell
+Event Triggered Execution: Change Default File Association
+MountLocker registers its file extension (.ReadManual.
+[0-9]{8}$) to open with explorer.exe
+File and Directory Permissions Modification: Windows File and Directory Permissions Modification
+Indicator Removal on Host: File Deletion
+MountLocker deletes itself post execution
+Permission Groups Discovery: Domain Groups
+Uploads sensitive documents via FTP
+Application Layer Protocol: Web Protocols
+MountLocker uses vssadmin.exe to delete all volume shadow copies
+MountLocker stops various system services prior to encryption
+The following VirusTotal query uses a simple content search to find related samples:
+The following VirusTotal query uses a behaviour search to find related samples:
+The following YARA rule looks for common MountLocker ransomware strings in the .rdata section of a PE file:
+rule Ransomware_MountLocker
+{
+    meta:
+        description = "Rule to detect MountLocker ransomware"
+        author = "BlackBerry Research and Intelligence Team"
+        date = "2020-11-24"
+The BlackBerry Research & Intelligence team examines emerging and persistent threats, providing intelligence analysis for the benefit of defenders and the organizations they serve.
+
+        BlackBerry uses cookies to help make our website better.
+Some of the cookies are necessary for proper
+            functioning of the site, while others are to help us understand how you use it.
+Read more here about our cookies, and how you can
+            opt out.
+By continuing to use this site you accept our use of cookies.

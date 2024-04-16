@@ -1,0 +1,180 @@
+The Turla espionage group has been targeting various institutions for many years.
+Recently, ESET found several new versions of Carbon.
+The Turla espionage group has been targeting various institutions for many years.
+Recently, we found several new versions of Carbon, a second stage backdoor in the Turla group arsenal.
+Last year, a technical analysis of this component was made by Swiss GovCERT.ch as part of their report detailing the attack that a defense firm owned by the Swiss government, RUAG, suffered in the past.
+This blog post highlights the technical innovations that we found in the latest versions of Carbon we have discovered.
+Looking at the different versions numbers of Carbon we have, it is clear that it is still under active development.
+Through the internal versions embedded in the code, we see the new versions are pushed out regularly.
+The group is also known to change its tools once they are exposed.
+As such, we have seen that between two major versions, mutexes and file names are being changed.
+The Turla group is known to be painstaking and work in stages, first doing reconnaissance on their victims’ systems before deploying their most sophisticated tools such as Carbon.
+A classic Carbon compromise chain starts with a user receiving a spearphishing email or visiting a previously compromised website, typically one that the user visits regularly — a technique known as a watering hole attack.
+After a successful attack, a first stage backdoor — such as Tavdig [1] or Skipper [2] — is installed on the user machine.
+Once the reconnaissance phase is over, a second stage backdoor, like Carbon, is installed on key systems.
+Carbon is a sophisticated backdoor used to steal sensitive information from targets of interest by the Turla group.
+This malware shares some similarities with “Uroburos” [3], a rootkit used by the same group.
+The most relevant resemblance is the communication framework.
+Indeed, both of them provide communication channels between different malware components.
+The communication objects are implemented in the same way, the structures and vtables look identical except that there are fewer communication channels provided in Carbon.
+Indeed, Carbon might be a “lite” version of Uroburos (without kernel components and without exploits).
+For Turla group to decide to install Carbon on a system, a (stage 1) recognition tool is usually delivered first to the target: this tool collects several pieces of information about the victim’s machine and its network (through Tavdig or Skipper for example).
+If the target is considered interesting enough, it will receive more sophisticated malware (such as Carbon or Uroburos).
+The Carbon framework consists of:
+The orchestrator and the injected library have their own development branch.
+Thanks to the compilation dates and the internal versions numbers hardcoded in the PE files, we might have the following timeline:
+Table 1 – Carbon development timeline
+The files from the Carbon framework can have different names depending on the version but they all keep the same internal name (from the metadata) regardless of the version:
+Each of these files exist in 32bit and in 64bit versions.
+Several files are created by Carbon to keep logs, tasks to execute and configuration that will modify the malware’s behavior.
+The contents of the majority of these files are encrypted with the CAST-128 algorithm [4].
+A base working directory will contain the files/folders related to Carbon.
+This directory is chosen randomly among the folders in %ProgramFiles% but excluding “WindowsApps”.
+The filenames are hardcoded in the orchestrator.
+The same names are used in the 3.7x+ branch.
+Because the injected library accesses the same files as the orchestrator, it is another easy way to link a library version and an orchestrator.
+Since version 3.80, all filenames have changed.
+In the case of the majority of the files from the Carbon working folder, when one is accessed by the malware, the following steps are taken:
+The following mutexes are created by the orchestrator in Carbon 3.7x:
+In carbon 3.8x, the filenames and the mutex names have changed:
+These mutexes are also used in the injected dll to ensure that the orchestrator has been executed.
+The configuration file affects the malware’s behavior.
+The file format is similar to “inf” files used by Windows.
+This file might be updated later.
+Indeed, in the communication library, some cryptographic keys are used to encrypt/decrypt data and these keys are retrieved from a section [CRYPTO] in the configuration file that does not exist when the file is dropped from the loader resources.
+The Carbon framework includes a logfile that is used to log actions performed by the malware and information on the system that can be useful to the malware operator (for example if an analysis tool such as WireShark is running on the machine).
+The log’s format has not changed since Carbon 3.71:
+The dropper is the only executable that is not a DLL.
+It is the first PE file to be executed: it is used to extract the other components from its resources.
+The PE files that are used to load the main components are extracted into the Windows system directory while the orchestrator, the library used to communicate with the C&C and the configuration file are extracted into the Carbon working directory.
+A new section is appended into a random “.inf” file from %SystemRoot%\INF.
+The section’s name is the volume serial disk number of the compromised machine and a value “root” is created with the chosen Carbon working directory.
+This part of the component is used to load the orchestrator.
+A service that ensures Carbon’s persistency is created.
+Its name can either be “srservice”, “ipvpn” or “hkmsvc” depending of the operating system version running on the compromised machine.
+The Carbon working directory is retrieved by walking through the “%windir%\inf” folder and looking for the file that contains the Carbon base path.
+Last but not least, the function “ModuleStart” (in Carbon 3.71) or “ModStart” (since Carbon 3.77) from the orchestrator (located in the Carbon base folder) is called.
+The orchestrator is the main component of the Carbon framework.
+It is mainly used to inject code into a process that communicates legitimately over the Internet and to dispatch the tasks received from the injected library to other computers on the same network either through named pipes or TCP.
+Seven threads are created by the malware.
+It is easy to identify Carbon’s characteristics because each thread has a specific role:
+Because the configuration file can be updated by the malware, some attributes like the C&C server addresses are monitored every 10 minutes.
+There is a storage folder located in the Carbon working directory.
+This folder contains some files downloaded from the C&C server (tasks that are either commands to be executed or PE files, and their configuration files).
+This thread will run continuously and check every two hours [5] whether there is still enough space available in this folder; if not, a notification is written into the logfile.
+The execution of the tasks in the context of the orchestrator process is very similar to the way in which it is performed in the communication library (cf Communication library / Tasks execution).
+Unlike the communication library, it is the file “encodebase.inf” (for Carbon v3.8x) or “a67ncode.ax” that contains the list of the tasks to execute.
+Each line of this file is composed in the following way:
+The five first fields are required, while the last three are optional.
+If the field “execution_mode” exists, its value will affect the way the task is executed:
+Like Uroburos/Snake, Carbon can dispatch tasks to other computers from the same network via named pipe or TCP.
+It is useful to be able to dispatch and execute tasks on computers that do not have Internet access.
+Uroburos used several types of communication transports than can be categorized as follows:
+Carbon uses a reduced number of communication channels:
+The data sent to peers are usually fragmented and transported either by TCP or via a named pipe.
+If, for example, fragmented data are sent from a computer to another one by a named pipe, an object “frag.np” is set up.
+In this case the mother class “frag” constructor will be called followed by a call to the constructor subclass “np”.
+There is a structure composed of several handlers for each objects: initialize communication, connection (to a pipe / IP address), read data, send data etc.
+Several steps are performed to send data from one computer to another:
+All the communication between the host and the peer are encrypted with CAST-128
+Note that this P2P feature is also implemented in the communication DLL.
+This malware supports additional plugins to extend its functionalities.
+In the configuration file, there is a section named “PLUGINS”.
+It might not exist when the configuration file is dropped from the loader resources but this file can be updated by the malware.
+The section “PLUGINS” contains a line formed this way:
+%file_path% can be either the path to a PE file or to a file containing a command line to be executed.
+%enabled% is a string that is used to know if the plugin has to be executed.
+If it is the case, that string value is “enabled”.
+The attribute %mode% is used to control the context in which to execute the PE file/command line.
+If it is a PE file:
+The library that is used to communicate with the C&C server is injected into remote processes.
+In order to know where to inject this DLL, the configuration file is parsed.
+The section “[NAME]” contains a field “iproc” containing a list of processes that can legitimately communicate to Internet.
+The process injection is very classical:
+The following analysis is based on the version 4.x of msximl.
+This component may have changed in the latest versions.
+Besides the code in the “Configuration fetching” thread from the orchestrator (which is similar), a field “sethttp1” is retrieved from the [TRANSPORT] section.
+If this value is set, HTTP 1.1 will be used for future connections.
+The tasks are retrieved from the C&C server.
+The tasks to be executed by the communication library are listed in the file “b9s3coff.ax” (for Carbon v3.7x) or “cifrado.xml” (for Carbon v3.8x).
+Each line of this file is composed in the following way:
+The task file and its config are decrypted (CAST-128) and the task executed.
+These parameters come from the section [TIME].
+If the task is a valid DLL file, it is loaded in the current process memory and a new thread is created to execute its “start” export.
+Otherwise, this is probably a command to execute.
+In this case, the configuration file is parsed.
+Like the Carbon configuration file, the task configuration file is formed as a windows “inf” file and should contain a section [CONFIG] with the following parameters:
+The command with its arguments is executed through CreateProcess() function and the results are stored in the %task_result_filepath% file if the RESULT option is not set to “stdout”, while error or additional info are added to the task logfile.
+If the option RESULT is set to stdout:
+In both cases, the same line as written into “C_56743.NLS” is also written into the field “run_task” from the Carbon configuration file.
+It might be intended as a way for the malware authors to know which is the last task executed when the configuration file is sent to the C&C server (check “Configuration file backup”).
+The logfile is backed up and sent to the C&C server periodically (by default this is done every two hours).
+Like the backup of the configuration file, this action is performed only during specific times of the day.
+Indeed, the log rotation will be performed only when the current local time is in the range of what is defined in the configuration file.
+The fields “wh_min” and “wh_max” are retrieved from the [TIME] section of the configuration file (by default: 8 and 20).
+The thread will execute the code only if the current hour of the day is between %wh_min% and %wh_max%.
+If there is a value for the attribute “timestop” from the [TIME] section (which looks like “wDay:wMonth:wYear:wHour:wMinute”), the thread will execute the code only after this specific datetime.
+The attributes “lastsend” and “logperiod” from the [LOG] section are used to specify a delay time when to backup and send the log to the C&C server.
+(by default: every two hours).
+A temporary file with a random name prefixed by “~D” is created in the folder “208” (for Carbon v3.7x) or “1033” (for Carbon v3.8x).
+The logfile content is copied into this new file.
+It is then compressed with Bzip2 and encrypted (CAST-128).
+A new line is added at the end of the file “C_56743.NLS” (for Carbon v3.7x) or “dsntype.gif” (for Carbon v3.8x):
+Last but not least, the attribute “lastsend” is updated with the current time and the original logfile is deleted.
+The code of this thread is used to retrieve new tasks from the C&C server, to send new files to the server (the files listed in the file “C_56743.NLS” / “dsntype.gif”) and to send the new tasks to the orchestrator.
+A random C&C server address is chosen from the ones in the section “CW_INET”.
+If the port and HTTP resource path are not specified, the default is to use port 80 and “/javascript/view.php”.
+A user agent is set up in the following way:
+The field “trans_timemax” from the section [TIME] is retrieved.
+It is used to set the timeout for internet requests (through InternetSetOption()).
+It has a value of 10 minutes by default.
+A first GET request is performed on the root page of the C&C web server to check that the host is alive.
+If no packet capture is running on the system, a new request is done on the C&C server to check if new tasks are available.
+A “PHPSESSID” cookie is added to the request with the victim uuid as its value.
+A header “Referer” is added as well and set to the C&C server URL.
+The malware is expecting to get an answer to the GET request similar to:
+If the field “value” contains something, a new task is available.
+If the file “C_56743.NLS” / “dsntype.gif” is not empty, it means there are data to be sent the C&C server.
+The file is parsed and the last line is retrieved.
+It contains details about the data to be sent.
+A data blob is built and each of the following fields is encrypted with CAST-128:
+If the field “dtc” from the section [CRYPTO] of the configuration file is set to 0, this whole blob is base64 encoded and sent to the C&C server through a POST request.
+Otherwise, another layer of encryption is used.
+In this case, the data blob is signed and a random 3DES key is used to encrypt it.
+Because the 3DES key is randomly generated and the server needs it to decrypt the data, the key is encrypted with the server public key.
+The server key is retrieved from the field “publicc” of the section [CRYPTO] from the configuration file.
+This new blob (encrypted_key | signature_data | encrypted data) is encoded in base64 and sent to the C&C server through a POST request.
+In order to avoid detection based on the data size sent in a request, the blob can be fragmented into several packets.
+An option in the configuration file (“post_frag” in the section [TRANSPORT]) defines whether the blob will be fragmented or sent in only one POST request.
+If this option is set to “yes”, the blob is divided into several fragments of a specific size.
+This size comes from another field in the configuration file: “post_frag_size”.
+An additional header will be added to the request:
+If the option http11 is set, a specific header is added as well:
+For each fragments sent, the fields “post_frag_size” and “pfslastset” from the config file (section [CW_INET_RESULTS]) are updated with the fragment size and the timestamp.
+New tasks are retrieved from the C&C server by parsing the html page.
+The malware expects to find the html tag <input> in the page with a base64 encoded blob in its “value” attribute.
+Once decoded, this blob contains:
+The malware uses an RSA private key (retrieved from the field “keypair” from the section [CRYPTO] of the configuration file) to decrypt the first block and then uses the freshly decrypted key to decrypt the third block.
+This block of data can be either:
+Each hour, the internet connection is checked.
+A first check is done by calling the function InternetAttemptConnect().
+If it works, another test is done by sending HTTP GET requests to the following websites:
+An event is used to notify the other threads in case of the loss of Internet access.
+Similar to the logfile, the configuration file is also periodically backed up and sent to the C&C server.
+The thread executes the code in a specific range of time (between 8h and 20h by default) [8].
+The value “configlastsend” is retrieved from the section [TIME] of the configuration file.
+If the config file has been sent over a month ago, the config file is copied into a temporary file with a random name prefixed by “~D” in the folder “208” (for Carbon v3.7x) or “1033” (for Carbon v3.8x).
+This file is then encrypted with CAST-128 algorithm.
+To notify the thread that communicates with the C&C server that a new file is ready to be sent to the server, the following line is appending to the file “C_56743.NLS” (for Carbon v3.7x) or “dsntype.gif” (for Carbon v3.8x):
+Last but not least, the attribute “configlastsend” is updated with the current time.
+The base address of the modules of interest are retrieved by either parsing the PEB or (if the modules are not loaded into the process memory) by loading the needed files from disk into memory and parsing their headers to get their base addresses.
+Once the base addresses are retrieved, the PEB is walked again and the field “LoadCount” from the structure LDR_DATA_TABLE_ENTRY is checked.
+This value is used as a reference counter, to track the loading and unloading of a module.
+If “LoadCount” is positive, the module EAT is parsed to get the needed function address.
+The module and function names are encrypted (at least since v3.77; it was not the case in v3.71) in a simple way, a logical shift of 1 bit being applied to each characters.
+The processes’ names are encrypted as well by just XOR’ing each character with the key 0x55 (for Carbon v3.7x at least since v3.77) and with the key 0x77 for Carbon v3.8x.
+With only a few the exceptions, each file from the Carbon working directory is encrypted with the CAST-128 algorithm in OFB mode.
+The same key and IV are used from the version 3.71 until the version 3.81:
+Before communicating with the C&C server or with other computers, the malware ensures that none of the most common packet capture software is running on the system:
+If any of these processes are running, no communication will be done.
+Carbon IoCs are also available on ESET’s GitHub repository https://github.com/eset/malware-ioc/tree/master/turla

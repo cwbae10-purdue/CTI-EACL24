@@ -1,0 +1,106 @@
+The technical analysis is related to the TAU-TIN for the same malware which can be located in this post.
+FireEye recently reported on APT41, a Chinese state sponsored espionage group.
+The group has been documented as targeting  healthcare, high-tech, and telecommunications companies for traditional corporate espionage purposes.
+Additionally this group has also targeted companies in the video game industry for financial gain.
+Crosswalk is a modular backdoor application that gathers system information and is capable of executing shell code in response to C2 messages.
+This technical analysis focuses on the 32-bit version of the Crosswalk malware.
+The metadata for the sample analyzed is in the table below.
+File Size       : 116,285 bytes
+Compiled Time   : Wed May 31 06:53:47 2017 UTC
+PE Sections (5) : Name       Size MD5
+                + 0x18400    16,957 4629b9455407d97f4cc1f83e0ad550b0 None
+Magic           : PE32 executable (console) Intel 80386, for MS Windows
+Table 1: Crosswalk 32-bit metadata
+Looking at the metadata we can tell that the binary has an overlay.
+This means there is extra data appended to the end of the file outside of what the PE header lists.
+The last section ends at 0x18400 but the full size of the file is 0x1c63d bytes.
+When the malware starts, it begins by opening a handle to its own executable.
+It then seeks to 12 bytes from the end of the file.
+It reads this data into a newly allocated memory buffer.
+This data can be seen in the following hex dump.
+Figure 1: Crosswalk 32-bit end of file
+The structure of the data is as follows:
+The loading code will then subtract the trailerOffset and the trailer.overlay_size values from the file size of the binary and seek to that location.
+From there a new thread is created starting execution at the beginning of the overlay data.
+In this sample the overlay data is split into the following sections:
+Table 2: Overlay structure offsets
+The overlay code itself is not packed or encrypted but the strings, imports and C2 configuration are encoded with a simple one byte XOR key.
+Each of the three encrypted sections use a different XOR key.
+All three of the keys can be found near the start of the global variables.
+The following code can be used to decrypt and display the encrypted information.
+    with open(sys.argv[1], ‘rb’) as f:
+        overlay_offset = f.seek(-TRAILER_LENGTH – overlay_length, os.SEEK_END)
+        key1 = overlay[data_offset + 0x10]
+        key2 = overlay[data_offset + 0x11]
+        key3 = overlay[data_offset + 0x12]
+        data_length = struct.unpack(‘<I’, overlay[data_offset + 0x334:data_offset + 0x338])[0]
+        for i in range(0, data_length):
+            data_decoded += chr(overlay[data_offset + 0x338 + i] ^ key3)
+        print(‘Overlay Offset: %s’ % hex(data_offset + 0x334))
+        import_offset = struct.unpack(‘<I’, overlay[data_offset + 0x20:data_offset + 0x24])[0]
+        import_length = struct.unpack(‘<I’, overlay[data_offset + 0x30:data_offset + 0x34])[0]
+        for i in range(0, import_length):
+            imports_decoded += chr(overlay[data_offset + import_offset + i] ^ key1)
+        print(‘Overlay Offset: %s’ % hex(data_offset + import_offset))
+        config = data_offset + import_offset + import_length
+        for i in range(0, 56 + 72):
+            config_decoded += chr(overlay[config + i] ^ key2)
+        print(‘Overlay Offset: %s’ % hex(config))
+Table 3: Decryption sample code
+After decrypting the data and resolving imports the malware proceeds to gather information about the host it’s running on.
+The following information is retrieved using standard win32 API calls:
+The generated UUID is then used to generate a client session key for the malware.
+The session key is derived by doing the following:
+After the client session key is initialized the code starts up a thread to handle network communication.
+The network thread first attempts to connect to the C2 server defined in the encrypted sections of the overlay.
+If it can connect then it will send out a beacon to the C2 server sending across the clients generated UUID information so that the server can derive the appropriate session key.
+Figure 3: Malware beacon data
+The network data is sent out on the port configured in the encrypted C2 configuration.
+In the case of this sample it’s port 443.
+Even though it’s using a standard HTTPS port the malware doesn’t attempt to use the HTTPS protocol at all.
+The first 5 bytes in the beacon packet are always the same.
+After that comes a 32-bit little endian integer representing the command type and then another 32-bit little endian integer representing the length of the following command data.
+The beacon above has the following message information:
+The rest of the data in the beacon packet seems to be used by the server to verify that it can derive the clients session key correctly.
+After the initial data is the MD5 hash of the UUID and then following that is the encrypted version of the UUID.
+The UUID is the only information that the C2 server actually needs to derive the clients session key.
+The receive thread sits in a loop waiting on responses from the C2 server.
+Below you can see the majority of the command handling code:
+Figure 4: Receive thread command handling
+The command handling code expects to receive command 0x64 before any other commands so that it can initialize the server’s session key.
+Command 0x64 seems to be the same sort of data as the beacon packet described above.
+It’s a way for the server to send across it’s unique UUID so that the client can derive a server session key.
+After this command is sent all further command data is encrypted.
+When the client sends out packets it encrypts the data with the server session key and when it’s reading data from the server it decrypts it with it’s client session key.
+TAU continues to analyze this sample to determine all of the command structure.
+However the commands that are provided highlight the malware’s capabilities.
+This command indicates that the server is sending over it’s session information so that the client can derive a server session key.
+After the servers session key is generated the client sends back a response of command 0x6f along with the information about the host that was collected during initialization.
+There is a case statement for this command but it doesn’t do anything.
+Based on the relation of the commands received and values sent back this would seem to be a request for host information.
+Command 0x78 attempts to lookup a plugin entry and execute it from the list of initialized plugins.
+If the specific plugin ID is not found then a new entry in the plugin list is created for later initialization by the 0x7a command.
+After it completes the client sends back a response of command 0x79.
+This command allows the C2 server to send shell code plugins to the client.
+The data structure for the plugin shellcode is the same as the main overlay data.
+The plugin is sent to the client and then initialized.
+The same dynamic import resolution process that was used during the main applications initialization is used during plugin initialization.
+If the plugin was successfully initialized then the client sends back command 0x7b to acknowledge that it finished.
+This command allows the C2 server to clear one or multiple plugins.
+If the plugin ID specified is 0x78 then all plugin entries will be cleared.
+When the client receives this command it will shutdown the network thread.
+If the receive thread is running and session keys have been generated then every ten seconds the heartbeat thread sends out a packet to the server with the command set to 0x8d.
+If the receive thread isn’t running then the client sends command 0xa1 to the server.
+Since command 0xa0 is the server asking the client to stop the network thread, command 0xa1 might simply be a notification to the server that network communication is not currently running.
+Custom Command and Control Protocol
+rule apt41_crosswalk_x86_2019_Q3 : TAU CN APT
+        author = “CarbonBlack Threat Research” // sknight
+        TID = “T1016, T1032, T1033, T1043, T1082, T1094, T1140”
+        $b1 = { e8 00 00 00 00 5b 83 eb 05}
+        uint16(0) == 0x5A4D and    // MZ header check
+rule apt41_crosswalk_x64_2019_Q3 : TAU CN APT
+        author = “CarbonBlack Threat Research” // sknight
+        TID = “T1016, T1032, T1033, T1043, T1082, T1094, T1140”
+        $b1 = { 48 8b 04 24 }
+        uint16(0) == 0x5A4D and    // MZ header check
+0 Comments have been added so far

@@ -1,0 +1,66 @@
+ by Security Lab | Jun 12, 2020 | Security information
+The Hornetsecurity Security Lab has observed a malspam campaign distribution TrickBot [1] that uses the Black Lives Matter movement as a lure to entice victims to open a malicious attachment.
+The TrickBot downloader document first injects shellcode into the WINWORD.EXE process.
+From that shellcode, it then spawns a cmd.exe process into which it again injects more of the same shellcode.
+This cmd.exe process then downloads the TrickBot DLL and executes it via rundll32.exe.
+The initial emails claim to be from a State office, Country authority, or Country administration:
+The email tells the recipient they can Vote confidentially about "Black Lives Matter" or Tell your government your opinion, Give your opinion, and Speak out confidentially about "Black Lives Matter".
+Attached is a file named e-vote_form_0000.doc, further suggesting the email to be some sort of official means of voting.
+However, the document only displays an image announcing a fake Office update and instructions to “Enable Editing” as well as to “Enable Content”:
+If the instructions are followed, the malicious VBA macro in the document is executed and it downloads the TrickBot malware.
+The initial portion of the infection chain (until the TrickBot malware is deployed) is depicted in this flow graph:
+In the following analysis we will walk through each stage of this chain.
+The VBA macro is protected against viewing in Word:
+However, this “protection” only prevents Word from showing the VBA macro without a password.
+The VBA macro code is still accessible.
+The first thing the VBA macro does is to display a fake error message:
+This results in the following pop-up:
+This is likely an attempt to prompt user interaction in order to bypass sandbox detections.
+It could also be an attempt to hide the fact that there is no document.
+A victim may be satisfied by receiving this error and assume the document to be broken.
+The macro uses VirtualProtectEx and CreateThread to inject shellcode into the WINWORD.EXE process.
+To this end, the code assembles one large string:
+This string contains the encoded shellcode.
+It is then decoded via the following function:
+Finally, the decoded shellcode is set to PAGE_EXECUTE_READWRITE using VirtualProtectEx, which was previously aliased to extensionsComment, and then a thread is started with the address of the shellcode as its start address using CreateThread, previously aliased to sMail:
+The shellcode can most easily be extracted by breaking on CreateThread in a debugger:
+The shellcode running in the WINWORD.EXE process first resolves several library functions.
+Then uses CreateProcessA to run a cmd.exe with the pause command, causing the cmd.exe to idle:
+Next, the shellcode uses a classic OpenProcess, VirtualAllocEx, WriteProcessMemory, and CreateRemoteThread sequence to do shellcode injection into the paused cmd.exe process:
+The cmd.exe /c pause process is likely used to avoid detection.
+A common technique used in process injection is to create a suspended (i.e., paused) process by setting the CREATE_SUSPENDED flag during process creation, to then inject code into the created process, and resume it afterwards.
+In the case of the discussed shellcode, the code is injected as a thread into the paused cmd.exe instead.
+The injected shellcode is the same shellcode that was injected into the WINWORD.EXE process.
+However, the entry point passed to CreateRemoteThread is different, resulting into a different execution flow for the shellcode within the cmd.exe process.
+The shellcode in the cmd.exe process also resolves several library functions.
+Additionally, it decodes the TrickBot download URLs.
+Next, the shellcode queries GetSystemMetrics(SM_CXSCREEN) and GetSystemMetrics(SM_CYSCREEN) to get the display resolution.
+Then, GetCursorPos is queried twice, with a call to Sleep(0x1388) in between causing a 5 second delay.
+This is likely done to verify mouse movement and thus avoid sandboxes.
+The data is then encoded as a HTTP query string as follows: &scr=1280x1024&cur1=604x250&cur2=622x310
+An ID query string &id=00000000 and the above system metrics query string are then appended to a URL to form the final download URL which is then queried via InternetOpenUrlA:
+In case the download is successful, the downloaded file is written to C:\\Users\\<username>\\AppData\\Local\\system.rre and executed via rundll32.exe %userprofile%/system.rre,Initialize using ShellExecuteA.
+The system.rre file is the TrickBot DLL.
+In case the download is not successful, the downloader sleeps and then a second download URL is tried.
+The double shellcode injection is likely used to avoid behavioral detection as WINWORD.EXE does not usually download files from the Internet or execute rundll32.exe.
+Hence, such anomalous behavior is more likely to be detected than cmd.exe spawning the rundll32.exe process.
+The query for the systems display resolution as well as the double query of the cursor position is also likely done to avoid delivering the TrickBot DLL to sandbox systems.
+Hornetsecurity’s Spam and Malware Protection, with the highest detection rates on the market, has already detected and blocked the malicious TrickBot document based on a detection signature.
+In case the basic detection signatures would not have blocked the emails, Hornetsecurity’s Advanced Threat Protection (ATP) would not have been impacted by the various anti-sandboxing mechanisms either.
+The human interaction simulation of the ATP sandbox successfully clicks the fake error message away for a complete execution of the malicious document:
+It detects the processes being created by the document, as well as the process injections:
+The human interaction simulation also results in the two queried cursor positions, sent as cur1 and cur2 to the TrickBot download server, to differ:
+This way, Hornetsecurity’s ATP sandbox is not fooled by the various anti-sandboxing techniques.
+The brand new Cyberthreat Report tells you all about current cyberthreats and gives you access to exclusive numbers and statistics.
+
+Hornetsecurity Ltd.
+55 Baker Street
+London
+W1U7EU
+United Kingdom
+I agree to the processing of my data and the establishment of contact by Hornetsecurity in accordance with the data protection guidelines.
+We could not locate your form.
+We could not locate your form.
+We could not locate your form.
+We could not locate your form.
+We could not locate your form.

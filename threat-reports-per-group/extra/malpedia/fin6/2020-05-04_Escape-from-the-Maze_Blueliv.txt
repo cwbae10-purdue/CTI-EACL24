@@ -1,0 +1,132 @@
+Throughout this series of  articles we will showcase some of the techniques used by the ransomware Maze to make its analysis more difficult.
+Additionally, a series of scripts will be provided to deobfuscate and better follow the execution flow.
+Usually the ransomware Maze is in DLL form, which is loaded into memory through a loader containing the encrypted DLL.
+Therefore, there are two components:
+You can find the sample used for this article in the IOC section.
+Should researchers wish to follow this part of the article using a debugger, it is recommended to do the following in IDA:
+Edit -> Segments -> Rebase… -> 0x400000
+This eliminates the possibility of problems arising due to having a different base address in the debugger and allows researchers to directly compare the memory addresses of the loader that appears in their debugger with those in this article.
+At the beginning of the program (0x0405DC0), the following graph is found:
+It may seem complicated at first, but let’s take a step-by-step approach to identify what is going on.
+It is making use of control flow flattening to break the original flow of the program and complicate its analysis.
+In addition, it adds opaque predicates and dead code in order to make the identification of the relevant blocks more difficult.
+Before continuing, let’s give a brief introduction of some concepts:
+Dead code is code that is inserted into a program to make the analysis tasks more complicated, but even if it is executed it does not change the original program flow.
+Opaque predicate is a technique used to add complexity to the original program flow.
+It is usually implemented by generating new branches in the control flow, for example, using conditional jumps.
+Although these conditional jumps exist, the implementation of the program remains deterministic.
+Control flow flattening is a technique used to break the flow of a program by flattening it.
+This diagram represents the control flow of a program.
+When the control flow is flattened, the program is divided into blocks, all of which are at the same level.
+Therefore, the order of execution cannot be identified at first glance.
+This order of execution is relegated to the new structure in the form of a switch.
+Said switch will change the program flow based on a predetermined value, which, for the Maze loader, is stored in the EBX register.
+At the end of each block a new value will be inserted in the EBX register to redirect the program flow to another branch, thus maintaining a deterministic flow.
+Below is an illustration by Qarkslab that provides a detailed overview of the different components of a control flow graph that has been obfuscated using control flow flattening.
+When dealing with this type of obfuscation, the first thing to do is locate the main dispatcher, the relevant blocks and the predispatcher.
+The main dispatcher is the program block to which the execution of the program will always return after finishing the execution of one of the branches.
+The relevant blocks are those blocks that are part of the functional program, as we could see in the first representation Block 1, Block 2.
+The predispatcher is in charge of modifying the value of the parameter that will be checked by the main dispatcher to redirect the execution flow through one branch or another.
+The first thing it does is a mov ebx,0x813, the prologue has been identified.
+Furthermore, by looking a little around the nodes you can see how the flow depends on the value of the EBX register as well:
+If looking at the cross references of the instruction following the mov (at 0x405DC5), it is referenced 208 times.
+The main dispatcher (0x405DC5) has been located, to which the execution will return again every time the branch is executed.
+To simplify, the execution would be something similar to this:
+In this specific case, if the execution of the program is followed until it returns to the main dispatcher (0x405DC5), it is possible to find the first predispatcher block.
+It can be noticed that in the predispatcher (0x4068B2) a new value is moved to EBX, specifically 0x25B, and then it jumps again to the main dispatcher (0x405DC5) and continues the execution through a new branch.
+This Maze loader does not use just one predispatcher; instead, each branch has a predispatcher that, after modifying the EBX value, will jump back to the main dispatcher block.
+So, in this implementation, the predispatcher blocks are all those that refer to the main dispatcher (the 208 blocks that appear in the XREFs), and the relevant blocks, which are those that matter, are usually those that precede the predispatcher blocks.
+But before identifying  relevant blocks let’s deal with other obfuscation techniques besides control flow flattening.
+By analyzing the code, we find that in addition to the control flow flattening technique, opaque predicates are being applied, which are implemented in different ways:
+You will notice how the last instructions with conditional jumps will always jump to the same address 0x405DC5:
+.text:00407A1E 0F 85 A1 E3 FF FF  jnz loc_405DC5
+.text:00407A24 0F 84 9B E3 FF FF  jz  loc_405DC5
+In this case 0x405DC5, which again is the main dispatcher’s address.
+The following patterns based on the jnz and jz instruction opcodes can be used to identify these opaque predicates:
+You can search for these patterns in IDA by using Search -> Sequence of bytes (Check Find all occurrences).
+This search mechanism will be used several times throughout this article.
+The first pattern, which searches first for a jnz and then a jz, has multiple occurrences; the second one (jz then jnz) has none:
+We have created a script in IDA that uses the aforementioned patterns to patch out the obfuscation:
+Once the script is executed, the opaque predicates implemented with jz and jnz will be removed.
+Now the CFG is beginning to look a little clearer:
+Besides using the jnz + jz opaque predicates, the loader also implements a second variation in which it will attempt to interfere with our analysis by modifying the value of EBX.
+There are multiple permutations of opaque predicates modifying EBX such as:
+Using mov ebx, value :
+Using push value pop ebx:
+In both cases, the value of EBX will be in charge of directing the flow of the program, but this value (push[value]) is fixed so the flow of these blocks will never change (deterministic) – therefore it is using opaque predicates.
+In order to remove these opaque predicates it is necessary to find all these blocks, interpret them, and patch them.
+The first case (mov ebx, value) appears to be more difficult to identify, but by looking at similar blocks, it can be observed that the value of EBX only varies from 0-9 so we can use multiple patterns to find them.
+In the second case, it is simpler.
+With a small pattern, all the blocks with those characteristics can be found inside the function, since the script will perform some more checks.
+Using these patterns we can, again, search and patch using idapython.
+Original code with EBX > 0:
+In this case the value of EBX is 7, so when the test ebx, ebx operation is performed, EBX will never satisfy the jz condition, so it can be removed.
+Original code with EBX == 0:
+In this case, the value of EBX is 0, so when the test ebx,ebx operation is performed, the ZF will be set to 1 and therefore the condition of the conditional jump jz is satisfied, so it is possible to modify the block patching it with a non-conditional jmp.
+In a similar vein to the opaque predicates that we discussed before, there are loops that increase until a specific EBX value is reached:
+Right after the program leaves the loop, however, the value of EBX is modified, making all the operations that modified the EBX register useless: this is dead code.
+In theory these loops could be directly removed from the code and would not affect the execution flow.
+By searching for the following pattern in IDA, all loops of this type can be found:
+This sample contains 41, and it can be seen how the EBX value is always modified after the loop.
+The script will remove the cmp and conditional jmp instructions of the loop block.
+There are other dead code blocks, whose code does not change the value of EBX, but it is not easy to find an expression to detect them:
+Some of the blocks also present checks of the BeingDebugged flag.
+In this sample, there are 8 such blocks.
+Some of these blocks precede a predispatcher block and are not deadcode because they affect the behavior of the loader.
+Because of this, these blocks could be considered relevant blocks:
+In cases where it finds the BeingDebugged flag active, it will enter an infinite loop.
+Since the purpose of these relevant blocks is to detect if the program is being debugged, we can simply patch the condition to make the check have no consequence by changing the jz to jmp.
+The pattern used to identify these blocks is the following:
+30 00 00 00
+64 ??
+The conditional jump has been patched to a non-conditional jump.
+As we have seen, it is not so easy to identify relevant blocks, and even more so in this case where, in addition to the control flow flattening technique, other obfuscation techniques have been introduced.
+The main objective of this obfuscated function is to detect whether the sample is being analyzed through the BeingDebugged flag.
+Only in cases where this flag is not activated will the ransomware component (DLL) be executed.
+The approach that has been taken in order to understand all the functionality has been to remove the obfuscation layers such as opaque predicates and dead code as well as identifying the anti-debug techniques.
+With all the previous patches applied, reanalyzing the code with IDA results in the following flow graph control:
+Now the function is correctly patched and it is easy to identify the blocks that are dead code.
+By following the resulting CFG, it can be seen that, at the bottom, there are blocks with a larger size and with calls to Windows API functions.
+Once these blocks are executed, a callback function will be invoked through CreateTimerQueueTimer when Sleep is called, which will load the Maze DLL into memory and run it.
+At this point, the obfuscation techniques used have been understood and the anti-debug checks of the Maze loader have been avoided.
+In the next article the obfuscation and anti-debug methods used in the Maze DLL will be explained in detail.
+In the following article we will analyze the techniques used by the Maze DLL in detail.
+We want to acknowledge another very good blogpost regarding this topic which was published by Crowdstrike a couple of days ago:
+This blog post was authored by the Blueliv Labs team.
+ 
+Home » Blog » Escape from the Maze
+Necessary cookies are absolutely essential for the website to function properly.
+These cookies ensure basic functionalities and security features of the website, anonymously.
+CookieDurationDescription__cfduid1 monthThe cookie is used by cdn services like CloudFare to identify individual clients behind a shared IP address and apply security settings on a per-client basis.
+It does not correspond to any user ID in the web application and does not store any personally identifiable information.cookielawinfo-checbox-analytics11 monthsThis cookie is set by GDPR Cookie Consent plugin.
+The cookie is used to store the user consent for the cookies in the category "Other.cookielawinfo-checkbox-necessary11 monthsThis cookie is set by GDPR Cookie Consent plugin.
+The cookies is used to store the user consent for the cookies in the category "Necessary".cookielawinfo-checkbox-performance11 monthsThis cookie is set by GDPR Cookie Consent plugin.
+The cookie is used to store the user consent for the cookies in the category "Performance".viewed_cookie_policy11 monthsThe cookie is set by the GDPR Cookie Consent plugin and is used to store whether or not user has consented to the use of cookies.
+It does not store any personal data.
+Functional cookies help to perform certain functionalities like sharing the content of the website on social media platforms, collect feedbacks, and other third-party features.
+The purpose of the cookie is to enable LinkedIn functionalities on the page.langsessionThis cookie is used to store the language preferences of a user to serve up content in that stored language the next time user visit the website.lidc1 dayThis cookie is set by LinkedIn and used for routing.
+Performance cookies are used to understand and analyze the key performance indexes of the website which helps in delivering a better user experience for the visitors.
+CookieDurationDescription_gaexp1 month 6 days 14 hoursThis cookie is used to determine a user's inclusion in an experiment and the expiry of experiments a user has been included in.YSCsessionThis cookies is set by Youtube and is used to track the views of embedded videos.
+Analytical cookies are used to understand how visitors interact with the website.
+These cookies help provide information on metrics the number of visitors, bounce rate, traffic source, etc.
+CookieDurationDescription___utmvcThis cookie is used for the function of Google Analytics.
+The cookie store the visitor-level custom variable data._ga2 yearsThis cookie is installed by Google Analytics.
+The cookie is used to calculate visitor, session, campaign data and keep track of site usage for the site's analytics report.
+The cookies store information anonymously and assign a randomly generated number to identify unique visitors._gid1 dayThis cookie is installed by Google Analytics.
+The cookie is used to store information of how visitors use a website and helps in creating an analytics report of how the website is doing.
+The data collected including the number visitors, the source where they have come from, and the pages visted in an anonymous form._hjFirstSeen30 minutesThis is set by Hotjar to identify a new user’s first session.
+It stores a true/false value, indicating whether this was the first time Hotjar saw this user.
+It is used by Recording filters to identify new user sessions._hjid1 yearThis cookie is set by Hotjar.
+This cookie is set when the customer first lands on a page with the Hotjar script.
+It is used to persist the random user ID, unique to that site on the browser.
+This ensures that behavior in subsequent visits to the same site will be attributed to the same user ID.uvc1 year 1 monthThe cookie is set by addthis.com to determine the usage of Addthis.com service.
+Advertisement cookies are used to provide visitors with relevant ads and marketing campaigns.
+These cookies track visitors across websites and collect information to provide customized ads.
+CookieDurationDescriptionbscookie2 yearsThis cookie is a browser ID cookie set by Linked share Buttons and ad tags.IDE1 year 24 daysUsed by Google DoubleClick and stores information about how the user uses the website and any other advertisement before visiting the website.
+This is used to present users with ads that are relevant to them according to the user profile.loc1 year 1 monthThis cookie is set by Addthis.
+This is a geolocation cookie to understand where the users sharing the information are located.personalization_id2 yearsThis cookie is set by twitter.com.
+It is used integrate the sharing features of this social media.
+It also stores information about how the user uses the website for tracking and targeting.test_cookie15 minutesThis cookie is set by doubleclick.net.
+The purpose of the cookie is to determine if the user's browser supports cookies.VISITOR_INFO1_LIVE5 months 27 daysThis cookie is set by Youtube.
+Used to track the information of the embedded YouTube videos on a website.
+Other uncategorized cookies are those that are being analyzed and have not been classified into a category as yet.

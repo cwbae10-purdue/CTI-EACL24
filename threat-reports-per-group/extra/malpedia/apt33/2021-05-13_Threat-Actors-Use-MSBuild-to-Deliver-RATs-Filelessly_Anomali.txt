@@ -1,0 +1,93 @@
+Anomali’s intelligence-driven security solutions help organizations enhance their security defenses by delivering extended detection and response capabilities that stop attackers and help prevent future attacks.
+Transform threat data into relevant actionable intelligence to speed detection, streamline investigations and increase analyst productivity.
+Detect and respond to threats in real-time by automatically correlating ALL security telemetry against active threat intelligence to expose “(un)known” threats and decisively respond.
+Automate & streamline cyber threat research to identify relevant threats within unstructured data in seconds and understand the impact.
+A unique cybersecurity marketplace providing instant access to a growing catalog of threat intelligence providers, integration partners, and threat analysis tools.
+Trial and purchase threat intelligence feeds from Anomali partners – find the right intelligence for your organization, industry, geography, threat type, and more.
+Gain the tools to pivot quickly from one piece of information to look up other sources of data to get a complete picture of a threat – all one click away.
+Anomali seamlessly integrates with many Security and IT systems to operationalize threat intelligence.
+Anomali offers competitive advantages and new revenue opportunities for partners looking to enhance their product portfolios with our market-leading threat intelligence platform.
+Anomali delivers intelligence-driven cybersecurity solutions, including ThreatStream®, Match™, and Lens™.
+Companies use Anomali to enhance threat visibility, automate threat processing and detection, and accelerate threat investigation, response, and remediation.
+Authored by: Tara Gould and Gage Mele
+Anomali Threat Research discovered a campaign in which threat actors used MSBuild - a tool used for building apps and gives users an XML schema “that controls how the build platform processes and builds software” - to filelessly deliver RemcosRAT, and RedLine stealer using callbacks.
+[1] The malicious MSBuild files we observed in this campaign contained encoded executables and shellcode, with some, hosted on Russian image-hosting site, “joxi[.
+]net.” While we were unable to determine the distribution method of the .proj files, the objective of these files was to execute either Remcos or RedLine Stealer.
+The majority of the samples we analyzed deliver Remcos as the final payload.
+
+Figure 1 - Infection chain
+MSBuild is a development tool used for building applications, especially where Visual Studio is not installed.
+[2] MSBuild uses XML project files that contain the specifications to compile the project and, within the configuration file, the “UsingTask” element defines the task that will be compiled by MSBuild.
+In addition, MSBuild has an inline task feature that enables code to be specified and compiled by MSBuild and executed in memory.
+This ability for code to be executed in memory is what enables threat actors to use MSBuild in fileless attacks.
+A fileless attack is a technique used by threat actors to compromise a machine while limiting the chances of being detected.
+[3] Fileless malware typically uses a legitimate application to load the malware into memory, therefore leaving no traces of infection on the machine and making it difficult to detect.
+An analysis by network security vendor WatchGuard released in 2021 showed a 888% increase in fileless attacks from 2019 to 2020, illustrating the massive growth in the use of this attack technique, which is likely related to threat actor confidence that such attacks will be successful.
+The file we analyzed is called “imaadp32.proj,” and as shown in Figure 2 below, is an MSBuild project file (.proj).
+For persistence, mshta is used to execute a vbscript that runs the project file, with a shortcut file (.lnk) added to the startup folder (Figure 3).
+
+Figure 2 - MSBuild Project Schema for immadp32.proj
+
+Figure 3 - .lnk File Created in Startup Folder
+Following the creation of persistence, two large arrays of decimal bytes were decoded by the function shown in Figure 4.
+
+Figure 4 - Decoding Function
+Porting the decoding function to Python, we created a script (Figure 5 below).
+By using the variable “dec_list” to contain the decimal to be converted, and the variable “key” representing the string found at the end of decimal, we decoded the function.
+Figure 5 - Python Script to Decode
+The output decimal list from this function was then converted from bytes, resulting in an executable for the first block and shellcode for the second block.
+The malware and shellcode were allocated memory in the process space using VirtualAlloc.
+After being copied into memory, the shellcode was executed using the callback function pointer in CallWindowProc, shown in Figure 6 below.
+Other samples leverage the function Delegate.DynamicInvoke instead.
+
+Figure 6 - Shellcode and Payload Being Loaded Into Memory
+
+Figure 7 - Encoded shellcode in Project File
+The shellcode (encoded shown in Figure 7 above) calls, shown in Figure 8 below, were mainly: LoadLibraryW, VirtualAlloc, CreateProccessW, and ZwUnmapViewOfSection.
+LoadLibraryW loads the module, VirtualAlloc allocates the memory, CreateProcessW created a process, and ZwUnmapViewOfSection is used to unmap memory from a virtual space.
+These were used to inject the payload into process memory.
+
+Figure 8 - Calls made by the shellcode
+The payload from the project files was a remote access tool (RAT) called Remcos.
+Remcos is a commercial software created by Breaking Security that, according to their user manual, can be used for remote control, remote admin, remote anti-theft, remote support and pentesting.
+[5] However, Remcos has often been used by threat actors for malicious purposes.
+The software, written in C++, enables full access to the infected machine with features including, but not limited to:
+The themes used by actors to distribute Remcos have varied, including changes designed to adapt to themes or timeframes.
+For example, recent Remcos campaigns were observed utilizing Tax Day lures.
+[6] The version used in this campaign was 2.6.0, which was released in July 2020 (Figure 9).
+Additional functions Remcos has been known to utilize are shown in Table 1 below.
+The persistence technique is simply adding a run registry key for persistence (Figure 11).
+Remcos has also been observed using its “Watchdog” feature to restart the RAT if it is terminated (Figure 12).
+
+Figure 9 - Remcos Version 2.6.0 Being Used
+
+Figure 10 - connecting to C2
+
+Figure 11 - Adds Run Registry Key for Persistence
+
+Figure 12 - Watchdog Module
+Figure 12 shows the “Watchdog” module which restarts Remcos in the event the program is terminated.
+Table 1 - Remcos 2.6.0 Features
+In a similar MSBuild project file to the Remcos dropping .proj file, we found another project file named “vwnfmo.lnk“ where RedLine Stealer was dropped instead of Remcos, shown in Figure 13 below.
+RedLine Stealer is written in .NET and has been observed stealing multiple types of data (full list shown in Table 2 below), including: :
+RedLine will search for the existence of multiple products that include cryptocurrency software, messaging apps, VPNs, and web browsers (full list shown in Table 2 below).
+
+Figure 13 - RedLine .NET Information Stealer
+
+Figure 14 - RedLine Functions
+
+Figure 15 - Checks for NordVPN Installation
+Figure 15 above shows RedLine checking for NordVPN on the machine.
+If the path exists, the next function of this malware is to check for the user config to steal the credentials.
+This function also enables RedLine to steal credentials for additional installed applications.
+Table 2 - Installs RedLine Scans for
+The threat actors behind this campaign used fileless delivery as a way to bypass security measures, and this technique is used by actors for a variety of objectives and motivations.
+This campaign highlights that reliance on antivirus software alone is insufficient for cyber defense, and the use of legitimate code to hide malware from antivirus technology is effective and growing exponentially.
+Focusing on cybersecurity training and hygiene, as well as a defense-in-depth strategy, are some recommended courses of action for countering this threat.
+[1] “MSBuild,” Microsoft Visual Studio Docs, accessed May 3, 2021, published November 4, 2016, https://docs.microsoft.com/en-us/visualstudio/msbuild/msbuild?view=vs-2019.
+[3] “What Is Fileless Malware?,” McAfee, accessed May 3, 2021, https://www.mcafee.com/enterprise/en-gb/security-awareness/ransomware/what-is-fileless-malware.html.
+[4] “Internet Security Report – Q4 2020,” WatchGuard, accessed May 4, 2021, published March 30, 2021, https://www.watchguard.com/uk/wgrd-resource-center/security-report-q4-2020, 3.
+[5] “Remcos Instructions Manual,” Breaking Security, accessed May 4, 2021, published July 2018, https://breaking-security.net/wp-content/uploads/dlm_uploads/2018/07/Remcos-Instructions-Manual-rev19.pdf, 15-16.
+[6] Daniel Frank, “Cybereason Exposes Campaign Targeting US Taxpayers with NetWire and Remcos Malware,” Cybereason, accessed May 4, 2021, published March 18, 2021, https://www.cybereason.com/blog/cybereason-exposes-malware-targeting-us-taxpayers.
+The latest Anomali updates and cybersecurity news, delivered straight to your inbox each month.
+ThreatStream® is a registered trademark of Anomali Inc. Anomali Match™ ("Match") and Anomali Lens™ ("Lens") are trademarks of Anomali Inc.

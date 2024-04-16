@@ -1,0 +1,76 @@
+Few months ago we started observing a cyber operation aiming to attack private companies in various business sectors, from automotive to luxury, education, and media/marketing.
+The attack attribution is still unclear but the large scale of the malicious activities has also been confirmed by Unit42, who reported attack attempt against government verticals too.
+Few weeks ago, Unit42 discovered another active campaign, compatible with the Roma225 one we tracked on December 2018, pointing to some interesting changes into the attackers TTPs.
+Recently, we intercepted other attacks potentially related with this wider criminal operation.
+For this reason, Cybaze-Yoroi ZLab team decided to analyze this recent campaign in order to investigate the evolution of the Aggah threat.
+The whole infection chain shows an interesting degree of sophistication, leveraging about seventeen stages: a non negligible number of steps putted in place to decouple the infection vector from the actual payload.
+The following info-graphics summarize the infection chain dissected in the sections below, starting from the weaponized Office document, initially delivered through malicious emails, to the final RevengeRAT payload.
+Table 1: Information about the RevengeRAT malicious macro dropper
+All the infection starts with a malicious XLS document weaponized with an embedded macro.
+The VB code is polluted by a multitude of junk instructions and after a cleaning phase we isolated the essence of the malicious code.
+Code Snippet 1:  real core of the macro
+A quick and dirty manipulation of the script enabled us to easily bypass the code obfuscation techniques protecting the next stage of the infection: the invocation of a Microsoft HTML Application hosted in a remote location.
+The macro has the only purpose to run the mshta command.
+As defined by the Mitre, “Mshta.exe is a utility that executes Microsoft HTML Applications (HTA).
+HTA files have the file extension .hta.
+HTAs are standalone applications that execute using the same models and technologies of Internet Explorer, but outside of the browser.” .
+The malware retrieves the HTA application to run from a remote host behind the Bitly shortening service.
+The target page is the “rg.html”, downloaded from “https[://createdbymewithdeniss[ .blogspot[.com/p/rg[.html”.
+Even in this case, like in the Roma255 campaign, the attacker abused the Blogger platform to hide the malicious code in plain sight.
+The page does not embed any binaries or malicious links, but navigating its source code, it reveals packed HTML code dynamically injected into the page during the rendering.
+This additional piece of script is specifically designed to be executed by the “mshta” utility.
+It is a VBScript code creating a “WScript.Shell” object, a particular object decisely not designed to be loaded into regular web browsers engines.
+Code Snippet 2: Javascript code after “unescape” function
+The VBScript code is obfuscated using a series of “StrReverse” functions.
+But the action it performs is still clearly evident: call another mshta process and execute a new HTA application hosted on Pastebin (hxxp[://pastebin[.com/raw/efZDG7aL).
+This other script is also encoded in hexadecimal format.
+After its decoding its  content can be divided into four parts.
+The first one is responsible for killing some of the Microsoft Office suite processes, like Word, Excel, Publisher and  PowerPoint.
+Code Snippet 3: First deobfuscated piece of code
+Instead, the second chunk hides the next malware stage invocation within a Powershell script.
+Code Snippet 4: Second deobfuscated piece of code
+This code snippet hides a Powershell executable stage encoded in numeric format.
+The correspondent ASCII text is then executed through the IEX command-let.
+Code Snippet 5: Deobfuscated powershell function
+This code builds up the core of the malware implant (discussed in the next section).
+The third chunk of the code, instead, is where the attacker sets two different persistence mechanisms.
+Both of them invokes two different HTA application retrieved from Pastebin:
+Code Snippet 6: Third deobfuscated piece of code (part 1)
+Code Snippet 7:  Third deobfuscated piece of code (part 2)
+Both of the scripts are stored onto Pastebin platform and even if  the first one has been removed, the malware maintains its persistence thanks to the execution of the second method.
+The last chunk of code, the fourth, contains a huge number of Registry keys ready to be set on the target machine.
+This behavior has been implemented to drastically reduce the defenses of the target host, for instance disabling security features oft the Microsoft Windows and the Office ecosystem.
+The “Edited Registry Keys” section reports them.
+As stated in the previous section, the Code Snippet 5 contains the core of malicious actions.
+The malware concurrently downloads and executes powershell code from two pastes.
+The first one is "CM22vTup" and have been published by a Pastebin user named “HAGGA”, the same reported in the PaloAlto analysis.
+As previously hinted the Powershell code in the “CM22vTup” snippet encodes its payload in numeric format.
+Decoding “PAYLOAD-1“, another obfuscated Powershell script reveals the loading of a shellcode directly in the running process memory.
+Code Snippet 8: Code structure of the downloaded script
+Code Snippet 9: Structure of the script contained in “PAYLOAD_1”
+After a basic manipulation, The data hidden in “PAYLOAD_2” results to be the hexadecimal representation of a PE file, easily recognizable due to the characteristic ”4D 5A” header.
+Code Snippet 10: “PAYLOAD_2” in hex encoding
+This PE 32 file is a well formed .Net assembly.
+In the following table are shown the static information about it.
+Table 2: Information about the RevengeRAT / Injector malicious payload
+However, the .Net payload is not totally unprotected.
+In  fact it has been  obfuscated with the “ConfuserEx” obfuscator.
+The assembly is a Dynamic Linked Library with only one purpose: inject the payload into a target process through the well known “Process Hollowing” technique.
+At this stage of the infection chain the final payload could be retrieved, the RevengeRAT remote administration tool.
+The final payload is the one downloaded from the Pastebin page “Qx0K2baN”, as reported in Code Snippet 5.
+This code comes with the same obfuscation method seen in PAYLOAD_2, hex encoding together with a simple replacing routine.
+Table 4: Information about the RevengeRAT malicious payload
+Even this executable is a well formed .Net Assembly, but in this case it is obfuscated with another tool, “.Net Reactor”, a commercial code protection tool specialized in .Net applications.
+Exploring the code, we found many similarities with the same RevengeRAT threat previously analyzed by us and by Unit 42.
+This means, with reasonable confidence, the campaign we are dissecting could be an evolution of the previous campaigns, showing an increase of the malware stealthiness and the adoption of new techniques like process hollowing in the infection chain.
+Despite that, the RevengeRAT core is substantially the same.
+This time the recurring word is “rg”.
+In fact the two payloads download from the pastebin platform are “rgrunpe” and “rgbin”; also the new command and control server domains starts with the two letters “rg”, the codename of this last campaign.
+This time, despite the “roma225” case, the socket key of the rat is configured differently with the static string “lunlayo” and the id is “HOTEIS NOVOS” instead of “POWERScreenPOWER”.
+Anyway, as shown in Figure 11, the ID and Mutex of the last two campaigns are the same, indicating the fact that the group is active and the infection campaign continues.
+Moreover, considering the number of views counted by the Pastebin snippet “CM22vTup”, the one delivering the RevengeRAT payload, is possible to estimate the magnitude of the attack, which may involve up to 1600 victims.
+Since December 2018, we are following the tracks of this ambiguous cyber criminal group, internally referenced as TH-173.
+There are chances this whole activity could be linked with the Gorgon Group, but at the moment we have no definitive evidence of this connection.
+Anyway, through the constant eyes on this threat, we observed a refinement in their infection chain while they are maintaining intact some of their TTP, such as the abuse of the Blogspot platform and legit dynamic DNS services.
+In fact, the group started abusing Pastebin to add complexity into the infection chain, mixing up hidden MSHTA code, Powershell scripts and also additional process injection techniques to their arsenal.
+This blog post was authored by Luigi Martire, Davide Testa and Luca Mella of Cybaze-Yoroi Z-LAB

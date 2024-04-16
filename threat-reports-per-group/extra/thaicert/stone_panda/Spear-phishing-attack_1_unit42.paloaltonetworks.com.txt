@@ -1,0 +1,102 @@
+
+          By Jen Miller-Osborn and Josh Grunzweig
+February 16, 2017 at 11:00 AM
+This post is also available in: 
+    日本語 (Japanese)
+In 2016, from September through November, an APT campaign known as “menuPass”  targeted Japanese academics working in several areas of science, along with Japanese pharmaceutical and a US-based subsidiary of a Japanese manufacturing organizations.
+In addition to using PlugX and Poison Ivy (PIVY), both known to be used by the group, they also used a new Trojan called “ChChes” by the Japan Computer Emergency Response Team Coordination Center (JPCERT).
+In contrast to PlugX and PIVY, which are used by multiple campaigns, ChChes appears to be unique to this group.
+An analysis of the malware family can be found later in this blog.
+Interestingly, the ChChes samples we observed were digitally signed using a certificate originally used by HackingTeam and later part of the data leaked when they were themselves hacked.
+Wapack labs also observed a similar sample targeting Japan in November.
+It’s not clear why the attackers chose to use this certificate, as it was old, had been leaked online, and had already been revoked by the time they used it.
+Digital certificates are typically used because they afford an air of legitimacy, which this one definitely does not.
+The attackers spoofed several sender email addresses to send spear phishing emails, most notably public addresses associated with the Sasakawa Peace Foundation and The White House.
+All the spear phishes were socially engineered with subjects appropriate for the target and the apparent sender.
+One of the more interesting subject lines was used in the White House attack; “[UNCLASSIFIED] The impact of Trump’s victory to Japan,” sent two days after the election.
+Most of the attacks against academics involved webmail addresses using names of academics but are not tied to those academics openly online.
+However, all the spear phish recipients used email addresses tied to them online.
+Recent menuPass activity and some ties to older infrastructure
+The C2 infrastructure in these attacks is largely actor registered, with only a few Dynamic Domain Name System (DDNS) domains.
+menuPass typically makes use of a mix of DDNS and actor-registered domains in their attack campaigns.
+All of the related hashes and C2s are in appendix at the end of this blog.
+There is not much public information about the APT campaign called menuPass (also known as Stone Panda and APT10).
+A paper from FireEye in 2013 on several campaigns using PIVY included menuPass as one of them.
+A later blog added some additional details.
+The group name is derived from one of the passwords they use with PIVY in their attacks.
+Believed to have started activity in 2009 and to originate from China, the group initially was known for targeting US and overseas defense contractors but broadened their targeting as time passed.
+They have targeted Japanese organizations since at least 2014.
+The newer ChChes malware family uses an import hash (bb269704ba8647da97377440d403ae4d) shared with other tools used by menuPass, affording an initial link.
+However, the ties are most strongly proved through infrastructure analysis, which shows a number of links between the newer infrastructure used in these attacks and older infrastructure publicly associated with the group.
+The three circled domains represent C2s publicly reported as tied to menuPass, linked to domains not previously publicly reported as associated.
+These are only a few of multiple overlaps analysts can find while researching menuPass infrastructure.
+The circled known domains are the first three below:
+Figure 2. menuPass infrastructure overlaps
+Two of these domains can further be tied into the newer C2 infrastructure.
+Again, these are only a few of the overlaps that can be uncovered by analyzing the infrastructure used by menuPass.
+The domains in the below figure are:
+Ties between new and older infrastructure.
+Additionally, the passwords in the PIVY samples also fit known passwords used by the group – three samples use “menuPass” and the other uses “keaidestone.”  With these data points, we assess with high confidence the recent attacks were conducted by the menuPass group.
+Following is our analysis of the ChChes malware family.
+For this analysis, Unit 42 looked at the following file:
+This malware is provided with an icon that appears to be that of a Microsoft Word document, as we can see in the image below.
+Additionally, we discovered that the samples identified in attacks against Japanese organizations were digitally signed using the certificate originally used by the Italian-based company, HackingTeam.
+Readers may recall that HackingTeam was compromised and subsequently had a large amount of internal data exposed in July 2015.
+This data included a wealth of code used by the organization, including certificates.
+The certificate in question was fairly old, and expired on August 4th, 2012.
+On July 10th, 2015, the certificate was revoked.
+Multiple instances of malware have been discovered using this certificate since it was originally leaked in 2015.
+It is unclear why the actors decided to use this certificate that is tied to known malicious samples for their own samples.
+One possibility may be to make attribution more difficult for analysts researching these threats.
+When the malware is initially run, it will first decrypt an embedded stub of code within the malware prior to executing it.
+This stub has many characteristics seen in shellcode, and begins by creating a new Import Address Table (IAT).
+This new IAT is then referenced throughout the remainder of the code when calling Windows APIs.
+The following snippet of assembly shows the newly created IAT being referenced to call various functions, such as GetProcessHeap, RtlAllocateHeap, RtlReAllocateHeap, and InternetReadFile.
+Newly created IAT being used to call Windows API functions
+After the IAT has been generated, the malware will determine the path of %TEMP% and set its current working directory to this value.
+ChChes proceeds to collect the following information about the victim:
+This information is aggregated into a string such as the following:
+Note that in the string above, the ‘3618468394’ and ‘1.4.1’ strings are hardcoded within the malware itself.
+These may indicate versions of the malware or campaign identifiers, however, this has not been confirmed.
+After this data has been aggregated, it is uploaded to a hardcoded command and control (C2) server via HTTP.
+The data is embedded within the ‘Cookie’ HTTP header, as seen below
+Initial HTTP beacon for ChChes
+The URI used above is randomly generated for each HTTP request made by ChChes.
+The data embedded within the Cookie header is encrypted using a unique technique.
+For each key/value pair, separated by a ‘;’, the malware will first perform a MD5 hash of the key, and extract the middle 16 bytes.
+The value is base64-decoded after the string is unquoted.
+Finally, the base64-decoded data is decrypted using RC4 with the previously obtained 16 bytes.
+All of the data is concatenated to form the final, decrypted data.
+The following Python code shows an example of decoding the supplied Cookie field:
+The script above produces the following output:
+The initial ‘A’ character witnessed in the output above instructs the remote server that this is an initial beacon, or the first expected request sent by ChChes.
+The C2 will respond with a ‘Set-Cookie’ header that contains the middle 16 bytes of the MD5 hash performed against the hostname and PID.
+Using the above example, the C2 would perform the MD5 against ‘WBQTLJRH9553618*2564’.
+The resulting middle 16 characters is ‘b331106210b6364c’.
+The subsequent request made by ChChes looks like the following:
+Second network request made by ChChes
+Decrypted, we see the following contents stored within the Cookie field:
+The first character of ‘B’ signifies that this is the second request, and the remaining data is the 16 bytes previously seen in the C2 response within the Set-Cookie header.
+At this stage, the C2 server is expected to return content in the following format:
+The ‘Middle MD5’ field contains the middle 16 bytes of the MD5 hash of the ‘b331106210b6364c’ string.
+This would result in a string of ‘500089dadf52ae0b’ in this particular example.
+The ‘Base64-Encoded Data’ field contains a fairly complex structure that will store a module that is to be loaded and subsequently run by ChChes.
+A visualization of this network communication can be seen in the following figure:
+ChChes acts as an initial infiltration point on a victim machine.
+It has the ability to load additional code that in turn may accomplish any number of tasks.
+During analysis, no C2 servers were found to be active, and Unit 42 was unable to identify any modules being loaded by ChChes.
+However, the JPCERT also recently analyzed this family and was able to collect modules that give ChChes the following functions:
+However, the lack of persistence built into ChChes suggests that it by itself is not intended to run on a victim’s machine for long periods of time.
+In a successful intrusion, it may be only a first stage tool used by the attackers to orient where they landed in a network, and other malware will be deployed as a second stage layering for persistence and additional access as the attackers move laterally through a network.
+These attacks show Japan continues to be a target of interest to APT campaigns.
+menuPass has targeted individuals and organizations in Japan since at least 2014, and as the same organizations and academics were largely targeted each month in these attacks, it further shows menuPass is persistent in attempts to compromise their targets.
+menuPass also heavily favors spear phishing, and so takes steps to socially engineer their spear phishes for maximum appearance of legitimacy.
+This, and their persistence, highlights the need for training and awareness of spear phishing on the part of both individuals and organizations likely to be targeted.
+menuPass is an ongoing APT campaign with a broad range of targets and will likely continue to target Japan in the future.
+Palo Alto Networks customers are protected from these malware families and C2 infrastructure by:
+Additionally, Autofocus subscribers can learn more about menuPass by exploring tied activity with the menuPass tag.
+Sign up to receive the latest news, cyber threat intelligence and research from us
+Please enter your email address!
+Please mark, I'm not a robot!
+By submitting this form, you agree to our Terms of Use and acknowledge our Privacy Statement.
+© 2021 Palo Alto Networks, Inc. All rights reserved.
