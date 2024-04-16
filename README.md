@@ -6,7 +6,7 @@ This is a dataset repository which is used for model training, evalutaions as a 
 
 The dataset consists of pretraining dataset, threat reports per APT groups and a collector tool (which I use for all of this collection, needed to update new reports after our work).
 
- ## large-scale pretraining dataset 
+ ## Large-scale Pretraining, Threat Reports Corpus Dataset 
 
  - textual corpus of threat reports
 
@@ -14,7 +14,7 @@ The dataset consists of pretraining dataset, threat reports per APT groups and a
 
  - Table 2 in the paper 
 
- ## threat reports classified by APT groups
+ ## Threat Reports, Classified by APT Groups
 
  - a collection of threat reports by APT groups
 
@@ -24,7 +24,7 @@ The dataset consists of pretraining dataset, threat reports per APT groups and a
 
  - we also provide the list from two public websites (Malpedia, ThaiCERT).
 
-  ## threat report collector 
+  ## Threat Report Collector 
 
   - Our dataset is as of 2022. 06, we will be releasing our collector as a tool (working on... will be uploaded soon)
 
