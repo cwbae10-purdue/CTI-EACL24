@@ -22,7 +22,7 @@ The dataset consists of pretraining dataset, threat reports per APT groups and a
 
  - Section 5.2 in the paper 
 
- - we also provide the list from two public websites (Malpedia, ThaiCERT).
+ - we also provide the copied list from two public websites (Malpedia, ThaiCERT).
 
   ## Threat Report Collector 
 
