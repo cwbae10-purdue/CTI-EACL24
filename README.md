@@ -6,7 +6,7 @@ This is a dataset repository which is used on our work.
 
 The dataset consists of pretraining dataset, threat report cralwer (tool), and threat reports per APT groups 
 
- ## pretraining dataset 
+ ## large-scale pretraining dataset 
 
  - textual corpus of threat reports
 
