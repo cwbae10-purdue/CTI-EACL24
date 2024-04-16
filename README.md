@@ -32,4 +32,4 @@ The dataset consists of pretraining dataset, threat reports per APT groups and a
   
   - Please contact us (Chanwoo Bae, bae68@purdue.edu) for any questions.
 
-  - We kidnly request to cite our paper with your use of dataset.
+  - We kindly request to cite our paper with your use of dataset.
