@@ -6,7 +6,10 @@ This is a dataset repository which is used on our work.
 
 The dataset consists of 
 
-1. pretraining dataset (textual corpus of threat reports from 8 vendors without any labeling)
+1. pretraining dataset 
+ - textual corpus of threat reports
+ - collected from 8 vendors
+ - Table 2 in the paper 
 
 2. threat reports cralwer (working on)
 
