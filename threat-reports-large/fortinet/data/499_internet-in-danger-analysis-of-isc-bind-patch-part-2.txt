@@ -1,0 +1,39 @@
+In this second part article, we analyze two recent vulnerabilities in ISC BIND identified as CVE-2016-1286 and CVE-2016-2088.
+Based on advisories, these bugs can be triggered using a malformed DNAME record (CVE-2016-1286) or an OPT COOKIE records (CVE-2016-2088).
+These two bugs share the same attack scenario that can only be triggered when a BIND server makes a request and then receives a malformed response.
+Based on this requirement, recursive servers are at highest risk to this attack, because it’s not straightforward to ask an authoritative-only server to make a DNS request.
+Named is a service daemon and part of the BIND application package.
+Named translates domains to IP and vice versa directly base on its zone files or through forwarders.
+[2] In order to verify integrity and authenticity of exchanging data, named can be configured to use DNSSEC extension.
+RRSIG (Resource Record Signature) is a new RR type belongs to DNSSEC which is used to sign another RR by public key infrastructure.
+[3]
+Every DNS query and response consists of resource records (RR) with different types like CNAME, NS, and DNAME, etc.
+DNAME is a RR type which can be treated almost similar as CNAME but for the higher level in domain hierarchy.
+In the other words, it is super set of CNAME.
+[4]
+To exploit this bug, we setup a BIND server with the recursion feature enabled and an attacker server which the victim uses to resolve recursive queries for the domain that it doesn’t have any record for.
+First we will look at the patch.
+Here is the part of the released patch:
+rdataset is a struct of type dns_rdataset (./lib/dns/include/dns/rdataset.h)
+And all possible types are available at ./lib/dns/include/dns/enumtype.h
+If a victim receives a recursive response which contains an answer RR of any type but DNAME, followed by a RR with RRSIG type which covers a DNAME, it means the server signs the record which does not exist.
+Later on once the victim tries to cache the received response to use for further requests encounter with a REQUIRE statement then lead to an assertion failure which crashes the daemon as you can see in the two following captures.
+Following shows the communication between client and server and malformed data:
+Please note that enabling or disabling DNSSEC doesn’t affect the exploitability of the server.
+Early this year, ISC proposed a brand new mechanism that enables DNS servers to use Cookie to authenticate messages between each other [6].
+But currently, DNS cookie is still an experimental feature and the RFC is only in drafting status.
+This vulnerability is targeting this specific new feature.
+Although the bug is in different packet processing flow, the attack scenario is very similar to CVE-2016-1286 described above.
+It requires DNS server to make a recursive query and will be triggered when parsing a malformed OPT record with more than one COOKIE entries in the response packet.
+The patch is very easy to understand: only process the first cookie and skip to the next OPT entry: (lib/dns/resolver.c)
+Now let’s roll back to the previous version to see what would happen if a second COOKIE is processed:
+After computing the cookie for the response message, named INSIST (same as assert) that the message is neither good nor bad (line 7585), the author may assume the cookie is just initialized and has not been processed yet, and it is exactly where the problem arise.
+The following if-else block will either set the cookie to be “bad” or “ok” after the first cookie.
+So in any case, INSIST will fail when parsing the cookie for the second time, and the named daemon will be aborted:
+Image of captured communication is showing two cookies:
+Please note that CVE-2016-2088 only affects BIND versions built with DNS cookie enabled.
+All Fortinet customers are protected from these vulnerabilities with the following IPS signatures:
+CVE-2016-1286 - ISC.BIND.DNAME.Resource.Records.Parsing.DoS
+CVE-2016-2088 - ISC.BIND.DNS.Cookie.Handling.DoS
+Amir Zali and Tony Loi of the FortiGuard Lion Team
+[1] https://kb.isc.org/article/AA-01353 [2] https://www.ietf.org/rfc/rfc4034.txt [3] https://tools.ietf.org/html/rfc1034.txt [4] https://tools.ietf.org/html/rfc6672.txt [5] https://kb.isc.org/article/AA-01351 [6] https://tools.ietf.org/html/draft-ietf-dnsop-cookies-09

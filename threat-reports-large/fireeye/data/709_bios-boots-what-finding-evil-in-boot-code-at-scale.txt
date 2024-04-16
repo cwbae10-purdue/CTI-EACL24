@@ -1,0 +1,105 @@
+The second issue is that reverse engineering all boot records is impractical.
+Given the job of determining if a single system is infected with a bootkit, a malware analyst could acquire a disk image and then reverse engineer the boot bytes to determine if anything malicious is present in the boot chain.
+However, this process takes time and even an army of skilled reverse engineers wouldn’t scale to the size of modern enterprise networks.
+To put this in context, the compromised enterprise network referenced in our ROCKBOOT blog post had approximately 10,000 hosts.
+Assuming a minimum of two boot records per host, a Master Boot Record (MBR) and a Volume Boot Record (VBR), that is an average of 20,000 boot records to analyze!
+An initial reaction is probably, “Why not just hash the boot records and only analyze the unique ones?” One would assume that corporate networks are mostly homogeneous, particularly with respect to boot code, yet this is not the case.
+Using the same network as an example, the 20,000 boot records reduced to only 6,000 unique records based on MD5 hash.
+Table 1 demonstrates this using data we’ve collected across our engagements for various enterprise sizes.
+Enterprise Size (# hosts)
+Avg # Unique Boot Records (md5)
+Table 1 – Unique boot records by MD5 hash
+Now, the next thought might be, “Rather than hashing the entire record, why not implement a custom hashing technique where only subsections of the boot code are hashed, thus avoiding the dynamic data portions?” We tried this as well.
+For example, in the case of Master Boot Records, we used the bytes at the following two offsets to calculate a hash:
+md5( offset[0:218] + offset[224:440] )
+In one network this resulted in approximately 185,000 systems reducing to around 90 unique MBR hashes.
+However, this technique had drawbacks.
+Most notably, it required accounting for numerous special cases for applications such as Altiris, SafeBoot, and PGPGuard.
+This required small adjustments to the algorithm for each environment, which in turn required reverse engineering many records to find the appropriate offsets to hash.
+Ultimately, we concluded that to solve the problem we needed a solution that provided the following:
+A reliable collection of boot records from systems
+A behavioral analysis of boot records, not just static analysis
+The ability to analyze tens of thousands of boot records in a timely manner
+The remainder of this post describes how we solved each of these challenges.
+Malicious drivers insert themselves into the disk driver stack so they can intercept disk I/O as it traverses the stack.
+They do this to hide their presence (the real bytes) on disk.
+To address this attack vector, we developed a custom kernel driver (henceforth, our “Raw Read” driver) capable of targeting various altitudes in the disk driver stack.
+Using the Raw Read driver, we identify the lowest level of the stack and read the bytes from that level (Figure 1).
+Figure 1: Malicious driver inserts itself as a filter driver in the stack, raw read driver reads bytes from lowest level
+This allows us to bypass the rest of the driver stack, as well as any user space hooks.
+(It is important to note, however, that if the lowest driver on the I/O stack has an inline code hook an attacker can still intercept the read requests.)
+Additionally, we can compare the bytes read from the lowest level of the driver stack to those read from user space.
+Introducing our first indicator of a compromised boot system: the bytes retrieved from user space don’t match those retrieved from the lowest level of the disk driver stack.
+As previously mentioned, reverse engineering and static analysis are impractical when dealing with hundreds of thousands of boot records.
+Automated dynamic analysis is a more practical approach, specifically through emulating the execution of a boot record.
+In more technical terms, we are emulating the real mode instructions of a boot record.
+The emulation engine that we chose is the Unicorn project.
+Unicorn is based on the QEMU emulator and supports 16-bit real mode emulation.
+As boot samples are collected from endpoint machines, they are sent to the emulation engine where high-level functionality is captured during emulation.
+This functionality includes events such as memory access, disk reads and writes, and other interrupts that execute during emulation.
+Folding down (aka stacking) duplicate samples is critical to reduce the time needed on follow-up analysis by a human analyst.
+An interesting quality of the boot samples gathered at scale is that while samples are often functionally identical, the data they use (e.g.
+strings or offsets) is often very different.
+This makes it quite difficult to generate a hash to identify duplicates, as demonstrated in Table 1.
+So how can we solve this problem with emulation?
+Enter the “execution hash”.
+The idea is simple: during emulation, hash the mnemonic of every assembly instruction that executes (e.g., “md5(‘and’ + ‘mov’ + ‘shl’ + ‘or’)”).
+Figure 2 illustrates this concept of hashing the assembly instruction as it executes to ultimately arrive at the “execution hash”
+Figure 2: Execution hash
+Using this method, the 650,000 unique boot samples we’ve collected to date can be grouped into a little more than 300 unique execution hashes.
+This reduced data set makes it far more manageable to identify samples for follow-up analysis.
+Introducing our second indicator of a compromised boot system: an execution hash that is only found on a few systems in an enterprise!
+Like all malware, suspicious activity executed by bootkits can vary widely.
+To avoid the pitfall of writing detection signatures for individual malware samples, we focused on identifying behavior that deviates from normal OS bootstrapping.
+To enable this analysis, the series of instructions that execute during emulation are fed into an analytic engine.
+Let's look in more detail at an example of malicious functionality exhibited by several bootkits that we discovered by analyzing the results of emulation.
+Several malicious bootkits we discovered hooked the interrupt vector table (IVT) and the BIOS Data Area (BDA) to intercept system interrupts and data during the boot process.
+This can provide an attacker the ability to intercept disk reads and also alter the maximum memory reported by the system.
+By hooking these structures, bootkits can attempt to hide themselves on disk or even in memory.
+These hooks can be identified by memory writes to the memory ranges reserved for the IVT and BDA during the boot process.
+The IVT structure is located at the memory range 0000:0000h to 0000:03FCh and the BDA is located at 0040:0000h.
+The malware can hook the interrupt 13h handler to inspect and modify disk writes that occur during the boot process.
+Additionally, bootkit malware has been observed modifying the memory size reported by the BIOS Data Area in order to potentially hide itself in memory.
+This leads us to our final category of indicators of a compromised boot system: detection of suspicious behaviors such as IVT hooking, decoding and executing data from disk, suspicious screen output from the boot code, and modifying files or data on disk.
+Dynamic analysis gives us a drastic improvement when determining the behavior of boot records, but it comes at a cost.
+Unlike static analysis or hashing, it is orders of magnitude slower.
+In our cloud analysis environment, the average time to emulate a single record is 4.83 seconds.
+Using the compromised enterprise network that contained ROCKBOOT as an example (approximately 20,000 boot records), it would take more than 26 hours to dynamically analyze (emulate) the records serially!
+In order to provide timely results to our analysts we needed to easily scale our analysis throughput relative to the amount of incoming data from our endpoint technologies.
+To further complicate the problem, boot record analysis tends to happen in batches, for example, when our endpoint technology is first deployed to a new enterprise.
+With the advent of serverless cloud computing, we had the opportunity to create an emulation analysis service that scales to meet this demand – all while remaining cost effective.
+One of the advantages of serverless computing versus traditional cloud instances is that there are no compute costs during inactive periods; the only cost incurred is storage.
+Even when our cloud solution receives tens of thousands of records at the start of a new customer engagement, it can rapidly scale to meet demand and maintain near real-time detection of malicious bytes.
+The cloud infrastructure we selected for our application is Amazon Web Services (AWS).
+Figure 3 provides an overview of the architecture.
+Figure 3: Boot record analysis workflow
+Our design currently utilizes:
+API Gateway to provide a RESTful interface.
+Lambda functions to do validation, emulation, analysis, as well as storage and retrieval of results.
+DynamoDB to track progress of processed boot records through the system.
+S3 to store boot records and emulation reports.
+The architecture we created exposes a RESTful API that provides a handful of endpoints.
+At a high level the workflow is:
+Endpoint agents in customer networks automatically collect boot records using FireEye’s custom developed Raw Read kernel driver (see “Collect the bytes” described earlier) and return the records to FireEye’s Incident Response (IR) server.
+The IR server submits batches of boot records to the AWS-hosted REST interface, and polls the interface for batched results.
+The IR server provides a UI for analysts to view the aggregated results across the enterprise, as well as automated notifications when malicious boot records are found.
+The REST API endpoints are exposed via AWS’s API Gateway, which then proxies the incoming requests to a “submission” Lambda.
+The submission Lambda validates the incoming data, stores the record (aka boot code) to S3, and then fans out the incoming requests to “analysis” Lambdas.
+The analysis Lambda is where boot record emulation occurs.
+Because Lambdas are started on demand, this model allows for an incredibly high level of parallelization.
+AWS provides various settings to control the maximum concurrency for a Lambda function, as well as memory/CPU allocations and more.
+Once the analysis is complete, a report is generated for the boot record and the report is stored in S3.
+The reports include the results of emulation and other metadata extracted from the boot record (e.g., ASCII strings).
+As described earlier, the IR server periodically polls the AWS REST endpoint until processing is complete, at which time the report is downloaded.
+Our workflow for identifying malicious boot records is only effective when we know what malicious indicators to look for, or what execution hashes to blacklist.
+But what if a new malicious boot record (with a unique hash) evades our existing signatures?
+For this problem, we leverage our in-house big data platform engine that we integrated into FireEye Helix following the acquisition of X15 Software.
+By loading the results of hundreds of thousands of emulations into the engine X15, our analysts can hunt through the results at scale and identify anomalous behaviors such as unique screen prints, unusual initial jump offsets, or patterns in disk reads or writes.
+This analysis at scale helps us identify new and interesting samples to reverse engineer, and ultimately helps us identify new detection signatures that feed back into our analytic engine.
+Within weeks of going live we detected previously unknown compromised systems in multiple customer environments.
+We’ve identified everything from ROCKBOOT and HDRoot!
+bootkits to the admittedly humorous JackTheRipper, a bootkit that spreads itself via floppy disk (no joke).
+Our system has collected and processed nearly 650,000 unique records to date and continues to find the evil needles (suspicious and malicious boot records) in very large haystacks.
+In summary, by combining advanced endpoint boot record extraction with scalable serverless computing and an automated emulation engine, we can rapidly analyze thousands of records in search of evil.
+FireEye is now using this solution in both our Managed Defense and Incident Response offerings.
+Dimiter Andonov, Jamin Becker, Fred House, and Seth Summersett contributed to this blog post.

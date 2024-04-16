@@ -1,0 +1,147 @@
+Nitol is a distributed denial of service (DDoS) botnet that seems to be small and not widely known.
+It mostly operates in China.
+McAfee Labs recently analyzed a few samples; we offer here the communications protocol and the Trojan’s capabilities.
+Most of the samples we encountered were not packed and were very easy to reverse engineer.
+The Trojan was written in Visual C++ either in a hurry or by an untrained programmer.
+We found a lot of bugs in the code.
+Nitol copies itself to a random filename ******.exe (where every * is a randomized alphabet character) in the Program Files directory.
+The new file is registered as a service, “MSUpdqteeee,” with the display name “Microsoft Windows Uqdatehwh Service.”
+Bot Activities
+After installation, the malware connects to its command server (we found between one and three hardcoded addresses per sample) using a TCP socket and sends a digest of the victim’s computer information.
+Both incoming and outgoing packets are 1082 bytes long (including TCP/IP headers, 1028 bytes of raw data) without regard to the actual size of the data.
+The transmission to the server can be described by the following structure:
+typedef struct _ComputerInfo{
+DWORD Command; // Always “1” Computer Info.
+char LocaleLanguage[0x40];
+char ComputerName[0x80];
+char WindowsVersion[0x40];
+char PhysicalMemorySize[0x20];
+char CPU_Speed[0x20];
+char Ndis_Version[0x20];
+}ComputerInfo;
+It appears this information is used mainly to get an estimation of the botnet’s power and diversity.
+The data can be used to decide what type of DDoS tasks to give this specific bot.
+However, this is not enough information for the server to decide whether the bot is running on a virtual machine or is being debugged.
+After receiving the information, the command server usually returns a command and parameters.
+Possible commands:
+enum commands{
+GenericFlood = 2,
+HTTPFlood = 3,
+RawDataFlood = 4,
+StopRunning = 5,
+UninstallAndDie = 6,
+DownloadFileFromUrlExecUrl = 16, // ?!?!?!
+?
+DownloadFileFromUrlExecFile = 17,
+UpdateBot = 18,
+ExecuteIE_NoWindow = 19,
+ExecuteIE_ShowWindow = 20
+}
+DDos Attacks
+In the preceding group of commands, the DDoS functionality is represented by GenericFlood, HTTPFlood, and RawDataFlood.
+Each of the flood commands implements several other commands:
+Here we have command number 2–GenericFlood–followed by the GenericFloodData structure:
+typedef struct _GenericFloodData{
+char Address[0x80]; // 0x00
+DWORD NumberOfMinutesToRun; // 0x84
+DWORD NumberOfThreads; // 0x88
+DWORD Command; // 0x8C
+}GenericFloodData;
+enum GenericFloodCommands
+{
+send_Random_TCP_Data_Every_10_MS = 1,
+Send_UDP_Packets_Every_20_MS = 2,
+Send_ICMP_Packet_Sleep_Missing = 3,
+Open_Socket_Every_500_MS = 4,
+Send_UDP_Packets_Every_20_MS_Random_Source_Address_On_Server = 9,
+Send_UDP_Packets_Every_20_MS_Random_Source_Address_On_Server_number_of_threads_plus_20 = 16,
+Send_UDP_Packets_Every_20_MS_Random_Source_Address_On_Server_number_of_threads_plus_20_no_Passthru = 17,
+Send_TCP_Packets_Random_Source_Address_On_Server_number_of_threads_plus_20 = 18,
+Send_TCP_Packets_HardCoded_Source_Address_On_Server_number_of_threads_plus_20 = 19,
+Same_As_1_20_More_Threads_If_Client_64_If_Server = 20,
+Send_UDP_Packets_Every_20_MS_Source_Address_On_Server_number_of_threads_plus_20 = 23,
+Send_TCP_Packets_Every_10_MS_Source_Address_On_Server_number_of_threads_plus_20 = 24,
+Open_Socket_Send_1000_TCP_Packets = 25,
+Connect_Disconnect_loop = 32,
+}
+Next we have command number 3–HTTPFlood–followed by the HTTPFloodData structure:
+typedef struct _HTTPFloodData{
+char Address[0x80]; // 0x000
+char Path[0x80]; // 0x080 // BUG!!!
+The second DWORD is also NumberOfMinutesToRun
+unsigned short Port; // 0x100
+unsigned short dummy; // 0x102
+DWORD dummy1; // 0x104
+DWORD NumberOfThreads; // 0x108
+DWORD IsDummyGetRequest; // 0x10c
+DWORD dummy2; // 0x110
+DWORD Command; // 0x114
+}HTTPFloodData;
+enum HTTPFloodCommands
+{
+Get_Image_Every_50_MS = 5,
+Get_HTML_Every_50_MS_OR_GET_WITH_IE = 6, //BUG
+Get_HTML_Every_10_MS = 7,
+Get_Image_Every_5_MS = 8
+}
+None of the samples we ran returned the RawDataFloodData, so we don’t have a recording.
+Command number 4–RawDataFlood–should be followed by the RawDataFloodData structure:
+typedef struct _RawDataFloodData{
+char Address[0x80]; // 0x000
+char Buf[0x208]; // 0x080 // BUG!!!
+The second DWORD is also NumberOfMinutesToRun
+DWORD NumberOfThreads; // 0x288
+DWORD Command; // 0x28C
+}RawDataFloodData;
+RawDataFlood takes two possible commands: SendUDPData and SendTCPData.
+To use SendUDPData you need to set the command parameter to 21, else SentTCPData will be used.
+Both commands interpret the Buf parameter as a null-terminated string.
+We encountered two important bugs:
+It looks like the function to stop the attack after a certain amount of minutes was designed to work with the GenericFlood command and only later was also used for the HTTP and RawData floods, so it uses unrelated data as the amount of time to wait in seconds (always using the DWORD at offset 0x84 from the start of the parameters structure).
+The function in charge of getting the path to the Internet Explorer executable concatenates the string coming back from the GetWindowsDirectory function (usually c:\Windows) to “\Program Files\Internet Explorer\iexplore.exe,” which is normally not the path to the IE executable.
+The problem resides in the HTTPFlood’s command 6, which performs an infinite loop of running IE from that path.
+The following recording shows the traffic of the ICMP attack.
+The following recording shows the traffic of the UDP attack.
+Other Commands
+StopRunning: Stops current DDoS attacks
+UninstallAndDie: Unregisters the service, runs another process to delete the file, and exits the current process
+DownloadFileFromUrlExecUrl: Looks like another bug, downloads a file from a URL to a local temp file, then tries to execute the URL
+DownloadFileFromUrlExecFile: Downloads a file from a URL to a local file (random name in %temp% “*****.exe”) and executes the file using WinExec API call
+UpdateBot: Downloads a file from a URL to “%temp%\stf******.exe.” If download succeeds, deletes the service, executes the file, and exits.
+(The current version is not deleted from the disk.)
+ExecuteIE_NoWindow: Executes Internet Explorer with command-line arguments supplied by the server, doesn’t show the IE window
+ExecuteIE_ShowWindow: Executes Internet Explorer with command-line arguments supplied by the server, shows the IE window
+Command Servers
+We identified the following command server domain names:
+zwx5060.3322.org: 121.235.113.52
+guangkuo119.3322.org: 125.211.195.29.
+Targets some diet products hosted on godaddy.com
+yezi999.3322.org: 125.211.195.29.
+Targets some diet products hosted in Hong Kong
+kankan902.3322.org: 118.126.16.81
+maple110.3322.org: 121.10.24.74
+mybaccy.3322.org: 58.221.58.148.
+Targets a site in China
+bcl5736120.3322.org: 121.12.172.67
+ylddos.3322.org: 67.215.65.132.
+This American IP address is registered to opendns.com
+xiong97.3322.org: 124.236.128.136
+xinxin168.3322.org
+sousou123.3322.org
+maguss.3322.org
+aisini1314.3322.org
+fuck0313.6600.org
+ksattack.6600.org: 116.255.180.34
+fangqi.6600.org
+xin9liao.gnway.net
+fangqi.7766.org
+1.ccddos.net: 182.16.1.42.
+Hong Kong
+rvbwtbeitwjeitv.com: 50.62.3.118.
+American IP for godaddy.com
+rterybrstutnrsbberve.com: 82.165.39.88.
+German IP for domain registered to a Russian individual
+erwbtkidthetcwerc.com: 82.165.39.88
+(All the nonspecified IP addresses are in China.)
+As we can see, most of the hardcoded domain names are resolved by Chinese dynamic DNS services.
+I would like to thank my colleagues Zheng Bu and Benjamin Cruz for their input.

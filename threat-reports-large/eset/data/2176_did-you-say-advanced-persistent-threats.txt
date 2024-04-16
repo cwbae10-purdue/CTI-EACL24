@@ -1,0 +1,91 @@
+Once in a while we get to spend time analyzing malicious code that is not as widespread as other threats we’ve encountered.
+Here we analyze a targeted attack used in Taiwan and Vietnam – but is this ‘APT’ really that advanced?
+Once in a while we get to spend time analyzing malicious code that is not as widespread, or not as well-obfuscated as other threats we’ve encountered in the past.
+In this post we introduce our detailed analysis of one such threat, analyzed in further depth in a whitepaper: Did you say Advanced Persistent Threats?
+Figure 1: Targeted entities were located in Vietnam and Taiwan
+We decided to spend some time on this analysis because one of the components refers to Vietnam’s Central Post and Telecommunications Department.
+But before we delve into the topic lets first highlight some of the findings:
+Entities in Taiwan and the Vietnam government are targeted
+Saw an attacker interact with an infected machine
+Evidence of an unidentified APT actor
+Social engineering vector (no exploit code) with very credible documents
+Bad criminals: typos in configuration, naive cryptographic implementation, weak code practices
+Sophistication variability: from no obfuscation to hidden position independent code, XOR encryption, XTEA encryption, stand-alone re-usable components
+Tailored infections: one threat doesn’t persist, the other doesn’t do anything before a reboot
+Figure 2: Analyzed threats covered in the white paper
+You can see in the above figure all the malware samples that the whitepaper covers.
+The file received by the victim is always the dropper.
+As we noticed from our telemetry data, the malicious software reaches its target through spear-phishing campaigns.
+The targeted emails carry an executable which displays the icon of a Word document.
+It is one of the oldest tricks around.
+Upon execution the dropper will decrypt its configuration parameters and extract files from inside itself into the filesystem.
+The dropper first drops the main malicious binary and then a Word document into the user’s temporary folder.
+It executes the malicious payload and uses the copy of itself to clean up and open the Word document shown in figure 4.
+Figure 3: Dropper operation
+All this work is done to effectively simulate the result one would expect when double clicking on an innocuous Word document except that in this case malicious code was executed first.
+Figure 4: Vietnam decoy document
+This is a Visual C++ Trojan that communicates over HTTP with hard-coded Command and Control (C&C) servers.
+In the sample we analyzed, the three servers supported by the Trojan configuration were in fact pointing to the same domain name vietnam.vnptnet.info, but using different ports (80, 443 and 5050).
+An interesting fact about this threat is its lack of persistence, meaning that it will be executed only once and will not be relaunched if the system reboots.
+In its attempt to contact the C&C the malware will send, in plaintext, several pieces of information about the host in a GET request and use a specific User-Agent string.
+The hardcoded campaign string (CPT-NMC) sent by the client further confirms the targeted nature of the attack.
+CPT stands for Central Post and Telecommunications Department, a department of the Vietnamese government.
+We can also notice that the top-level domain used for C&C (vnptnet.info) is strikingly similar to Vietnam’s vnpt.vn which is Vietnam Posts and Telecommunications Group and probably chosen as a means of camouflage within Intrusion Detection System (IDS) logs.
+Finally, the decoy document writes about telecoms and testing and carries some network diagrams, which all seems very credible to a potential victim.
+Looks like this campaign was aimed at Vietnam’s CPT and we know Vietnam’s officials have been under targeted attack this year.
+We saw an operator interact with a system we infected and monitored.
+They performed reconnaissance operations: netstat to view current network interactions, drive enumeration, set to view the current environment variables and then some file locations were explored.
+As you can see in the screenshot below, all this information is sent in plain text over the network.
+Figure 4: Vietnam decoy document
+The non-persistence characteristic of the attack strengthens the hypothesis that it is targeted, since the attackers will leave little trace and little network activity if they don’t install an additional component through the trojan.
+A typical attack scenario with this tool would then be: figure out potential victims in an organization; send spear-phishing emails; wait; get connections from the trojan; and quickly and interactively investigate the computers for the sensitive data you are looking for.
+If the data isn’t there pull the plug, and if it is there install an additional component through the commands for file download (3004) and file execution (3011).
+When we started analyzing this threat, our product detected it as Win32/Protux.NAR.
+When we reverse engineered the cryptographic protocol of the network communication with the C&C we found out that the threat was documented by malware.lu and Trend Micro as Terminator RAT or FAKEM RAT, but that our sample diverged a lot from the one they analyzed, and carried an additional binary.
+Last month, FireEye released an analysis of a sample very similar to this one but the hashes are still different.
+In this article, we will focus on giving additional details of the threat and we encourage you to refer to these past articles for further background information.
+We first found out that what we called Win32/Protux.NAR was in fact the Terminator RAT when we looked at the network encryption and stumbled on malware.lu’s report titled APT1: technical backstage.
+Although their reference to the APT1 group is challenged by the community, we definitely have here a private Trojan that has been re-used on several campaigns by the same group.
+This threat is more complex than the ones previously described.
+It uses a modified XTEA cipher for encryption, it has a fancy evasion maneuver (pictured below), it will not perform any network interaction before the system is rebooted and it extracts and runs position independent code that acts as its main payload from an internal resource.
+Additionally, a stand-alone component is bundled that allows the RAT to reach out to the C&C servers even if there is a mandatory proxy configured on the infected computer.
+Figure 6: Terminator’s evasion maneuver
+Figure 7: Position independent code loading and execution
+Here’s a table that highlights the differences between the various observed campaigns:
+vcvcvcvc.dyndns.org
+zjhao.dtdns.net
+avira.suroot.com
+*.googmail.com
+*.yourturbe.org
+freeavg.sytes.net
+liumingzhen.zapto.org
+liumingzhen.myftp.org
+catlovers.25u.com
+localhost port 8000
+“catlovers.25u.com[space]” port 9000 (broken)
+dryboxs.4dq.com port 9090
+localhost port 8000
+Same network encryption algorithm (“ARCHY”[::-1] xor/ror3)
+Same 1024 byte network payload
+Same commands (0x211, etc.)
+Most C&C rely on dynamic DNS
+Operated from the same /24 network owned by a Taiwanese ISP
+Indeed, none of these threats were packed to thwart reverse-engineering, no exploit code was used and there were several observations of poor software development and operational practices.
+This is not ‘advanced’.
+However, as long as these less sophisticated attacks are still successful they will continue, because they are obviously cheaper to perform than the more complex ones.
+We can see two [A]PT strains at work here.
+One with no A where we have low-complexity low-cost attacks where manual operators are thrown at several targeted campaigns, using simple malware modified just enough to avoid detection.
+Then, on the other hand, groups seem to exist that truly deserve the A epithet – A-teams, you might say.
+(Note that we avoided the cyberwar kind of APT.)
+So, before issuing your press-release about getting popped by an APT group, at least make sure that you are not simply overly exposed to simplistic B-list attacks.
+User awareness training and locked-down group policies incorporating the filtering of executables in emails would have mitigated or prevented the threats described in this post.
+Is your company at least taking these steps?
+Author: Olivier Bilodeau
+Contributors: Mathieu Lavoie, Marc-Etienne M. Léveillé
+Win32/TrojanDropper.Small.NNK
+58e1dfa7ace03a408d2b20c1fab6e127acbdc71f492366622cd5206484443ed7
+3f58a0ea8958c5bf88aa9cfcefe457393f0a96bba9f05f301ba6a15b65d5b64a
+Win32/TrojanProxy.Agent.NJK
+54c5517541187165fd9720dfe8cff67498d912d189d649cc652d8b113bae8802
+Win32/Protux.NAR (Terminator RAT)
+425a919cb5803ce8fabb316f5e1be611f88f5c3813fffd2b40f2369eb7074da9

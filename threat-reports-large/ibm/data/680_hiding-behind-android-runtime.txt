@@ -1,0 +1,56 @@
+On March 27, I gave a presentation at Black Hat Asia 2015 in Singapore.
+My session highlighted possible ways to create user-mode rootkits by taking advantage of Android’s new runtime, based on publicly disclosed Android OS code and not leveraging vulnerabilities.
+First, let’s talk about a typical attack scenario.
+An attacker will first attempt to gain access to the device by exploiting a vulnerability or by tricking the user into installing malware.
+If successful, the attacker would have gained access with the privilege of the exploited program or of a normal app in the case of a malware install.
+While this is often enough to conduct some malicious operations, a higher privilege will enable the attacker to do more.
+The attacker would have to use another exploit to elevate his or her privileges, with gaining root privileges as the ultimate goal.
+However, this root access (soft root) is not persistent and will be lost when the device is rebooted.
+To overcome this, the final step is to make sure the attacker maintains root access even after a reboot and can hide his or her traces.
+This is typically achieved by installing a rootkit.
+It is in this stage of the attack where this research comes in.
+One of the main motivations for this research is to determine whether an attacker who wants to install a rootkit can do so without having to deal with the complications brought on by some recent advancements in Android security, specifically a feature called dm-verity.
+First introduced in KitKat, this feature allows the kernel to verify the integrity of a partition upon a boot, thus ensuring this partition has not been tampered with.
+It protects the device from rootkits that add or modify binaries in the system partition to hide other malicious files and processes and maintain access.
+While dm-verity is not yet a default feature, it’s always good to know early on what an attacker can do in spite of the protections in place.
+As a team, we needed to see whether it was possible to conduct rootkit operations without touching the system partition, thus avoiding the protection offered by dm-verity.
+To answer these questions, we turned to another technology that has been recently introduced in Android: the new Android Runtime (ART).
+ART was first introduced in Android Kitkat 4.4 in October 2013 as an experimental alternative to the Dalvik runtime.
+Upon the release of Android Lollipop 5.0 in November 2014, ART became the default runtime.
+The main advantage of ART over Dalvik is better app performance due to ahead-of-time compilation.
+While Dalvik relied on interpretation and just-in-time compilation, ART precompiles app Dalvik bytecode into native code.
+The command responsible for compiling an application into OAT is dex2oat, which can be found in /system/bindex2oat.
+This ahead-of-time compilation will result in an OAT file that is generated in the /data/dalvik-cache// directory, where arch is the name of the device’s central processing unit architecture (e.g., “arm” for ARM, “x86” for Intel x86, etc.
+).
+All apps will be compiled every time the device’s system is upgraded or the first time it is booted up after it is purchased.
+During this time, ART will also compile all the code from the Android framework jars into a single OAT file named boot.oat.
+This boot.oat file is referenced by an app whenever the app calls a framework application programming interface (API) method.
+Individual apps are compiled upon installation and upon subsequent updates.
+The approach I took was to take advantage of the mechanisms of ART to modify the framework or application code with code of our own without touching the system partition.
+We can use dex2oat to generate OAT files from modified versions of installed apps or system frameworks and replace the original OAT files with them.
+Note that we need at least a root shell access (soft root) to do this.
+We have the two following options:
+Generate a new boot.oat that contains our code modifications and replace the installed boot.oat with it.
+This affects all the apps calling the framework API method that we modified.
+Generate a new OAT file for a specific installed application that contains our code modification, and replace the installed OAT file.
+There are several advantages to this approach.
+One is that we don’t have to deal with low-level code.
+All our modifications are done in Java and only run in the user mode, so there will be fewer potential problems to be encountered compared to code that deals with low-level kernel stuff.
+This approach is also affected less by variations in architecture and OS versions since we rely on ART itself, specifically the dex2oat tool, to generate our code.
+Last, with this approach, we don’t have to deal with code signing since the applications were already installed and verified.
+All we do is modify the app’s code that is now outside the application’s package.
+Our code also runs under the context of the affected app.
+This means our code will have the same user ID and app permissions as the app running our code.
+For instance, if we use the app OAT-replacing technique and replaced the OAT for the Settings app, our code will run in the context of the system user, along with the app permissions of the Settings app.
+How about persistence?
+As long as our modified OAT file is in use, our modification will stay in effect.
+The OAT files will only be replaced after an OTA update or app update.
+Upon the OS update, boot.art and boot.oat will have to be regenerated and all the app OAT files will have to be recompiled, as well; likewise, it must be recompiled when an app is updated.
+Keep in mind that our goal is not to maintain root access, since we are trying to avoid writing to /system in the first place.
+We do not have the option to re-exploit the device using a system-to-root exploit while our code is running as system UID.
+Using these techniques, we can create user-mode rootkits that hide malicious apps and processes that we have installed on an Android app running on Lollipop.
+We can do this without modifying any of the files in the system partition.
+Again, no vulnerabilities were used, and these techniques assume the attacker already has root access.
+In other words, a malicious Android app cannot use this approach without elevating its privileges through a vulnerability or social engineering.
+If you want more details about this research, check out this white paper and the slides from the Black Hat website.
+Image Source: Flickr

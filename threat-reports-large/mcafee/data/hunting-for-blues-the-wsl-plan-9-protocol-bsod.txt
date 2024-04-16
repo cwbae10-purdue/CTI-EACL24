@@ -1,0 +1,24 @@
+This is the final blog in the McAfee research series trilogy on the Windows Subsystem for Linux (WSL) implementation – see The Twin Journey (part 1) and Knock, Knock–Who’s There (part 2).
+The previous research discussed file evasion attacks when the Microsoft P9 server can be hijacked with a malicious P9 (Plan 9 File System Protocol) server.
+Since Windows 10 version 1903, it is possible to access Linux files from Windows by using the P9 protocol.
+The Windows 10 operating system comes with the P9 server as part of the WSL install so that it can communicate with a Linux filesystem.
+In this research we explore the P9 protocol implementation within the Windows kernel and whether we could execute code in it from a malicious P9 server.
+We created a malicious P9 server by hijacking the Microsoft P9 server and replacing it with code we can control.
+In a typical attack scenario, we discovered that if WSL is enabled on Windows 10, then a non-privileged local attacker can hijack the WSL P9 communication channel to cause a local Denial of Service (DoS) or Blue Screen of Death (BSOD) in the Windows kernel.
+It is not possible to achieve escalation of privilege (EoP) within the Windows kernel due to this vulnerability; the BSOD appears to be as designed by Microsoft within their legitimate fail flow, if malformed P9 server communication packets are received by the Windows kernel.
+A non-privileged user should not be able to BSOD the Windows kernel, from a local or remote perspective.
+If WSL is not enabled (disabled by default on Windows 10), the attack can still be executed but requires the attacker to be a privileged user to enable WSL as a pre-requisite.
+There have recently been some critical, wormable protocol vulnerabilities within the RDP and SMB protocols in the form of Bluekeep and SMBGhost.
+Remotely exploitable vulnerabilities are very high risk if they are wormable as they can spread across systems without any user interaction.
+Local vulnerabilities are lower risk since an attacker must first have a presence on the system; in this case they must have a malicious P9 server executing.
+The P9 protocol implementation runs locally within the Windows kernel so the objective, as with most local vulnerability hunting, is to find a vulnerability that allows an escalation of privilege (EoP).
+In this blog we do a deep dive into the protocol implementation and vulnerability hunting process.
+There is no risk to WSL users from this research, which has been shared with and validated by Microsoft.
+We hope this research will help improve understanding of the WSL P9 communications stack and that additional research would be more fruitful further up the stack.
+There have been some exploits on WSL such as here and here but there appears to be no documented research of the P9 protocol implementation other than this.
+The Plan 9 File System Protocol server allows a client to navigate its file system to create, remove, read and write files.
+The client sends requests (T-messages) to the server and the server responds with R-messages.
+The P9 protocol has a header consisting of size, type and tag fields which is followed by a message type field depending on the request from the client.
+The R-message type sent by the server must match the T-message type initiated from the client.
+The maximum connection size for the data transfer is decided by the client during connection setup; in our analysis below, it is 0x10000 bytes.
+P9 protocol header followed by message type union (we have only included the subset of P9 message types which are of interest for vulnerability research):

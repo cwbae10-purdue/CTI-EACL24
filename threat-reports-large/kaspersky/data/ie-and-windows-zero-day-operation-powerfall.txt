@@ -1,0 +1,28 @@
+In May 2020, Kaspersky technologies prevented an attack on a South Korean company by a malicious script for Internet Explorer.
+Closer analysis revealed that the attack used a previously unknown full chain that consisted of two zero-day exploits: a remote code execution exploit for Internet Explorer and an elevation of privilege exploit for Windows.
+Unlike a previous full chain that we discovered, used in Operation WizardOpium, the new full chain targeted the latest builds of Windows 10, and our tests demonstrated reliable exploitation of Internet Explorer 11 and Windows 10 build 18363 x64.
+On June 8, 2020, we reported our discoveries to Microsoft, and the company confirmed the vulnerabilities.
+At the time of our report, the security team at Microsoft had already prepared a patch for vulnerability CVE-2020-0986 that was used in the zero-day elevation of privilege exploit, but before our discovery, the exploitability of this vulnerability was considered less likely.
+The patch for CVE-2020-0986 was released on June 9, 2020.
+Microsoft assigned CVE-2020-1380 to a use-after-free vulnerability in JScript and the patch was released on August 11, 2020.
+We are calling this and related attacks ‘Operation PowerFall’.
+Currently, we are unable to establish a definitive link with any known threat actors, but due to similarities with previously discovered exploits, we believe that DarkHotel may be behind this attack.
+Kaspersky products detect Operation PowerFall attacks with verdict PDM:Exploit.Win32.Generic.
+The most recent zero-day exploits for Internet Explorer discovered in the wild relied on the vulnerabilities CVE-2020-0674, CVE-2019-1429, CVE-2019-0676 and CVE-2018-8653 in the legacy JavaScript engine jscript.dll.
+In contrast, CVE-2020-1380 is a vulnerability in jscript9.dll, which has been used by default starting with Internet Explorer 9, and because of this, the mitigation steps recommended by Microsoft (restricting the usage of jscript.dll) cannot protect against this particular vulnerability.
+CVE-2020-1380 is a Use-After-Free vulnerability that is caused by JIT optimization and the lack of necessary checks in just-in-time compiled code.
+A proof-of-concept (PoC) that triggers vulnerability is demonstrated below:
+To understand this vulnerability, let us take a look at how func() is executed.
+It is important to understand what value is set to A[5].
+According to the code, it should be an O argument.
+At function start, the O argument is re-assigned to 1, but then the function arguments length is set to 0.
+This operation does not clear function arguments (as it would normally do with regular array) but allows to put argument O2 into the arguments list at index zero using Array.prototype.push, meaning O = O2 now.
+Besides that, if the argument F is equal to 1, then O will be re-assigned once again, but to the integer number 2.
+It means that depending on the value of the F argument, the O argument is equal to either the value of the O2 argument or the integer number 2.
+The argument A is a typed array of 32-bit floating point numbers, and before assigning a value to index 5 of the array, this value should be converted to a float.
+Converting an integer to a float is a relatively simple task, but it become less straightforward when an object is converted to a float number.
+The exploit uses the object abp with an overridden valueOf() method.
+This method is executed when the object is converted to a float, but inside the method there is code that frees ArrayBuffer, which is viewed by Float32Array and where the returned value will be set.
+To prevent the value from being stored in the memory of the freed object, the JavaScript engine needs to check the status of the object before storing the value in it.
+To convert and store the float value safely, JScript9.dll uses the function Js::TypedArray<float,0>::BaseTypedDirectSetItem().
+You can see decompiled code of this function below:

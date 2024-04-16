@@ -1,0 +1,78 @@
+We have previously described how Duqu 2.0 doesn’t have a normal “persistence” mechanism.
+This can lead users to conclude that flushing out the malware is as simple as rebooting all the infected machines.
+In reality, things are a bit more complicated.
+The attackers created an unusual persistence module which they deploy on compromised networks.
+It serves a double function – it also supports a hidden C&C communication scheme.
+This organization-level persistence is achieved by a driver that is installed as a normal system service.
+On 64-bit systems, this implies a strict requirement for an Authenticode digital signature.
+We have seen two such persistence drivers deployed in the course of attacks.
+During their operations the Duqu threat actors install these malicious drivers on firewalls, gateways or any other servers that have direct Internet access on one side and corporate network access on other side.
+By using them, they can achieve several goals at a time: access internal infrastructure from the Internet, avoid log records in corporate proxy servers and maintain a form of persistence after all.
+In essence, the drivers are redirecting network streams to and from the gateway machine that runs it.
+To forward connections, the attacker first has to pass a network-based “knocking” mechanism by using a secret keyword.
+We have seen two different secret keywords in the samples we collected so far: "romanian.antihacker" and "ugly.gorilla".
+We described one of these drivers in our whitepaper about Duqu 2.0 (see “The ”portserv.sys” driver analysis” section).
+Let us repeat some of the most important details.
+The driver listens to the network and expects a special secret keyword (“romanian.antihacker” in that case).
+After that, it saves IP of the host that passed the correct secret keyword and starts redirecting all packets from port 443 to 445 (SMB) or 3389 (Remote Desktop) of that server.
+This effectively allows the attackers to tunnel SMB (i.e.
+remote file system access) and Remote Desktop through the gateway server while making it look like HTTPS traffic (port 443).
+In addition to the “romanian.antihacker” driver, we have discovered another one which did a similar job, however, supporting more connections in a more generic way:
+If the driver recognizes the secret keyword “ugly.gorilla1” then all traffic from the attacker’s IP will be redirected from port 443 (HTTPS) to 445 (SMB)
+If the driver recognizes the secret keyword “ugly.gorilla2” then all traffic from the attacker’s IP will be redirected from port 443 (HTTPS) to 3389 (RDP)
+If the driver recognizes the secret keyword “ugly.gorilla3” then all traffic from the attacker’s IP will be redirected from port 443 (HTTPS) to 135 (RPC)
+If the driver recognizes the secret keyword “ugly.gorilla4” then all traffic from the attacker’s IP will be redirected from port 443 (HTTPS) to 139 (NETBIOS)
+If the driver recognizes the secret keyword “ugly.gorilla5” then all traffic from the attacker’s IP will be redirected from port 1723 (PPTP) to 445 (SMB)
+If the driver recognizes the secret keyword “ugly.gorilla6” then all traffic from the attacker’s IP will be redirected from port 443 (HTTPS) to 47012 (currently unknown).
+We would like to note that one port here looks quite suspicious: 47012.
+So far, we haven’t seen any other Duqu 2.0 components using this port, nor have we found any other common malware, backdoor or legitimate software using this port (also according to SANS).
+However, considering that this port number was hardcoded into the malware this may be a good indicator of compromise for Duqu 2.0.
+Part of the malware with array of secret keywords
+This 64-bit driver contains an internal DLL name, “termport.sys”, while the filename in the filesystem was “portserv.sys”.
+This most likely means that the attackers change filenames for different operations and detection of this attack should not solely rely on names of the files.
+The compilation timestamp is apparently fake here: “Jul 23 18:14:28 2004”.
+All the discovered driver files were located in “C:WindowsSystem32drivers".
+Perhaps the most important part of this attack strategy is the digital signature used for the 64-bit driver.
+Because this is a mandatory requirement on 64-bit Windows systems, the driver had a valid digital signature.
+It was signed by “HON HAI PRECISION INDUSTRY CO. LTD.” (also known as “Foxconn Technology Group”, one of the world’s largest electronics manufacturers).
+Digital signature of attacker’s driver
+According to the information from the driver it was signed at 20:31 on 19.02.2015.
+Below are some more details provided by SysInternal’s sigcheck utility:
+According to Wikipedia “Foxconn Technology Group” is the world’s largest electronics contract manufacturer and is headquartered in Tucheng, New Taipei, Taiwan.
+Major customers of Foxconn include or have included some of the world’s largest enterprises:
+Acer Inc.
+Amazon.com
+Apple Inc.
+BlackBerry Ltd.
+Cisco
+Dell
+Google
+Hewlett-Packard
+Huawei
+Microsoft
+Motorola Mobility
+Nintendo
+Nokia
+Sony
+Toshiba
+Xiaomi
+Vizio
+Foxconn manufactures several popular https://en.wikipedia.org/wiki/Foxconn products including BlackBerry, iPad, iPhone, Kindle, PlayStation 4, Xbox One and Wii U.
+The same certificate was used by the manufacturer to sign several WatchDog Timer Kernel drivers (WDTKernel.sys) for Dell laptops in February 2013.
+During our previous research into Stuxnet and Duqu we have observed digitally signed malware (using malicious Jmicron and Realtek certs).
+Stealing digital certificates and signing malware on behalf of legitimate businesses seems to be a regular trick from the Duqu attackers.
+We have no confirmation that any of these vendors have been compromised but our indicators definitely show that the Duqu attackers have a major interest in hardware manufacturers such as Foxconn, Realtek and Jmicron.
+This was confirmed in the 2014/2015 attacks, when we observed infections associated with hardware manufacturers from APAC, including ICS and SCADA computer equipment manufacturers.
+Another interesting observation is that besides these Duqu drivers we haven’t uncovered any other malware signed with the same certificates.
+That rules out the possibility that the certificates have been leaked and are being used by multiple groups.
+It also seems to indicate the Duqu attackers are the only ones who have access to these certificates, which strengthens the theory they hacked the hardware manufacturers in order to get these certificates.
+Finally, it’s interesting that the Duqu attackers are also careful enough not to use same digital certificate twice.
+This is something we have seen with Duqu from both 2011 and 2015.
+If that’s true, then it means that the attackers might have enough alternative stolen digital certificates from other manufacturers that are ready to be used during the next targeted attack.
+This would be extremely alarming because it effectively undermines trust in digital certificates.
+Both Verisign and HON HAI have been informed about the use of the certificate to sign the Duqu 2.0 malware.
+Sample MD5 (portserv.sys): 92e724291056a5e30eca038ee637a23f
+Serial number of Foxconn certificate used by Duqu attackers:
+‎25 65 41 e2 04 61 90 33 f8 b0 9f 9e b7 c8 8e f8
+Full certificate of the malicious driver:
+—–BEGIN CERTIFICATE—– MIIFmTCCBIGgAwIBAgIQJWVB4gRhkDP4sJ+et8iO+DANBgkqhkiG9w0BAQUFADCB tDELMAkGA1UEBhMCVVMxFzAVBgNVBAoTDlZlcmlTaWduLCBJbmMuMR8wHQYDVQQL ExZWZXJpU2lnbiBUcnVzdCBOZXR3b3JrMTswOQYDVQQLEzJUZXJtcyBvZiB1c2Ug YXQgaHR0cHM6Ly93d3cudmVyaXNpZ24uY29tL3JwYSAoYykxMDEuMCwGA1UEAxMl VmVyaVNpZ24gQ2xhc3MgMyBDb2RlIFNpZ25pbmcgMjAxMCBDQTAeFw0xMjA4MjUw MDAwMDBaFw0xNTA4MjUyMzU5NTlaMIHcMQswCQYDVQQGEwJUVzEPMA0GA1UECBMG VEFJV0FOMREwDwYDVQQHEwhUVS1DSEVORzEsMCoGA1UEChQjSE9OIEhBSSBQUkVD SVNJT04gSU5EVVNUUlkgQ08uIExURC4xPjA8BgNVBAsTNURpZ2l0YWwgSUQgQ2xh c3MgMyAtIE1pY3Jvc29mdCBTb2Z0d2FyZSBWYWxpZGF0aW9uIHYyMQ0wCwYDVQQL FARQQ0VHMSwwKgYDVQQDFCNIT04gSEFJIFBSRUNJU0lPTiBJTkRVU1RSWSBDTy4g TFRELjCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALzM40T355R4ov9F OcwiBpBwRk5047T5PxoabBPGyhqjqVyTJ3vxYWunUsGJpq2myS7uPmDkPXc+qExE SRBIgruiGpazeqXsP7EfEr8BRU4iVvKmD//m5uZvqEAsz6FzJ/PMlfiZponm5PLa hcIM9AtqdhqDek7taoAaPUbYjY2wgan8+jaNWo0BzmvimN74AC5N0aZgTFBvIRux Ev2EO1x4Ypz3UqFwMTHHdexJqM19W20mmbpjGfoxkfl4yUuUg5O4tdgTbZVF9mui rWpVCuGcB1iUpUxTCoidGfx1ROkzYgLV7XLt50Iir0btqM4tshG4GJUhAX+rEy+r sr5gFnUCAwEAAaOCAXswggF3MAkGA1UdEwQCMAAwDgYDVR0PAQH/BAQDAgeAMEAG A1UdHwQ5MDcwNaAzoDGGL2h0dHA6Ly9jc2MzLTIwMTAtY3JsLnZlcmlzaWduLmNv bS9DU0MzLTIwMTAuY3JsMEQGA1UdIAQ9MDswOQYLYIZIAYb4RQEHFwMwKjAoBggr BgEFBQcCARYcaHR0cHM6Ly93d3cudmVyaXNpZ24uY29tL3JwYTATBgNVHSUEDDAK BggrBgEFBQcDAzBxBggrBgEFBQcBAQRlMGMwJAYIKwYBBQUHMAGGGGh0dHA6Ly9v Y3NwLnZlcmlzaWduLmNvbTA7BggrBgEFBQcwAoYvaHR0cDovL2NzYzMtMjAxMC1h aWEudmVyaXNpZ24uY29tL0NTQzMtMjAxMC5jZXIwHwYDVR0jBBgwFoAUz5mp6nsm 9EvJjo/X8AUm7+PSp50wEQYJYIZIAYb4QgEBBAQDAgQQMBYGCisGAQQBgjcCARsE CDAGAQEAAQH/MA0GCSqGSIb3DQEBBQUAA4IBAQA9niTkOi3raLWjtQBJK3br8RDS X+6NtHj/OhSuFzVsJcmhvaf4DIhJ00ghScXcZZycod/7kYN9NBIrTMqlB5GsOuWI /TPk9HoIvEoVEoliuEBwDiHbIidaLKcS3sPqgV0WNx46JYmCI/++KMCZ7zfDSlZb 213OpauHuQj7tUIKGlEKq7qIvGaR+EUcxpgVR/AxuxTtjUWaSItCM2vMGKUMDNXH rN+2IYeHsnMqe68RoIRLlq3BPQkA+JcpjjV2Td5Q4Y2xj7E558EQ4utYduwCv+kq OQgeV4KumDaoN9Y7+e79jWzoIkKM4IxQ8u1jfxGuG35l9k7seksYOwdM1dN5 —–END CERTIFICATE—–

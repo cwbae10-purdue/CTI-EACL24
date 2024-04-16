@@ -1,0 +1,66 @@
+On Oct. 20, 2014, an email was sent to the IETF web/tls mailing list raising the point that certain TLS implementations may be susceptible to a POODLE-style attack.
+POODLE stands for "Padding Oracle On Downgraded Legacy Encryption."
+The attack involves decrypting encrypted bytes one at a time by manipulating the padding used at the end of a CBC-mode block-cipher.
+You can read more about the original POODLE attack here.
+SSLv3 did not specify the value of the individual padding bytes, allowing this attack to be carried out.
+You can see how OpenSSL checks SSLv3 padding bytes here on github.
+Note that the code only verifies that the number of padding bytes is correct with respect to the record size.
+There is no per-byte verification as expected.
+TLS is interesting, in that the RFC specifies that the value of the padding bytes correspond to the number of padding bytes in total.
+"Padding that is added to force the length of the plaintext to be an integral multiple of the block cipher's block length.
+The padding may be any length up to 255 bytes long, as long as it results in the TLSCiphertext.length being an integral multiple of the block length.
+Lengths longer than necessary might be desirable to frustrate attacks on a protocol based on analysis of the lengths of exchanged messages.
+Each uint8 in the padding data vector must be filled with the padding length value."
+So if there are nine bytes of padding, each padding byte should have the value "0x9."
+In theory, this should preclude a POODLE-style attack, which requires copying arbitrary cipher text into the padding area.
+Here is where OpenSSL checks the padding bytes in TLSv1 (s3_cbc.c).
+Based on the code above, OpenSSL is checking every byte for the correct value and therefore is not vulnerable to POODLE attacks.
+The problem is a number of other TLS implementations are optimized for performance by verifying only that the first byte of padding matches the number of padding bytes.
+Such implementations would accept any value for the second and subsequent padding bytes.
+What's worse is that the adversary doesn't need to artificially downgrade the connection to SSLv3 to exploit this issue, so the barriers to execution are lower.
+The original email specifically called out a version of the NSS library from 2009 as being vulnerable.
+This was picked up on by security researcher Adam Langley at imperialviolet.org, who quickly deduced that a number of modern-day implementations (F5 Networks, A10 Networks) are still vulnerable.
+Online tools such as Qualys SSL Labs are available to check public-facing websites for this vulnerability.
+However, I wanted a local tool that I could use and customize for vulnerability testing.
+I modified the OpenSSL client (s_client) to increment the second byte of padding during the TLS session, which should expose the flaw if it is present on the TLS server.
+You can see the original padding code here on github.
+Here is the altered source code where the second padding byte is modified (ssl/t1_enc.c):
+You can download a Linux x86_64 build of this tool here on github.com, along with the modified source.
+Initial testing found that this code was never hit because AES CBC mode ciphers in recent OpenSSL versions use AEAD, which has a distinct requirement for padding:
+From the RFC Draft:
+This padding is verified separately in the code.
+To test TLS for the POODLEv2 vulnerability, I needed to force the standard TLS padding to be applied.
+A quick code audit reveals that DES-CBC3-SHA does not use AEAD, relying on the TLS stack to do the padding.
+This is the cipher I used for testing.
+While this could have been tested against one of the publicly listed vulnerable sites, it seemed more prudent to stand up a known vulnerable server locally.
+Referring back to the original mailing list, which mentioned NSS being fixed in 2010, I found an old build of NSS (NSS_3_12_5_RTM) from 2009, which I compiled from source.
+Here is the offending code:
+This includes a test server named selfserv, which was configured to listen for HTTPS connections.
+You need to setup a key and cert using certutil before you can run the server.
+You also need to export the old NSS libs you've built to ensure the tool doesn't pick up the modern NSS libs included in your linux distro.
+Here is how the NSS server was run:
+[[email protected] Linux2.6_x86_glibc_PTH_DBG.OBJ]# export LD_LIBRARY_PATH=/usr/local/lib
+[[email protected] Linux2.6_x86_glibc_PTH_DBG.OBJ]# ./selfserv -n user1 -p 443
+This is a simulated HTTPS request to the vulnerable server using our modifed OpenSSL build.
+Note the sleep command is used to ensure the connection is held open long enough to get a response:
+[email protected]: ~$ (printf 'GET / HTTP/1.1\r\nHost: localhost\r\n\r\n'; sleep 1) | ./openssl_bad_padding s_client -tls1 -cipher DES-CBC3-SHA -connect 192.168.148.228:443
+... tons of debug into here....
+POODLEv2: 4 bytes padding in total
+POODLEv2: padding modified
+POODLEv2: 1 bytes padding in total
+HTTP/1.0 200 OK
+Server: Generic Web Server
+Date: Tue, 26 Aug 1997 22:10:05 GMT
+GET / HTTP/1.1
+The debug info from the OpenSSL client informs us how much padding was sent and when we modified the padding.
+You can see the server ignores the bad padding and sends a valid HTTP response.
+Here is the same test against an up-to-date NSS or OpenSSL server:
+POODLEv2: 4 bytes padding in total
+POODLEv2: padding modified
+140145998599848:error:140943FC:SSL routines:SSL3_READ_BYTES:sslv3 alert bad record mac:s3_pkt.c:1275:SSL alert number 20
+140145998599848:error:1409E0E5:SSL routines:SSL3_WRITE_BYTES:ssl handshake failure:s3_pkt.c:598:
+... tons of debug info here....
+There is no HTTP response as expected.
+The take-away is that a number of current vendor TLS implementations are affected, along with older versions of NSS (pre-2010).
+The good news is that the latest versions of NSS and OpenSSL appear to be safe from this vulnerability.
+Thanks to my colleague Mike Giancola for assisting with this research.

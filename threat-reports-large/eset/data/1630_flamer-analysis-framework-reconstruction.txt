@@ -1,0 +1,68 @@
+Aleksandr Matrosov looks at the internal architecture of Win32/Flamer’s mssecmgr.ocx module.
+From the very beginning of our analysis of Win32/Flamer it was clear that this was an extremely sophisticated piece of malware which we had never seen before.
+It implements extremely elaborate programming logic and has an intricate internal structure.
+At the heart of Flame’s modularity lies a carefully designed architecture allowing all its components interoperability without causing any incompatibilities.
+In this blog post we will concentrate mainly on the internal architecture of the mssecmgr.ocx module (Flame, Duqu and Stuxnet: in-depth code analysis of mssecmgr.ocx).
+In the course of our research we analysed several different versions of mssecmgr.ocx and found specific architectural similarities that allow us to reconstruct Flame’s framework.
+Flame’s main module consists of objects that each implement specific functionality: gathering information on the compromised system; infecting other computers; communicating with C&C, and so on.
+These objects are split into certain groups according to functionality and are managed correspondingly.
+The objects belonging to specific classes are inserted into a vector – that’s a C++ STL (Standard Template Library) type, not an infection vector as shown on the diagram below:
+Figure 1 Flame Framework diagram
+Here is the list of different types of objects implemented in mssecmgr.ocx:
+Command Executers these objects expose an interface that allows the malware to dispatch commands received from C&C servers;
+Tasks objects of this type represent tasks executed in separate threads that constitute the backbone of the main module;
+Consumers objects which are triggered by specific events (creation of new modules, insertion of removable media and so on.
+);
+Delayed Tasks these objects represent tasks which are executed periodically with a scheduled delay.
+The set of objects described above constitute the Flame framework.
+The approach looks very similar to a Command object-oriented design pattern.
+It is worth mentioning that Stuxnet and Duqu made heavy use of lists (another C++ STL type) to manage objects.
+Flame, however, relies on vectors.
+During our Flame analysis we found out that different versions of the malware’s main modules implement different framework objects in all vectors, as reflected in the two tables below.
+Table 1 Command Executers Objects in different version of mssecmg.ocx
+Table 2 Tasks objects in different version of mssecmg.ocx
+From the tables above it is evident that the malware has evolved over time and its functionality has been significantly extended.
+Some components that may have been implemented previously as separate modules are incorporated into the main module by later versions.
+Task objects implement the general functionality of the framework.
+There are two tasks (among others) that exist in every version of Flame main module,:
+IDLER task
+CommandExecuter task.
+The purpose of the IDLER task is to handle delayed tasks.
+It runs periodically through the delayed tasks vector and executes its elements as shown in figure 1.
+The CommandExecuter task is responsible for retrieving and executing commands from the malware’s configuration information using objects from the corresponding vector:
+Figure 2 Command Executer Routine
+Consumers constitute another set of objects implemented in the Flame framework.
+These objects are inserted into the corresponding vector during initialization and are triggered when a specific event happens.
+Thus, Flame designers employ an event driven model that allows Flame to achieve certain goals.
+Since the malware is intended for gathering information from the infected system this architecture is very efficient.
+Consumers such as the following are implemented:
+process consumers these are notified when an application is run;
+volume consumers these are notified when a new volume appears in the system;
+removable media consumers react to removable media events;
+mobile devices consumers react to mobile device events;
+consumers for Bluetooth adapter etc.
+When an event takes place on the system a specific trigger is created which fires the corresponding consumer, which in turn takes an appropriate action: infects media, copies files from removable media, activates a Bluetooth adapter, and so on.
+Command executers are responsible for handling commands received from C&C servers.
+These are objects that implement a specific interface described below:
+The CommandExecuter task is responsible for handling commands received from C&C server.
+The commands are stored in a special repository within the Flame configuration information under the key CMD_QUEUE:
+Figure 3 Executing commands
+The commands are formatted as compressed binary data.
+While decoding the commands Flame decompresses the data and splits the commands into blocks.
+Each block is handled by a specific command executer object identified by its own ID number.
+The screenshot in the figure below presents the interface of a command executer object:
+Figure 4 Interface of command executer object
+Once the command executer is identified the CmdExecuter_Dispatch method is called to handle command information.
+Different command dispatchers are able to accomplish different actions.
+For instance the DbQuery command dispatcher is used to execute SQL queries to the SQL Lite database maintained by the malware.
+Commands may also be stored in files in specific directories for which the malware scans.
+There is a special task object CommandFileFinder whose purpose is to look for files in specific directories and load the contents of these files into the command data repository stored in configuration information.
+This helps the malware send commands to the machines that don’t have a direct connection with C&C servers.
+As already pointed out Flame uses a SQL Lite relational database to store all the information (sKyWIper (a.k.a.
+Flame a.k.a.
+Flamer)) it gathers on the infected system as well as supplemental data which facilitate Flame’s propagation within a targeted system.
+In the figure below you can see the database schemas reconstructed in the course of research with a brief description:
+Figure 5 Flame database schema
+Figure 6 Flame database schema
+Another interesting feature of the Flamer malware is the use of the LUA scripting engine to perform certain supplemental operations.
+The following table summarizes information about different scripts extracted from Flame configuration information.

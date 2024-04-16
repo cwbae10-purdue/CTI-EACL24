@@ -1,0 +1,161 @@
+ESET researchers analyze a previously undocumented trojan that is spread via malicious torrents and uses multiple tricks to squeeze cryptocoins from its victims while staying under the radar
+ESET researchers have uncovered a hitherto undocumented malware family that we named KryptoCibule.
+This malware is a triple threat in regard to cryptocurrencies.
+It uses the victim’s resources to mine coins, tries to hijack transactions by replacing wallet addresses in the clipboard, and exfiltrates cryptocurrency-related files, all while deploying multiple techniques to avoid detection.
+KryptoCibule makes extensive use of the Tor network and the BitTorrent protocol in its communication infrastructure.
+The malware, written in C#, also employs some legitimate software.
+Some, such as Tor and the Transmission torrent client, are bundled with the installer; others are downloaded at runtime, including Apache httpd and the Buru SFTP server.
+An overview of the various components and their interactions is shown in Figure 1.
+Figure 1.
+KryptoCibule components and tools
+When the malware is first executed, the host is assigned a unique identifier with the format {adjective}-{noun} where {adjective} and {noun} are random words taken from two hardcoded lists which provide over 10 million unique combinations.
+This identifier is then used to identify the host in communications with the C&C servers.
+On top of the crypto-related components, KryptoCibule also has RAT functionality.
+Among the commands it supports are EXEC, which allows execution of arbitrary commands and SHELL, which downloads a PowerShell script from the C&C.
+This script then loads a backdoor generated with the post-exploitation tool Pupy.
+The name KryptoCibule derives from the Czech and Slovak words for “crypto” and “onion”.
+We have uncovered multiple versions of this malware, enabling us to trace its evolution all the way back to December 2018.
+Figure 2 shows the changes made over time to KryptoCibule.
+Figure 2.
+Timeline of updates and functionality changes
+According to ESET telemetry (shown in Figure 3), the malware seems to target mostly users in Czechia (the Czech Republic) and Slovakia.
+This reflects the user base of the site on which the infected torrents are found.
+Figure 3.
+In our telemetry data, over 85% of detections were located in Czechia and Slovakia
+Almost all the malicious torrents were available on uloz.to; a popular file sharing site in Czechia and Slovakia (see Figure 4).
+We’ll explain how these torrents are used to spread KryptoCibule in the next section.
+Figure 4.
+One of the malicious torrents on uloz.to
+As detailed in the Anti-detection and anti-analysis techniques section below, KryptoCibule specifically checks for ESET, Avast, and AVG endpoint security products; ESET is headquartered in Slovakia, while the other two are owned by Avast, which is headquartered in Czechia.
+KryptoCibule makes use of the BitTorrent protocol to spread to new victims and to download additional tools and updates.
+KryptoCibule is spread through malicious torrents for ZIP files whose contents masquerade as installers for cracked or pirated software and games.
+Although other files may be included, as seen in Figure 5, there are five that are common to all KryptoCibule installer archives.
+packed.001 is the malware, while packed.002 is the installer for the expected software.
+Both are XOR-encrypted with keys contained in Setup.exe.
+When Setup.exe is executed, it decodes both the malware and the expected installer files.
+It then launches the malware – in the background – and the expected installer – front and center – giving the victim no indication that anything is amiss.
+Figure 5.
+Content of the Dead.Cells.Incl.All.DLC archive with only the minimum common set of KryptoCibule installer files shown
+The BitTorrent protocol is also used to download updates to the malware, and additional software.
+KryptoCibule installs the transmission-daemon torrent client and manages it by issuing commands via its RPC interface on port 9091 with transmission-remote.
+The RPC interface uses the hardcoded credentials superman:krypton.
+To install further software for the malware’s use, such as the SFTP server, the Launcher component makes an HTTP GET request to %C&C%/softwareinfo?title=<software name> and receives a JSON response containing a magnet URI for the torrent to download and other information indicating how to install and execute the program.
+Figure 6 shows an example of such a response.
+Figure 6.
+Sample response for a GET /softwareinfo?title=ssh_server request
+The mechanism for getting updates is similar.
+The malware first gets global settings via HTTP from %C&C%/settingsv5.
+Among other things, this response contains a magnet URI for the latest version of the malware.
+It then makes a GET request to %C&C%/version to get the most recent version number.
+If the local version is lower than that version, the torrent is downloaded and installed.
+Torrents are added to Transmission using the following command:
+transmission-remote localhost -n superman:krypton -a “<magnet URI>”
+A hardcoded list of 50 trackers is used to get peers for all torrents.
+Victims are also used to seed both the torrents used by the malware and the malicious torrents that help spread it.
+Infected hosts get a list of magnet URIs from %C&C%/magnets, download them all and keep seeding them.
+This ensures that these files are widely available for others to download, which helps speed up the downloads and provides redundancy.
+This malware leverages a variety of techniques to avoid detection, along with some basic anti-analysis protections.
+It starts with the initial access vector.
+The executable contained inside the ZIP archive is a rather benign installer program that masquerades as the legitimate InstallShield program.
+This file is scrambled with the open source program Obfuscar.
+This same tool is used on all of the malware’s custom executables.
+The malicious code itself is located inside an XOR-encrypted file, the key being a GUID hardcoded in Setup.exe.
+The malware is then installed to the hardcoded path %ProgramFiles(x86)%\Adobe\Acrobat Reader DC\Reader\update and uses legitimate Adobe Acrobat Reader executable names for the bundled Tor executable and its own.
+Some of the files contained in the install folder can be seen in Figure 7.
+Figure 7.
+Some of the files in the install folder.
+Armsvc.exe is the malware and ADelRCP.exe is the Tor executable.
+Both filenames are actually used by Adobe Reader.
+To achieve persistence, KryptoCibule creates a scheduled task to be run every five minutes with the following command.
+Once again, it uses an Adobe Reader-related name.
+schtasks.exe /CREATE /SC MINUTE /MO 5 /TN “Adobe Update Task” /TR \””%ProgramFiles(x86)%\Adobe\Acrobat Reader DC\Reader\Update\armsvc.exe\”” [/RL HIGHEST] /F [/RU SYSTEM]
+Before first executing its payload and on every iteration of the main loop, the malware performs a check for running analysis software using the following list.
+If any process with a matching name is found, it stops all running components and exits.
+cain
+filemon
+netmon
+netstat
+nmwifi
+perfmon
+processhacker
+procexp
+procexp64
+procmon
+regmon
+tasklist
+taskmgr
+tcpvcon
+tcpview
+wireshark
+Before initializing the cryptominer components, the malware performs a case-insensitive check of the rootSecurityCenter2\AntiVirusProduct WMI object for the strings avast, avg and eset, as seen in the decompiled code in Figure 8.
+Should any of these strings be detected If any of them were detected, the cryptominer components will not be installed.
+Figure 8.
+Cleaned up decompiled code of the function used to check for specific security products
+Whenever the malware installs itself, an update or a new component, the install path used is excluded from Windows Defender automatic scanning by issuing the following command:
+powershell -c “Add-MpPreference -ExclusionPath ‘<install path>'”
+It also creates firewall rules using innocuous-looking names to explicitly allow inbound and outbound traffic from its components.
+A rule to block outbound traffic from the ESET Kernel Service (ekrn.exe) is also created by the function shown in Figure 9.
+Figure 9.
+Function that blocks outbound traffic from ekrn.exe in the Windows Firewall
+KryptoCibule brings along the tor.exe command line tool, masquerading as ADelRCP.exe, and a configuration file (seen in Figure 10) as libstringutils.dll.
+Figure 10.
+The Tor configuration file used by the latest version of the malware
+This sets up a SOCKS proxy on port 9050 that is used by the malware to relay all communications with the C&C servers through the Tor network.
+This has the dual benefit of encrypting the communications and making it virtually impossible to trace the actual server or servers behind these URIs.
+The second part of the configuration file sets up onion services on the victimized host.
+These are accessible by the operators over the Tor network.
+When first starting up these services, Tor automatically generates a .onion URI for the host.
+This unique hostname is then sent to %C&C%/transferhost/<unique name>.
+We will discuss how these onion services are used in the upcoming sections.
+The onion URIs for two C&C servers are contained in the malware.
+One of these provides a REST API that the malware uses for most communications, while the other is used to download files.
+Additional URIs can be obtained one at a time with a request to %C&C%/server.
+Some older versions of the malware use these to download updates via port 12461.
+We believe that these URIs point to other infected hosts.
+The versions of the malware that use them have code to place their downloaded updates into a directory served by the MiniWeb HTTP server on that same port.
+We were able to identify one IP address for the file server C&C in our telemetry data.
+KryptoCibule has three components that leverage infected hosts in order to obtain cryptocurrencies.
+The latest versions of KryptoCibule use XMRig, an open source program that mines Monero using the CPU, and kawpowminer, another open source program that mines Ethereum using the GPU.
+The second one is only used if a dedicated GPU is found on the host.
+Both of these programs are set up to connect to an operator-controlled mining server over the Tor proxy.
+On every iteration of the main loop, the malware checks the battery level and the time since the last user input.
+It then starts or stops the miner processes based on this information.
+If the host has received no user input in the last 3 minutes and has at least 30% battery, both the GPU and CPU miners are run without limits.
+Otherwise, the GPU miner is suspended, and the CPU miner is limited to one thread.
+If the battery level is under 10%, both miners are stopped.
+This is done to reduce the likelihood of being noticed by the victim.
+The second component masquerades as SystemArchitectureTranslation.exe.
+It uses the AddClipboardFormatListener function to monitor changes to the clipboard and to apply the replacement rules obtained from %C&C%/regexes to its content.
+The code for this listener is shown in Figure 11.
+The value 0x31D corresponds to the WM_CLIPBOARDUPDATE constant.
+These rules, in the form <regular_expresssion>!<wallet>, match the format of cryptocurrency wallet addresses and replace them with addresses of wallets controlled by the malware operator.
+This is an attempt to redirect transactions made by the victim to the operator’s wallets.
+This component uses a FileSystemWatcher to reload replacement rules whenever the settings.cfg file is changed.
+Figure 11.
+Decompiled code for the listener function used by the clipboard hook
+At the time of this writing, the wallets used by the clipboard hijacking component had received a little over US$1800 in Bitcoin and Ethereum.
+One such wallet is shown in Figure 12.
+By correlating wallets used as sources in the same transactions as known ones, we were able to uncover at least four additional Bitcoin wallets that likely belong to KryptoCibule’s operators.
+Figure 12.
+A Bitcoin wallet used by the clipboard-hijacking component
+The third component walks through the filesystem of each available drive and looks for filenames that contain certain terms.
+A list of such terms we obtained during our investigation is shown in Figure 13.
+Figure 13.
+A list of words to search for, taken from the GET %C&C%/settingsv5 response
+Most terms refer to cryptocurrencies, wallets or miners, but a few more generic ones like crypto (in several languages), seed and password are present also.
+The list contains similar terms in Czech and Slovak such as heslo, hesla and banka (these are the words for “password”, “passwords” and “bank”, respectively).
+A few terms also correspond to paths or files that could provide other interesting data (Desktop, private) including private keys (.ssh, .aws).
+It gathers the full path of each of the matching files and sends the list to %C&C%/found/<unique name>.
+We believe that this works in tandem with the SFTP server running as an onion service on port 9187.
+This server creates mappings for every available drive and makes them available using credentials hardcoded in the malware.
+The gathered paths can thus be used for file exfiltration by having an attacker-controlled machine request them from the infected host over SFTP.
+KryptoCibule also installs a legitimate Apache httpd server that is configured to act as a forward proxy without any restrictions and that is reachable as an onion service on port 9999.
+The KryptoCibule malware has been in the wild since late 2018 and is still active, but it doesn’t seem to have attracted much attention until now.
+Its use of legitimate open-source tools along with the wide range of anti-detection methods deployed are likely responsible for this.
+The relatively low number of victims (in the hundreds) and their being mostly confined to two countries may also contribute to this.
+New capabilities have regularly been added to KryptoCibule over its lifetime and it continues to be under active development.
+Presumably the malware operators were able to earn more money by stealing wallets and mining cryptocurrencies than what we found in the wallets used by the clipboard hijacking component.
+The revenue generated by that component alone does not seem enough to justify the development effort observed.
+The comprehensive list of Indicators of Compromise (IoCs) and samples can be found in our GitHub repository.
+rlwryismmgjijryr55u5rqlbqghqvrwxe5qgxupuviyysxkky5wah6yd.onion
+4dtu3lxrpx6nn7snjovoc3ldiy4x67k7qsrgzftvkrttoqbwnsuirhqd.onion

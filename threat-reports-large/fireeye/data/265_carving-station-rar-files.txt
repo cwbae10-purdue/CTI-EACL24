@@ -1,0 +1,76 @@
+This post will discuss the technique of carving files from unallocated disk space.
+"Carving" simply means extracting a specific section of bytes from an area of disk space; ideally those bytes make up a complete file.
+You can carve any kind of file, but in this post we will specifically address how to carve RAR archives from unallocated disk space.
+Why RAR files?
+In many of Mandiant's investigations of targeted attacks, an attacker will collect data and compress it into a RAR archive prior to taking it from the targeted network.
+Advanced attackers go a step further and attempt to hide their tracks by deleting the archive tool, the archive itself and other artifacts we will discuss in future blog posts.
+What can you do when the attacker deletes the archive?
+In our example case, we know the attacker executed "rar.exe" a.k.a.
+"WinRAR" because the evidence contained a prefetch file named "RAR.EXE-12F2DC4F.pf".
+At this point, the easiest investigative step is to search for files with the extension ".rar" or - even better - conduct file signature analysis in the event the attacker changed the file extension.
+If you don't find any files, does this mean the attacker executed WinRAR just for fun?
+Most likely not.
+Since we know the attacker used WinRAR, but deleted the resulting files, conduct a search for RAR file headers in unallocated space (the "deleted" files graveyard).
+A "file header" is the signature placed at the beginning of a file.
+Most RAR files start with the ASCII characters "Rar!···" or "52 61 72 21 1A 07 00" in hex.
+Older versions of WinRAR may create files with different values in the last three header bytes.
+To reduce false negatives, it's best to search for "52 61 72 21" or "52 45 7E 5E" to find older RAR formats (see Forensics Wiki).
+In this case, we will conduct a search for "Rar!"
+in unallocated space and find a section of the disk that looks especially interesting.
+As with any keyword search, be careful of false positives!
+Some antivirus vendors, such as Symantec, use RAR files for signature updates.
+There may also be false positives due to the random nature of the data in unallocated space.
+To help counteract the false positives, you can narrow search results by identifying the position of the header in the data cluster and/or the composition of the data after the header.
+The position in the data cluster is important because when a file is created on disk, the beginning of the file will be at the start of the data cluster.
+Data clusters are a portion of logical disk space allocated for a file.
+Notice the data in Figure 1 is condensed, which is expected for an archive file.
+If the composition of the data after the header is condensed and randomized, this offers more evidence that the search result is a legitimate RAR file.
+Compare Figure 1 to the result in Figure 2 below, which has partial cleartext and breaks in the data.
+The result in Figure 2 is not a valid RAR archive.
+Once a legitimate header is identified, carve the data from unallocated space starting with "Rar!".
+Since a RAR file does not have a footer, or a defined end of the file, we have to guess the size.
+A raw view of the unallocated space may help visually define the file size.
+There is normally a clear demarcation at the end of the RAR file, a "RAR end" if you will, as shown in Figure 3 below.
+If you have no idea of the file size, 5MB is a good size to start with; but you will most likely have to increase or decrease the size until there is no more contiguous data or the data is overwritten/fragmented.
+EnCase or FTK can be used to manually export the data, or free tools such as Foremost or Scalpel.
+FTK also has a built in capability to automatically carve files based on a defined header and/or footer.
+Once the RAR file is carved out, you can open it with your favorite file archive tool such as WinRAR, 7-Zip, or WinZIP.
+If you are unable to open the file, try carving files with different sizes.
+Bigger is usually better; a valid RAR archive generally won't open if there is too little data rather than too much.
+If the file is a legitimate RAR with enough data, you should be able to extract the archive (even if it's a partial file).
+In this example, a password prompt appears.
+Now you know this is an interesting file!
+How can we find the password?
+Your chances depend on several factors, such as the age of attacker activity, level of general activity on the system and size of memory.
+If you are lucky enough to have a memory image, you can search the strings in memory using a tool such as Mandiant Redline™.
+Otherwise, you can search unallocated space and the Windows pagefile for WinRAR command line switches such as "-hp".
+This switch enables the creation of a password protected archive.
+After removing the inevitable false positives, your results will look similar to Figure 5 shown below.
+The Windows pagefile shown in Figure 5 also retained a directory listing of potential files that were in the archive.
+This shows you can still glean information from RAR command searches even if the RAR file is unrecoverable.
+If the password search doesn't work, you can try to crack the password using brute force or dictionary attacks.
+However, if you are not the NSA, you may have limited success with this.
+Worst case scenario, if you can't find or crack the RAR password, remember the ultimate goal: to determine what is inside the archive.
+Following are four ways - with brief explanations - for how to retrieve additional information on what was inside an archive.
+Prefetch file If you are fortunate enough to have a prefetch file for rar.exe, that may show accessed files.
+The prefetch file contains a large amount of data, such as first and last run dates, path to the executable and accessed file.
+NirSoft's Winprefetchview is a useful free tool you can use to extract prefetch data.
+Figure 6: Files accessed by rar.exe shown in WinPrefetchView
+WinRAR directory What if there is no prefetch file?
+You may be able to determine whether RAR was executed if a "WinRAR" directory is present on the file system.
+The default directories are "%APPDATA%WinRAR" on Windows XP and "%APPDATA%RoamingWinRAR" on Windows 7.
+Depending on the version, WinRAR may create this directory by default when the program executes.
+If you're lucky enough to have this evidence, you can create a timeline around the creation and modification dates of the "WinRAR" directory to find corresponding files of interest.
+Shellbags Windows creates "shellbags" when a user logs into a system locally or interactively.
+They track information for Explorer.
+A helpful attribute of Shellbags is that they track previously navigated directories, even deleted directories.
+So, if an attacker gathered information in a staging directory prior to compressing into a RAR file, you could potentially see that directory in Shellbags.
+Willi Ballenthin created a nice python script to parse Shellbags which can be found here.
+Internet History Internet Explorer not only records Internet browsing, but internal system navigation as well.
+If an attacker was logged on interactively, the IE history could reveal the targeted files.
+Attackers are aware of this and will delete internet history, especially on an account that is not used frequently.
+By the way, you can also carve deleted internet history, but that's a topic for another day.
+These four techniques are just the first step.
+You may need to create and search for additional keywords, conduct timeline analysis, or even analyze an entirely different system if the original location of the targeted files was external.
+If you would like to practice carving different types of files, including RAR files, NIST recently released forensic images intended for testing file carving capabilities of software, http://www.cfreds.nist.gov/FileCarving/.
+There are many file carving tools out there, so if you have any recommendations, feel free to direct message me on Twitter @marycheese.

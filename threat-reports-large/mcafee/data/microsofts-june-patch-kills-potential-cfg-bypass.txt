@@ -1,0 +1,25 @@
+After applying Microsoft’s June patch, we noticed some interesting changes that prevent a security bypass of Windows’ Control Flow Guard (CFG).
+The changes are in the Shader JIT compiler of the Windows Advanced Rasterization Platform (WARP) module (d3d10warp.dll).
+The Shader JIT compiler could formerly be used to create a CFG bypass.
+CFG is known to have problems with dynamic code, such as that created by JavaScript JIT and ActionScript JIT compilers.
+With this update, CFG becomes more robust, and especially more resistant to bypass attacks involving JIT techniques.
+WARP is a software-based rasterizer that contains a high-performance JIT code generator which can convert High-Level Shader Language byte code to optimized native machine code (SSE, x86/x64).
+Moreover, WARP is accessible in the context of the browser by defining Shaders with WebGL (JavaScript-based API), so WARP can be easily employed in browser-based exploit development.
+The changes were made in a function that is related to WARP Shader JIT code page protection.
+This particular fix uses new operating system features— VirtualAlloc with the “PAGE_TARGETS_INVALID” flag and the SetProcessValidCallTargets API—to make sure only the starting address of a Shader JIT function is the valid call target.
+(We will demonstrate this later through a live debugging session.)
+A look at live debugging before the June Patch (d3d10warp.dll v10.0.10586.0):
+Live debugging after the June Patch (d3d10warp.dll v10.0.10586.420):
+From the preceding screens, we can clearly see that after applying the June patch most bits on the CFG map corresponding to the Shader JIT code block are cleared except for the first (corresponding to the JIT function entry point), which indicates the function entry is the only valid call target and jumping to any other place will be caught by a CFG check.
+Looking even deeper into the WARP Shader JIT mechanism, we found some other interesting facts:
+Unlike with JavaScript/Flash ActionScript JIT, the data and code for the WARP Shader JIT are stored separately (in their dedicated blocks, respectively), which makes it very difficult to control the generation of arbitrary instructions.
+However, under certain circumstances a specially crafted Shader can still generate a desired ROP gadget that is good enough to bypass CFG.
+(In most cases the sequence “\x94\xc3” is no longer usable because a CFG check will alter the value in the EAX register.)
+Some cautious readers may have noticed that all JIT code blocks appear in some continuous and repeated pattern.
+That is true; WARP Shader JIT does not take randomization into consideration when allocating code pages and generating instructions.
+As a result, one can generate a desired instruction at some predictable location (as shown in the preceding screen), which is similar to a heap-spray However, to achieve stable WARP Shader JIT spraying, some obstacles need to be overcome.
+As of now, this issue has not been fixed (and perhaps never will be).
+I have verified that this flaw can be leveraged in combination with a certain vulnerability to leak the system module’s address.
+I plan to write a paper to offer more detail on these aspects.
+Stay tuned!
+I would like to thank my colleague Haifei Li for his help in creating this post.

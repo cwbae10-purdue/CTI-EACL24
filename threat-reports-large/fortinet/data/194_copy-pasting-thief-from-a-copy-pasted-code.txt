@@ -1,0 +1,154 @@
+Crypto-currencies are continuing to gain popularity among people who have nothing to do with Information Technologies, even after the significant price drop suffered recently.
+In fact, the total capitalization of the largest crypto-currency still exceeds $100 Billion.
+And where there is money, there are criminals.
+One of the ways of collecting dishonest earnings is through malware.
+This way has become easier every year, especially since there is no shortage of source code generously being provided on the Internet these days.
+In this article we will review a representative of the clipboard-substitution malware family.
+This sample has a distinctive feature: it relies on 10,000+ existing bitcoin addresses to trick even the most suspicious users who are used to checking the beginning and the end of their bitcoin wallets.
+A thief with ransom roots
+FortiGuard Labs regularly monitors regional cyberthreats.
+While analyzing the threat landscape for Japan, our attention was attracted to an unusual sample.
+It triggered our sensors because of the Japan encoding in one of its resources.
+Further analysis showed that it is not only targeting Japanese users, but any holder of Bitcoin assets.
+It is interesting to note that this sample initially matched several rules related to ransomware, specifically to the “Jigsaw Ransomware” discovered in April of 2016.
+We noticed that several other vendors also detected it as ransomware.
+However, the sample’s behavior was quite different from ransomware as it was not locking user files and then demanding payment.
+These circumstances puzzled us, so we decided to collect more details about this sample to understand the nature of such a discrepancy.
+Suspicious sample analysis
+Quick glance into the file’s properties
+A sample was uploaded to our telemetry system on 2018-04-08 with the name
+SCRIPTCHECKER V0.2.1.EXE.
+However, if we look into its properties we a see a different name: TextToWav.exe:
+Link date: 22:30 24/03/2018
+Publisher: n/a
+Company: DNASoft
+Description: Text-to-Speech application
+Product: Text To Wav
+Prod version: Ver 3.0
+File version: Ver 3.0
+MachineType: 32-bit
+In the internal description of the assembly, we also notice an explicit attempt to impersonate the Firefox browser.
+Why are there such inconsistencies in the file names?
+We don’t know for sure, but it looks like the work of an automated system that doesn’t care about matching during the different stages of compilation and distribution.
+The assembly name is specified as BitcoinStealer.exe.
+This name is definitely not intended to trick the victim, since it can only be read using reverse engineering techniques.
+Therefore, it seems likely that this name may reflect the real nature of this file.
+Nevertheless, as always, you cannot trust malware at any step.
+Therefore, we decided to analyze the sample functionality and see for ourselves.
+Sample's function analysis
+Before proceeding with the functions analysis, we have to bypass the basic protection used in the malware.
+Unpacking the sample
+We begin the analysis of the file from the Main function.
+We can see that it unpacks and loads a module named “koi”.
+Based on the name of the module and the method of its unpacking, we are sure that the malware code is packed with the well-known “ConfuserEx” protector.
+The loaded module is heavily obfuscated and ILdasm can not display the code, as it is "spoiled" by ConfuserEx.
+After deobfuscating and fixing the “koi” module, we begin analyzing the sample code.
+The initial behavior of the sample is as follows:
+1) Displays a fake error message saying that .Net framework must be installed
+2) Checks if it is running from the APPDATA folder
+3) If not, copies itself to two different relative paths:
+%LOCALAPPDATA% \Drpbx\drpbx.exe
+%APPDATA%\Frfx\firefox.exe
+4) Tries to achieve persistence by creating a value in the well-known registry key:
+HKCU\Software\Microsoft\Windows\CurrentVersion\Run\
+firefox.exe - %APPDATA%\Frfx\firefox.exe
+5) Executes the drpbx.exe file and closes the current process
+6) Drpbx.exe starts to monitor the clipboard and checks the clipboard’s content against the regular expression to find the bitcoin address
+The main functionality of the malware is to modify the clipboard content.
+It will replace the bitcoin address to the address of an attacker, thereby sending money to another wallet.
+One would think that when copying a person would clearly see the replacement of the addresses.
+However, this malware has an interesting feature - it cleverly replaces the legit address with a forged-one having similar (or the same) symbols at the beginning and the end of the string.
+Chameleon-like clipboard modification algorithm
+This malware also contains 10,000 different addresses in the resource section named “vanityAddress”.
+Once the regular expression matches the data in the clipboard, the code begins to select the most similar Bitcoin address from its list of ten thousand addresses.
+The string is selected in such a way that the beginning and end of the wallet of the attacker were as similar as possible to the original wallet address.
+However, priority is still given to the beginning of the line.
+A person usually takes a glance at the recipient bitcoin address and then copies it.
+The malware retrieves a similar address and modifies the clipboard content with it.
+A victim would hardly notice the change.
+For example, the next addresses shown on the left would be replaced with the addresses shown on the right:
+However, if two or more addresses are copied at the same time, the malware is not able to change them.
+In addition, we noted that the examined malware sample does not contain any P2SH bitcoin addresses (starting with “3”).
+In this case, it replace them with P2PKH addresses (starting with “1”).
+This sample also fails to substitute a Bech32 addresses, since the RegExp inside is looking only for addresses with lengths between 26 and 34.
+We will look into this RegExp feature in more detail a little bit later.
+The addresses generation tool and impact
+Based on the name of the resource containing the list of rogue addresses (vanityAddress), we can assume that the attacker generated all the 10,000 of these addresses with the help of the utility called “Mass Address Generator”.
+This tool will create a list of BitCoin wallet addresses called “vanityAddressess.txt” and “addressSecretPairs.txt”.
+The first file contains wallet addresses, and the second contains corresponding private keys.
+This tool was presented in a forum advert.
+On that same forum we found other interesting pieces of code, which we will return to in the next section.
+We analyzed the estimated profit of the malicious campaign.
+At the time of our analysis, the total income for all addresses is 8.41400221 BTC, which was around $60,000 USD.
+It should be stated, however, that transactions to these addresses were made from about the second half of 2017 to the time of our analysis.
+Interestingly, the timestamp of the examined sample is 2018-03-24 and the sample was first time seen by our telemetry in early April.
+Although a compilation timestamp can be forged, we do not think this was the case.
+Our assumption, instead, is that the attacker has used this set of addresses in other malicious campaigns and other modifications of this kind of malware.
+That’s why we can see the transactions that occurred before the compilation timestamp.
+As we try to track any of the transactions, we see that the attacker uses the so-called "mixers".
+that splits a large sum into small parts and then sends them to different addresses.
+After that, they can withdraw money on any available trading platform.
+The current balance of all wallets is 0,03955733 BTC.
+Similarities to the Jigsaw Ransomware
+As you remember, the “Bitcoin Stealer” sample initially matched several of the rules related to the known ransomware family – “Jigsaw Ransomware.” The following analysis is the result of our efforts to figure out the reasons behind this confusion.
+Jigsaw ransomware was discovered in the middle of April 2016.
+The behavior of the malware was nothing out of the ordinary for a ransomware: encoding user files and asking for a ransom.
+Comparing the assembly description of the sample with Jigsaw Ransomware, we can see that it is quite similar.
+Even the misspelled name “Mozzilla” is the same.
+Another similarity is the “vanityAddress” resource name, which is present in both samples.
+Based on our findings, we believe that the Bitcoin Stealer has strong “Ransomware” roots.
+Most likely, it was just one of the projects “born” by using the Jigsaw code.
+Copy-pasted Code Walks the Planet
+During our investigation we discovered even more projects.
+These were not identical, but they had the same common set of specific characteristics.
+Based on the assembly project name BitcoinStealer.exe, we found several advertisements on underground forums for downloading the malware builder with the source code, called “BTC Stealer”.
+We also found a GitHub account named "Souhardya" that contained a source code which is strongly reminiscent of our sample’s one.
+Souhardya mentioned that he borrowed the idea from some hacker forums, and explicitly states that the code is provided for educational purposes only.
+Unfortunately, at present, the practice of using this kind of “Proof of Concept” utility for malicious purposes is very common.
+Moreover, because of its availability, many “script kiddies” actively distribute malware or write their own variants.
+Code Comparison:
+In this section we will compare sources from:
+· Jigsaw Ransomware;
+· BTC Stealer (from forum advertisements);
+· GitHub account (/Souhardya/bitcoinstealer/);
+· Drpbx.exe (TextToWav.exe).
+We will start with the assembly description:
+Another similarity - displaying a fake error message containing exactly the same text with the same grammatical errors:
+We also observed the same code in three out of four sources.
+Next, we will compare the regular expressions and clipboard handler used by the three malicious codes:
+In the examined code samples we see many similarities.
+In summary, those are:
+1.
+Assembly description – “Mozzilla”, “37.0.2.5583”
+2.
+Error message shown to the user
+3.
+Regular expression
+Unfortunately, attribution cannot be made for the code.
+This means that we cannot be sure if the author of Jigsaw Ransomware is same as for BTC Stealer.
+Because of the wide distribution of the source codes, anyone who can compile C# code can start his own malicious campaign.
+In addition, actors can easily modify the source and distribute it in the same way.
+This situation is very similar to the Mirai malware source leak.
+Conclusion:
+FortiGuard Labs discovered a malicious sample using a simple, yet effective tactic to imperceptibly replace clipboard content.
+We noticed sufficient code similarities with another malware family—Jigsaw Ransomware—to assume they somehow leverage the same code base.
+Currently, we cannot tell if the same actors are behind the creation of both of these malware families since the source code is freely available on the Net.
+However, we can expect more attacks on the bitcoin wallets of users by leveraging the same source code again—at least as long as Bitcoin has value.
+Solution:
+Fortinet detects different modifications of BTC Stealer malware and Jigsaw Ransomware as W32/Generic!tr, MSIL/Ransom.CWF!tr, Generic.MSIL.Ransomware.Jigsaw.DEC34A8B, MSIL/Jigsaw.B!tr, W32/Agent.AA!tr, W32/Generic.AA!tr.
+-= FortiGuard Lion Team =-
+IOCs:
+Hashes:
+BitcoinStealer.exe:
+454280128478d0da357e8609d5bef43a601ba18582a96678c0d5e60ceb9b08aa
+Jigsaw Ransomware:
+bc83ef30422eb7b0c8903d3b4f1d4258e25cf78e9357a30dac773f8d2c17aa28
+44fb1c2a1500ab3102907a0422e51cc3394d7a6868f909745a81d27332bbf025
+Files created:
+%LOCALAPPDATA% \Drpbx\drpbx.exe
+%APPDATA%\Frfx\firefox.exe
+Registry Modified:
+HKCU\Software\Microsoft\Windows\CurrentVersion\Run\firefox.exe
+Learn more about our global threat research:
+Check out our latest Quarterly Threat Landscape Report for more details about recent threats.
+Sign up for our weekly FortiGuard Threat Brief or for our FortiGuard Threat Intelligence Service.

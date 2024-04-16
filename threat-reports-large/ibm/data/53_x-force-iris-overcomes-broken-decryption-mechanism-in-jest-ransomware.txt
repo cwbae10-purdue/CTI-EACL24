@@ -1,0 +1,100 @@
+IBM X-Force Incident Response and Intelligence Services (IRIS) recently helped a company fend off a ransomware attack by building a custom decryptor for a strain of ransomware known as “Jest.” Even though attackers made ransom demands to decrypt the victim’s data and systems, our team uncovered evidence suggesting that the actor never intended to decrypt the files and that this strain of Jest ransomware may not have been designed to decrypt files even after a ransom was paid.
+The potential impact of this Jest ransomware attack bears similarities to the effects of destructive attacks — unable to decrypt the files, the victims’ systems would have been left completely inoperable.
+IBM X-Force IRIS was able to develop a decryptor that successfully restored the client’s files and minimized damage, likely saving millions of dollars.
+As formidable threats that transcend industries, a factor contributing to ransomware attacks’ resilience is the challenge to create effective decryptors.
+Cases where defenders have been able to develop or obtain ransomware decryption keys are few and far between, and this difficulty often factors into organizations’ decision to pay or not pay the ransom, weighing the potential financial risks associated with each decision.
+But this incident underscores the peril of paying a ransom to cybercriminals and that any decision to pay a ransom does not guarantee the desired outcome.
+In this case, the ransomware’s flaws would have prevented the attacker from decrypting data, illustrating how paying a ransom as an automatic reaction to an attack, before in-depth analysis and weighing recovery options, can be the wrong choice.
+The ability to develop a custom file decryptor for this Jest ransomware variant is a significant step in the security industry’s fight against cybercriminals who target companies.
+Whereas ransomware continually remains a top threat to enterprises quarter after quarter, this discovery alters the battlefield when it comes to Jest, as it provides organizations facing the same threat with an alternative option via the decryptor.
+The following analysis will discuss the inner workings of the Jest ransomware, observations of the attacker’s on-network activity and the ransomware’s design flaws — all of which contributed to developing a custom decryptor and recovering client data.
+When called to help respond and recover from the Jest ransomware attack, IBM X-Force IRIS discovered that multiple servers within the affected infrastructure were displaying a ransom note asking for a 0.3 bitcoin (BTC) payment (~$2,900) be sent to the attacker, with a specified bitcoin wallet included.
+The ransom note did not include any direct contact information for the actor.
+We assess that the intended monetary losses may surpass this initial ransom demand, as the dysfunctionality of the attackers’ decryption process may prompt victims to resubmit payments, increasing the potential losses.
+Inside the affected systems, all encrypted files were appended with the .jest file extension.
+The X-Force IRIS Intelligence team used these initial indicators to identify a March 30, 2020 tweet with some technical details on the ransomware, a reference to a VirusTotal (VT) sample and an association with the FunFact ransomware family.
+Neither of the BTC accounts from the incident or VT had a balance.
+Additional threat hunting only produced the sample from the earlier tweet.
+This small body of knowledge on the Jest ransomware may indicate a small target set, limited discovery of infections or the obscurity of this ransomware, which may still be relatively new in the wild.
+During the course of our investigation, our Incident Response team discovered that the actor leveraged an application exposed to the internet that has a built-in capability to run automation.
+Furthermore, firewall logs indicated that this attack originated from seed.nu.crypto-daio.co.uk, a TOR exit node.
+The server application web access logs had been encrypted; however, the IR team managed to recover the logs from free space.
+The firewall log also included an entry indicating the actor downloaded and executed the Jest ransomware from http://physiodelacomba.ch/userfiles/xing.txt to C:\ProgramData\Feng.exe on the server.
+Since this application has Domain Administrator privileges, the actor downloaded and executed the Jest ransomware using these privileges.
+The ransomware includes modules to automatically propagate throughout the network, starting with targeting systems on subnets connected to the initially infected system.
+To get further into the malware’s capabilities, we proceeded to analyze the actual payloads.
+X-Force IRIS malware reverse engineers found that the Jest ransomware includes modules to propagate throughout the network automatically.
+Following the encryption process, Jest launches the included Mimikatz module to extract user credentials.
+This information is passed to a psexec-like Python class module to perform a Server Message Block (SMB) attack against other systems on connected subnets.
+Successful SMB connections result in copying the ransomware to the new system and repeating this process.
+The X-Force IRIS researchers determined the Jest ransomware recover.exe was written in Visual Basic 6 and packed with a modified UPX packer.
+The ransomware creates the file C:\programdata\chk.dat to indicate that the encryption process has started and to ensure it is not repeated.
+The recover.exe file uses the following commands to delete hard disk shadow copies and disable startup repair on launch:
+Recover.exe targets the following processes for termination:
+Recover.exe executes the following commands to kill tasks running on the system:
+Recover.exe attempts to remove all Windows Defender AV signatures on the system by executing the following:
+The Jest ransomware logs every file that is encrypted to a log file on the system named encryptedfiles.eco.
+Jest also copies the Winsock control module file, MSWINSCK.OCX, from C:\windows\system32 to conduct network operations.
+The screenshot below shows an example of the data written to the file encryptedfiles.eco:
+Figure 1: Screen capture of encryptedfiles.eco
+The Jest ransomware binary targets the following file extensions for encryption:
+Interestingly, our analysis uncovered a key container named “Metallica.” However, this was not used by recover.exe to encrypt files.
+After the file encryption process is complete, recover.exe creates a ransom note on a wallpaper file in the following directory:
+The Jest ransomware uses the following commands to replace the original wallpaper:
+Figure 2: Ransom note wallpaper (img0.jpg) screenshot
+The file note.ini is created in C\:ProgramData\ along with the “README – Decryption Note” desktop shortcut.
+The following is the contents of note.ini:
+Figure 3: Ransom note contents
+Finally, Jest executes a PowerShell script to remove any logs:
+Two executable files, x64.exe and rps.exe, are responsible for automatically propagating the ransomware throughout the network.
+Following the encryption process, Jest launches x64.exe, a Mimikatz instance, to extract usernames and associated NTLM hashes.
+This information is passed to the second file, rps.exe.
+The binary rps.exe is a PsExec-like Python tool capable of executing a SMB brute-force attack on other systems on connected subnets.
+Successful SMB connections result in copying the Jest ransomware binary recover.exe to C:\ProgramData onto a new system and the ransomware process is repeated.
+Figure 4: Jest dropping Mimikatz to eventually execute it with relevant arguments
+Next, Recover.exe drops Mimikatz (either x64 or x32 version, depending on system architecture) to C:\ProgramData and executes it using the following parameters:
+Mimikatz is thereby executed with the following commands:
+Jest uses the following Windows Registry key to maintain persistence:
+If recover.exe is run on a Domain Controller, jest.vbs is executed during Active Directory (AD) logon:
+The Mimikatz results that can provide passwords of compromised users are passed to rps.exe, SecureAuth Impacket (an open-source collection of Python classes for working with network protocols), to launch an SMB brute-force attack against connected subnets.
+We did not find any SMB exploit code during our analysis, so only usernames and associated hashes were used during the brute-force attack.
+Impacket is executed with the following command line arguments:
+Figure 5: Screen capture of rps.exe
+As a result, the following IP addresses are scanned:
+Following a successful SMB connection, recover.exe is copied to C:\ProgramData and the infection process is launched on the new system.
+The encryption scheme Jest’s developers used was taken from the open-source Xencrypt, a PowerShell crypter that uses AES encryption and Gzip/DEFLATE compression with every invocation to generate a completely unique, yet functionally equivalent output script given any input script.
+That specific implementation of the Blowfish cipher is not considered standard.
+On the infected device, once the encryption process is finished, the C:\ProgramData\recover.exe -ui shortcut is created on the infected system’s desktop.
+This shortcut launches the built-in Jest decryptor’s Graphical User Interface (GUI):
+Figure 6: Ransomware GUI interface screenshot
+The information on the displayed screen includes a ransom note, a link for “How to Buy Bitcoin” and the attacker’s BTC address.
+Selecting the “Check Payment & Decrypt all Files” button results in the execution of the following request:
+If the payment is not sent, the following message box is displayed:
+Figure 7: Unpaid message box screenshot
+Once the payment is verified, the following message box will be displayed:
+Figure 8: Paid ransomware screenshot
+Although the author included a “Check Payment & Decrypt all Files” button and a named decryption module, there was never any code path that led to that decryption, only a fake message box that says “Status: Paid, Decoing files..” with a missing letter in the word “decoding.”
+X-Force IRIS malware reverse engineers attempted to patch the existing ransomware binary to execute the decryption module.
+We removed the malicious functions, retained the code needed for decryption and called the decryption process.
+We tested the patched binary and successfully decrypted files; however, the code experienced the same limitations and flaws as the original ransomware.
+Additionally, our analysis found code flaws that could cause instability during the encryption process.
+For example, the encryption flaws can result in not encrypting files while the ransomware still adds the .jest extension.
+The Jest ransomware uses a symmetric Blowfish encryption algorithm, rather than an asymmetric RSA algorithm, as the actor claims in their ransom note.
+We found the ransomware developer took the VB encryption code directly from an online resource called “XEncrypt: Encrypt files Using Blowfish Encryption.” We leveraged this information while developing our custom decryptor to break this malware’s hold on encrypted data.
+While analyzing the encrypted files and ransomware sample, we discovered multiple flaws in the ransomware code.
+Those flaws can impede the malware from encrypting some data, and similar flaws mean that the decryption code in the ransomware would have never been executed.
+As malware reverse engineers continued their analysis, they attempted to bypass the payment process and discovered that although there was decryption code present in the ransomware, there was no code path leading to its execution.
+Our reverse engineers were able to gain a sufficient understanding of the Jest ransomware to construct a patch intended to remove malicious functions and force execution of the decryption routine and recover any encrypted files.
+The patched binary successfully decrypted files during testing; however, this was not feasible to operate at scale, since the original ransomware limitations and flaws remained.
+There was no file decryption process started despite forcing the code to follow the “payment successful” path.
+We became concerned that the actor never intended to decrypt files or that Jest ransomware was not designed to decrypt even after a ransom was paid.
+By shifting our focus to overcoming the coding errors, we were ultimately able to develop a custom file decryptor for the Jest ransomware.
+Developing a custom file decryptor for the Jest ransomware allowed our team to add additional checks and error handling routines to successfully decrypt the encrypted files.
+While the malware reverse engineering team developed a custom decryptor, the IRIS Incident Response team geared up to do massive server restores.
+This combined effort was successful and enabled our client to recover almost all of their data without paying the ransom.
+This outcome was fortunate, especially since paying the ransom would not have allowed the adversary to unlock the files because of the ransomware’s design.
+Whether this threat actor was careless, inexperienced or intended for this to be a destructive attack that would not allow for recovery, our team was able to overcome all of the actor’s failures to decrypt the data safely.
+This incident demonstrates how a ransom payment may not guarantee the recovery of encrypted data.
+Exploring multiple options for resolving a ransomware attack should be implemented as a standard practice.
+If your organization has been potentially affected by a Jest attack and you would like our team to assist, please call the X-Force Emergency Response Hotline at 888-241-9812.
+Consulting a professional incident response team can help your organization mitigate the damage, advise on payment considerations and determine if critical files will be restored if the ransom is ever paid.

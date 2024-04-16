@@ -1,0 +1,61 @@
+As an incident responder, often your job requires eliminating as much data as possible and focusing on the data that is relevant for the job at hand.
+This is especially true when sweeping an enterprise with tens of thousands of hosts.
+When we sweep an enterprise, we look at the live contents of each host, not just a sampling of hosts.
+This methodology can produce a lot of data.
+MANDIANT Intelligent Response (MIR) has the ability to look for indicators of compromise right on the host - filtering the non-relevant data so the analyst does not have to look at it.
+Since Memoryze is a small subset of the MIR agent, it also has had this ability to filter since it was first released, which means everyone can build filters for signs of malware.
+Finding a keylogger is a good indicator that a host has been compromised.
+While there are many ways to implement a keylogger, I would like to address one mentioned recently on the Metasploit blog.
+From reading the blog, you can see that Metasploit Meterpreter is using the Windows API GetAsyncKeyState.
+This is a perfect indicator with which to filter.
+Although it is not completely unique to malware or attackers, we can craft an indicator of compromise that is more intelligent and returns fewer false positives than simply looking for the API GetAsyncKeyState.
+Because of the way Meterpreter injects DLLs, a process infected by Meterpreter will have a memory section in its address space with no name but which contains a standard portable executable (PE) file.
+Memoryze can parse the imports of that injected binary and determine that it is using GetAsyncKeyState, and we can write a simple filtering rule to only return processes with these characteristics - (1) marked injected and (2) imports the GetAsyncKeyState function.
+A responder can write an indicator of compromise to filter data based on extremely simple or complex logic rules.
+For this example, the logic is fairly simple.
+We will construct the parts of the logic in sequence.
+We first begin with the "path" to the data we are interested in, which is contained within the ProcessItem data that Memoryze returns.
+Since we are interested in memory sections, we begin with:
+Second, since we are looking for memory sections that Memoryze has already marked as injected, the next part of the logical expression is:
+Which is equivalent to evaluating "Injected == true."
+Finally, the last piece is a bit trickier, because we have to add the "path" to the function imports within a memory section.
+It looks like this:
+I know that this syntax does not just roll off your fingers, but what you are actually doing is writing XPath filters.
+XPath, although it takes some practice, is extremely powerful - and it is a Web standard.
+You can think of it as grep-for-XML.
+Thought of another way, using XPath is similar to using a regular expression (regex) against your data.
+(You can even use regex in XPath, but that is a topic for another time.)
+Now if we tie all the pieces together you have:
+//ProcessItem/SectionList/MemorySection[(Injected[(contains(lower-case(.
+), 'true'))]) and (PEInfo/ImportedModules/Module/ImportedFunctions/string[(matches(lower-case(.
+), 'getasynckeystate'))])]
+Now let's broaden our reach beyond just injected DLLs.
+What if we wanted to detect other keyloggers that do not inject?
+Let us look at Spector Pro, which is computer and internet monitoring software.
+It claims that it can "automatically record everything they do on the PC & Internet".
+Spector Pro generates the name of the DLL it is using to sniff keystrokes when it executes.
+(I did not explore how these names are generated, but the names do not appear completely random).
+In the instance I have, the keylogging DLL in the process's address space is called "avipedat.dll".
+Since the memory section has a name, we cannot look for memory sections marked injected.
+Remember Memoryze marks memory sections as injected if the memory section contains a PE header and the memory section is not represented by a mapped file on the filesystem with a name.
+If you wanted to create an indicator of compromise that contained a specific DLL name such as "avipedat.dll", you could include this simple filter in the script for Memoryze:
+Now let us consider the case when we do not know the name of the DLL doing the keylogging.
+Obviously, GetAsyncKeyState is a fairly commonly-used API call.
+How could you begin to refine this technique to search for its malicious use generically?
+Well, you could identify the benign DLLs and EXEs that use it.
+You could write an indicator of compromise that ignored certain specific DLL and EXE names.
+Although an attacker could fool this method by masquerading as a trusted binary, the indicator could take other factors into account such as the full path of the binary or if the binary is signed by Microsoft, but this is beyond the scope of this discussion.
+I will save the complete expression for one of the attached indicator scripts, but here is an example of what such a filter might look like:
+//ProcessItem/SectionList/MemorySection[ (PEInfo/ImportedModules/Module/ImportedFunctions/string[matches(lower-case(.
+), 'getasynckeystate')])and (not (Name[(contains(lower-case(.
+), 'comctl32.dll'))]))and (not (Name[(contains(lower-case(.
+), 'shell32.dll'))]))and (not (Name[(contains(lower-case(.
+), 'urlmon.dll'))]))]
+I know that XPath is not the easiest to comprehend or write in, but if used properly it can help you eliminate the useless noise and get at the heart of the compromise.
+MANDIANT consultants have a better grasp on this language than I. I hope, that in the coming months, some of them will show us the full power of this language to solve some crazy cases.
+Script to find keyloggers using GetAsyncKeyState and are injected like Meterpreter.
+Script to find keyloggers using GetAsyncKeyState and are not common binaries.
+To run either of the above scripts with Memoryze, copy the script to the Memoryze directory and at a command prompt type:
+Memoryze.exe -o -script SCRIPT_NAME -encoding none
+See everyone in Vegas.
+Peter Silberman and I will be teaching Advanced Memory Forensics in Incident Response.

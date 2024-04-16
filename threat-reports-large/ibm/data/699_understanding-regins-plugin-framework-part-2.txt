@@ -1,0 +1,104 @@
+This blog post is the second part of my two-part post on Regin’s Stage 4 (32-bit) dispatcher module.
+In this second part, I will discuss the Regin plugin framework hosted in the dispatcher module.
+I will also discuss how knowledge of Regin’s plugin framework can be used — and was used — to link a piece of malware to the Regin platform.
+The dispatcher module hosts the plugin framework responsible for plugin management.
+For this purpose, the dispatcher module exposes a plugin framework interface (Framework Interface), which it passes to the loaded plugins so they can access the services provided by the plugin framework.
+In addition to the dispatcher module, which runs in user mode, a corresponding plugin framework is also implemented in the Stage 3 Kernel Mode Manager “VMEM.sys” (found in The Intercept sample archive as sample fe1419e9dde6d479bd7cda27edd39fafdab2668d498931931a2769b370727129) to support kernel mode plugins.
+As a side note, in addition to hosting the user mode version of the plugin framework, the dispatcher module itself contains 12 embedded plugins.
+Using the sample discussed and repaired in Part 1 of this blog post, you can enumerate the list of embedded plugins by looking at RVA 0x00053010.
+That address contains an array of PLUGIN structures, which, among other things, contain the plugin’s WORD-sized Plugin ID and the pointers to the functions used for initializing, invoking and deinitializing the plugin.
+The following are the fields of the PLUGIN structure (note that the structure names are inferred from the purpose of the structures):
+(Offset: 0x00, Size: dd) Plugin initialization data.
+Pointer to a deserialized data structure originally marked with the DWORD 0xD912FEAB.
+Among other things, the plugin initialization data specifies the list of operating system versions and architectures the plugin will run on.
+(0x04, dd) Unknown.
+(0x08, dd) Pointer to the plugin’s initialization function.
+(0x0C, dd) Pointer to the plugin’s deinitialization function.
+(0x10, dd) Pointer to a function that returns the plugin’s “invoke” function.
+The plugin’s “invoke” function sets up the stack to contain the correct Plugin Interface structure pointer (discussed later) in order to route calls to the plugin’s methods.
+(0x14, dd) Unknown function pointer.
+(0x18, dw) Plugin ID.
+(0x1A, db) Initialization Flag?
+(0x1B, db) Unknown.
+(0x1C, dd) Mutex object handle.
+(0x20, dd) Counter?
+(0x24, dd) Event object handle.
+(0x28, dd) Unknown.
+(0x2C, dd) Event object handle.
+(0x30, dd) Event object handle.
+(0x34, dd) Mutex object handle.
+(0x38, dd) Unknown.
+Below are examples of the PLUGIN structure for the TCP transport plugin (Plugin 50035) and the UDP transport plugin (Plugin 25) found at RVA 0x0005322C and RVA 0x00053268:
+An important part of the plugin framework is the Framework Interface.
+The Framework Interface provides the plugins a way to access the services of the plugin framework, even if they are located in another module/DLL.
+The following are the fields of the Framework Interface structure:
+(Offset: 0x00, Size: dd) Unknown.
+Static value of 0x00020000.
+(0x04, db) Unknown.
+Static value of 0x0A.
+(0x08, dd) Pointer to the Core Functions list (core_functions).
+(0x0C, dd) Pointer to the Plugin Functions list (plugin_functions).
+Two important parts of the Framework Interface are the two sets of functions it provides to the plugins — the Core Functions — which include functions such as basic memory allocation and deallocation, thread creation and basic plugin method invocation.
+The second set, the Plugin Functions, is a set of functions heavily used by plugins, since it includes functions such as the allocation and deallocation of plugin-related data structures, helper functions for serializing parameters to be passed to plugin methods and convenience functions for the different ways plugin methods can be invoked.
+The following are some examples of the functions exposed via the Plugin Functions list:
+(Offset: 0x18, Size: dd) Allocate a Plugin Interface structure (discussed later).
+(0x24, dd) Register a plugin method (also discussed later).
+(0x2C, dd) Allocate a Plugin Call structure.
+The Plugin Call structure is used for serializing and deserializing plugin method arguments and return values.
+(0xE0, dd) Invoke a plugin’s method.
+(0xE4, dd) Invoke a plugin’s method (asynchronous).
+(0x114, dd) Serialize buffer size and contents to the Plugin Call structure.
+(0x120, dd) Serialize wide character string to the Plugin Call structure.
+(0x124, dd) Serialize byte to the Plugin Call structure.
+(0x128, dd) Serialize WORD to the Plugin Call structure.
+(0x12C, dd) Serialize DWORD to the Plugin Call structure.
+(0x13C, dd) Deserialize string from the Plugin Call structure.
+(0x144, dd) Deserialize byte from the Plugin Call structure.
+(0x148, dd) Deserialize WORD from the Plugin Call structure.
+(0x14C, dd) Deserialize DWORD from the Plugin Call structure.
+Before a plugin can be used, its initialization routine is called with a pointer to the Framework Interface passed as the first argument.
+In the initialization code, the plugin allocates the following Plugin Interface structure:
+(Offset: 0x00, Size: dw) Unknown.
+Static value of 0x0002.
+(0x04, dd) Pointer to the Framework Interface (framework_interface).
+(0x08, dw) Plugin ID.
+(0x0C, 2040 bytes) List of the plugin’s methods.
+Array of 255 items; each item consists of a function pointer (dd) and an unknown DWORD value (dd) (methods_list).
+The Plugin Interface structure is a plugin-scope data structure used by the plugin’s methods in order to access the services of the plugin framework via the framework_interface field.
+It is also the data structure used by the plugin framework to route calls to the plugin’s methods via the methods_list field.
+Below is the start of the plugin initialization code of Plugin 50035 (TCP transport).
+The code sequence is a typical plugin initialization sequence that is also found in other Regin plugins embedded in the dispatcher module:
+The plugin initialization is also where functions are registered as methods of the plugin.
+Below is an example of a typical plugin method registration code sequence in which Method 50 of Plugin 50035 (TCP transport) is registered:
+By analyzing the method registration code, you can identify which functions in the binary are the methods of a particular plugin and which Method ID represents them.
+That information, on the other hand, will be helpful when looking at a plugin method invocation code (discussed next) for determining which actual function is executed.
+Finally, once the plugins are initialized, the plugin will be available to the plugin framework and its methods can be invoked using a Plugin ID and Method ID pair — also described as major and minor tuple in Symantec’s paper.
+Plugin methods are invoked by methods of the same plugin (intra-plugin calls).
+They are also invoked by methods of other plugins (inter-plugin calls).
+Plugin methods can be invoked synchronously or asynchronously.
+Also, unlike typical functions, arguments passed to plugin methods are not passed via the stack.
+Instead, arguments are serialized and stored in a Plugin Call structure (see PLUGIN_FUNCTIONS structure).
+To make it easy to invoke plugin methods, the plugin framework provides the necessary services for serializing and deserializing arguments and invoking plugin methods.
+A plugin method invocation code sequence usually begins with an allocation of a Plugin Call structure.
+Next, plugin method arguments are serialized to the Plugin Call structure.
+Finally, the plugin method is invoked.
+The example below is the invocation of Method 7 of Plugin 50035 (TCP transport).
+Method 7 accepts one DWORD value as an argument:
+By looking at the plugin method registration of Plugin 50035, you can determine which function will actually be executed when Method 7 is invoked.
+Since a Regin plugin needs to perform certain plugin-related tasks — such as plugin initialization, plugin method registration and plugin method invocation — and performing these tasks requires the use of the Regin plugin framework data structures, you can identify whether a certain malware is a Regin plugin by looking for certain code patterns before applying the Regin data structures.
+One instance in which malware was linked to the Regin platform is when Costin Raiu and Igor Soumenkov of Kaspersky Lab noticed that the QWERTY keylogger malware previously reported by Der Spiegel is a Regin plugin.
+Their first piece of evidence was a shared code found between the Regin “50251” plugin and the QWERTY “20123” module.
+Their second piece of evidence was the QWERTY “20123” module referencing the Regin “50225” plugin.
+The third piece of evidence was the QWERTY “20123” module having a startup code found in other Regin plugins.
+Having understood the data structures related to Regin’s plugin framework and having remembered the code patterns found in Regin plugins, I agree with their conclusion — even without a prior understanding of the Regin “50251” and “50225” plugin.
+First, let’s take a look at the QWERTY “20123” module startup code described by Raiu and Soumenkov.
+Below is the original disassembly:
+After applying Regin’s plugin framework data structures, it becomes immediately clear that the code is indeed a typical Regin plugin initialization sequence, as seen below:
+Furthermore, here is the original disassembly where Raiu and Soumenkov noticed the QWERTY “20123” module referencing the Regin “50225” plugin:
+Again, after applying Regin’s plugin framework data structures, it becomes apparent that the code is indeed a valid Regin plugin invocation sequence:
+Clearly, the Regin data structures matched the data structures used by the QWERTY “20123” module, and the same can be said for the QWERTY “20120” and “20121” modules.
+Regin’s plugin framework gives a glimpse of the sophistication of the Regin platform, where a mechanism exists that lets the platform be extensible via pluggable modules.
+The plugin framework is also a complex piece of machinery to reverse engineer.
+To comprehend it, numerous data structures and functions needed to be reversed and understood.
+I hope this blog post can help other reverse engineers and security researchers looking at Regin.
+Finally, as we learn more about the internals of Regin’s plugin framework, it is interesting to see which types of malware will be linked to the Regin platform.

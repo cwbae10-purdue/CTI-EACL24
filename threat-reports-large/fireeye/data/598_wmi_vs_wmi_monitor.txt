@@ -1,0 +1,77 @@
+WMI has been a core component of Windows since Windows 98, but it is not exactly old wine in a new bottle.
+WMI more closely resembles that bottle of ‘61 Bordeaux wine that continues to impress us as it ages and matures.
+WMI was developed as Microsoft’s interpretation of web-based enterprise management (WBEM) for system management and auditing; however, adversaries can use it for all stages of the Attack Lifecycle (shown in Figure 1), from creating the initial foothold on a system to stealing data from the environment and everything in-between.
+From an investigative perspective, WMI has only recently been used by a select few groups of attackers and it is an artifact that may be overlooked during investigations.
+Though WMI does not provide a default detailed tracing log[1] of execution or persistence activity.
+Figure 1.
+The Attack Lifecycle
+In this blog post we will discuss how attackers can use WMI as a remote execution utility and as a persistence mechanism to execute malware, as well as what you can do to detect this activity at enterprise scale.
+We were recently onsite for a Red Teaming for Security Operations engagement, where our Red Team utilized WMI as a remote execution utility (similar to PsExec) and as a malware persistence mechanism (similar to a system service).
+We quickly realized that the client’s Security Operations Center (SOC) did not have the capabilities to detect this activity from both a network and endpoint perspective, so we opted to pause the red teaming activities and work with the client to identify a solution to this lack of visibility.
+We determined that following the attacker adage of “living off the land” was what we needed to solve the problem from a defense perspective.
+In other words, we leveraged WMI to monitor itself and feed WMI-invoked process creations and persistence activity directly into the system’s Application event log.
+This allowed our client the ability to feed these logs from endpoints into their SIEM and achieve greater visibility into their entire environment.
+To accomplish this, we created a WMI subscription.
+A subscription is the term used for WMI persistence, and it consists of the following three items:
+An Event Consumer: An action to perform upon triggering an event of interest
+An Event Filter: The event of interest
+A Filter to Consumer Binding: The registration mechanism that binds a filter to a consumer
+This WMI Subscription is similar to the Subscriptions created by attackers for persistence; however, we’re repurposing this method to perform a different type of action.
+Instead of executing malware when a condition is met, such as when the system uptime reaches 200 seconds, we’re instructing WMI to log any newly created Consumers or WMI-induced process executions to the Application event log.
+We utilized PowerShell to configure WMI with these new instructions.
+At a high level, the PowerShell script performs the following:
+1.
+Uses WMI Query Language (WQL) to identify: a.
+Recently created “__EventConsumer” events (persistence mechanisms) b. WMI-based process executions
+2.
+Creates an Event Filter (condition), to perform an action if any of the above WQL conditions are true
+3.
+Creates an Event Consumer (action), to log details of the newly created “__EventConsumer” or executed process a.
+To log details, we call the “NTEventLogEventConsumer” WMI class that logs a custom message to the Application event log that contain the following details, depending on if this was a new Event Consumer or Process Creation:
+i.
+Event Consumer Name ii.
+Event Consumer Command iii.
+Process Call Method iv.
+Process Call Command
+4.
+Creates and registers the Binding, which associates the Condition to the Action
+Figure 2 shows the general details of the newly created WMI Consumer that we aptly named “_EvilConsumer_” in the Application event log.
+Figure 2.
+General view of WMI Persistence event log
+Figure 3 shows the detailed view of the event log, which contains the Consumer Name and Command Executed for the creation of the new WMI Consumer “_EvilConsumer_”.
+Figure 3.
+Detailed view of the WMI Persistence event log
+The following example illustrates another common use-case, demonstrating how attackers utilize WMI for process execution against remote systems.
+Figure 4 shows a command-line example of Windows Management Instrumentation Command-line (WMIC) usage to execute a remote PowerShell process.
+The command used the “Invoke-Expression” (IEX) cmdlet to download and execute the “execPayload.ps1” script over HTTP on the remote system “WIN-RD35VEB5LRT”.
+Figure 4.
+WMIC command used to execute PowerShell on WIN-RD35VEB5LRT
+Because the PowerShell process was ultimately executed via WMI, our WMI monitoring subscriber logged the process name and the process arguments.
+Figure 5 shows the general details of the WMI process execution in the Application event log on the victim system “WIN- RD35VEB5LRT”.
+Figure 5.
+General view of the WMI process creation event log
+Figure 6 shows the detailed view of the event log, which contains the command executed “powershell.exe” from the WMI-invoked process creation.
+Figure 6.
+Detailed view of the WMI process creation event log
+Now that we can log newly created Event Consumers and processes spawned via WMI, we can take steps to make this more enterprise-friendly.
+Our client’s SOC used a third-party utility to inject log data into their SIEM.
+Our client could now feed the newly defined Application event logs into their SIEM and alert on these events to perform follow-up analysis.
+Environments of all sizes can follow these similar steps to enact this WMI persistence monitoring and alert on new events:
+Deploy the WMI monitoring PowerShell script to endpoints via GPO, SCCM or other third party utility.
+This creates a permanent WMI subscription that will monitor for newly created Event Consumers on endpoint systems.
+Push or pull the Application event logs that match the WMI persistence or process creation events using Snare or a similar utility into a SIEM.
+Alert on the WMI persistence or process creation logs through the SIEM.
+Note: some environments may heavily utilize WMI invoked process creations for system administration.
+In these cases, we recommend coordinating with your IT team to establish baselines for WMI activity, and only ingest anomalous events, such as process creations from “%SYSTEMDRIVE%\Windows\Temp”.
+Perform follow-up analysis on the system(s) with newly created WMI event consumers or process creations.
+This process provided an enterprise-friendly way to monitor and detect for certain WMI events in near-real time for our client, without having to perform endpoint forensic collection and analysis.
+You can download the PowerShell script from the GitHub page here.
+Note: You must run PowerShell as administrator before using the script.
+The script requires PowerShell version 3 or above (most recent is version 5) and will run in its current state as two separate PowerShell functions.
+Figure 7 shows a screenshot of how to import the modules from the script and how to run each module.
+Figure 7.
+Screenshot showing the import of the WMIMonitor script modules and running each module
+We would like to thank Matt Graeber (@mattifestation) for his help with developing Windows Management Instrumentation (WMI) as an Intrusion Detection System.
+We combined and modified two PowerShell scripts – originally developed by Matt – to alert on WMI Event Consumers and process creations and output details of these events directly to the Application event log.
+Matt Graeber’s WMI work that we used to identify and log malicious WMI actions can be found here and here.
+[1] Windows 7 and above operating systems contain the WMI Activity Operational event log, however, this does not provide details of newly created Consumers, Filters or Bindings used for WMI persistence.

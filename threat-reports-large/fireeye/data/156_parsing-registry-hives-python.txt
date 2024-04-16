@@ -1,0 +1,68 @@
+Recently, I wanted to dig deep into a forensic artifact resident in the Windows Registry.
+To make the task more interesting, I challenged myself to use only tools native to my favorite operating system: Linux.
+I was quickly disappointed, however, as there are few open and cross-platform tools for Windows Registry forensics beyond Perl's Win32::Registry.
+So, I wrote a tool to fill this void using Python - my favorite programming language.
+Python-registry is the result of this effort, and provides convenient access to Windows Registry files.
+Since it is pure Python, it can be used on all major operating systems.
+The Windows Registry file format consists of a set of allocation units, known as HBIN blocks.
+Each block is subdivided into cells, which form the basic unit of content in the format.
+Although cells may contain pure binary data, many cells are used solely for metadata storage.
+These include: nk-records (nodes in the tree-like structure of the Windows Registry), lf-records (point to children of a node), and vk-records (describe a single Registry value).
+Python-registry exposes a set of classes in the RegistryParse module that parse and read these low-level structures.
+One RegistryParse class maps to each structure, and each exposes a set of convenient methods for accessing metadata and other referenced structures.
+For example, once a Windows Registry file has been loaded by python-registry, you can select an HBIN block, and iterate through each cell.
+The following code listing shows how you can identify free cells, which may be extracted so you can search for deleted Registry keys.
+There are few libraries in the wild that parse Windows Registry files and many fewer still that encourage interaction with the underlying structure.
+Enterprising forensicators should recognize the opportunity for using python-registry to enable future research in Registry key recovery.
+In addition to low-level parsing classes, python-registry provides a high-level interface similar to those exposed by the Microsoft Windows API.
+The Registry module abstraction layer removes from the user details about allocation units and records and provides familiar sounding RegistryKey and RegistryValue classes.
+Once a Windows Registry file has been loaded, instances of the RegistryKey class are organized into a tree structure, and may be associated with a list of RegistryValues.
+This tree mirrors the structure you would see if you were to explore the corresponding Windows Registry with RegEdit.
+Similar to Harlan Carvey's RegRipper, python-registry is particularly suited for forensic analysis.
+Python-registry works directly with Registry hive files -- not the live hives -- so it can easily be used on a forensic workstation after an acquisition.
+Recently, I used python-registry to help identify compromised servers during an incident response from Mandiant's New York City office.
+I suspected a system was infected with malware based on remote login events found on another system and wanted to do a deeper dive.
+I used Mandiant Intelligent Response® (MIR) to acquire the Registry hive files, including C:WINDOWSsystem32configsoftware, from the remote system and downloaded them to my Linux laptop.
+Next, I wrote the following ten-line Python script using python-registry to print out each key and its last modified date, while filtering on a suspicious time window.
+Immediately an entry with the path "$$$PROTO.HIVMicrosoftWindowsCurrentVersionRun" caught my eye.
+What was changed during the time window?
+The python-registry package contains a set of tools that have been built using python-registry to demonstrate its usage and are contained in the samples directory.
+The regview.py GUI tool (similar to RegEdit.exe) can be used to explore the "Run" key as seen in the following figure.
+A malicious entry showed that an attacker had gained persistence by adding his malware to execute on startup.
+The system was definitely compromised.
+I continued the Registry analysis with a few more experimental scripts I had been developing, including a shellbag parser, and the client was happy.
+Python-registry is effective because it is flexible and intuitive.
+The package is a library that is easily integrated into both one-off scripts and larger projects.
+For example, I've found that using python-registry with an interactive Python console (like IPython) is an effective environment for rapid triage and analysis.
+Python-registry converts Registry values into native data types, which makes manipulation of data familiar to a Python programmer.
+This means it is easy to pass the output of a python-registry method call to a decoding function developed elsewhere.
+Let's explore how you can easily make use of this library.
+You can recurse across all RegistryKeys and perform an action as seen in the following code snippet.
+This utility encapsulates this logic by applying a function to each RegistryKey.
+Metadata about a particular RegistryKey can be accessed through the methods .name(), .path(), and .timestamp().
+RegistryKey.subkeys() returns a list of child RegistryKey objects that are lazily parsed.
+By lazily parsing the file, python-registry reduces memory consumption and minimizes initial load time.
+The following code listing shows how to print out all Registry key paths.
+In python-registry, a Registry file is initially loaded by constructing a Registry object.
+The .root() method returns the root RegistryKey, and serves as the starting point for most functions.
+Alternatively, a script may use the .open() method to attempt to open a RegistryKey by path.
+I could have used a modified version of the print_key() function in the earlier example to identify the malicious "Run" key; however, a slightly more interesting application might be to print out all Registry values of string type that contain given string.
+In the following code listing, we iterate over the RegistryValues associated with each RegistryKey while filtering out non-string values.
+We apply the find_microsoft() function to each RegistryKey using our recursive utility rec(), and it prints out the RegistryValue hits.
+The .values() method of a RegistryKey returns a list of RegistryValues associated with the key.
+RegistryValues are a conceptually a tuple of (name, type, data), which map to the methods .name(), .value_type(), and .data().
+The type of a RegistryValue is represented by an integer ranging from 0x0 to 0xB and may mean something like "string", "binary", or "dword".
+Fortunately, python-registry provides a set of constants, like Registry.RegSZ, Registry.RegBin, and Registry.RegDWord, to improve readability.
+When the data is requested from the RegistryValue using the .data() method, it is first converted into the native Python datatype.
+For example, strings are converted from ASCII or Unicode into native strings, and numeric types into integers.
+Most classes and methods have been documented; however, for the few that have not, the source code is written to be self-documenting.
+Python-registry is released under the Apache 2 license, so all users should feel encouraged to browse basic structure of the source.
+I hope that clear and accessible source code that implements the Windows Registry file format can serve to be a central repository for knowledge regarding the format.
+Python-registry is a package written for those who enjoy Python and Windows Registry forensics, and potentially platforms other than Microsoft Windows.
+It implements each of the lower level structures, yet also presents a high-level interface that encourages both one-off scripts and substantial processing.
+Since python-registry is released under the Apache 2 license, all are encouraged to examine and patch the source code.
+The homepage for python-registry is found here, and the latest source can be downloaded from GitHub here.
+"WinReg.txt" by B.D.
+found at http://pogostick.net/~pnh/ntpasswd/WinReg.txt
+"The Windows NT Registry File Format" by Timothy Morgan found at http://www.sentinelchicken.com/research/registry_format
+"The Internal Structure of the Windows Registry" by Peter Morris found at http://amnesia.gtisc.gatech.edu/~moyix/suzibandit.ltd.uk/MSc/

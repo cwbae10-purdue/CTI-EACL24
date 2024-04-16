@@ -1,0 +1,80 @@
+ESET researchers have discovered several third-party add-ons for the popular open-source media player Kodi being used to distribute Linux and Windows cryptocurrency-mining malware
+If you use Kodi, you may have noticed that a popular, Dutch repository for third-party add-ons, XvBMC, was recently shut down upon copyright-infringement warnings.
+Following the shutdown, we discovered that the repository was – likely unknowingly – part of a malicious cryptomining campaign going back to December 2017.
+It is the second publicly known case of malware being distributed at scale via Kodi add-ons, and the first publicly known cryptomining campaign launched via the Kodi platform.
+Interestingly, this campaign pushes Linux- or Windows-specific binaries to Kodi fans on those respective OSes.
+For those unfamiliar with the Kodi platform, the popular media player software does not provide any content itself, but users can extend the software’s functionality by installing various add-ons, found both in the official Kodi repository and in numerous third-party repositories.
+Some third-party add-ons let users access pirated content, stirring controversy around Kodi.
+Lately, the copyright-infringing add-ons have also been accused of exposing users to malware, but apart from an incident in which a DDoS module was added to a popular third-party Kodi add-on, no evidence of malware distributed via Kodi add-ons has been presented until now.
+According to our research, the malware we found in the XvMBC repository was first added to the popular third-party add-on repositories Bubbles and Gaia (a fork of Bubbles), in December 2017 and January 2018, respectively.
+From these two sources, and through update routines of unsuspecting owners of other third-party add-on repositories and ready-made Kodi builds, the malware spread further across the Kodi ecosystem.
+The malware has a multi-stage architecture and employs measures to ensure that its final payload – the cryptominer – cannot be easily traced back to the malicious add-on.
+The cryptominer runs on Windows and Linux and mines the cryptocurrency Monero (XMR).
+We have not seen a version in the wild that targets Android or macOS devices.
+Victims of this campaign end up running the illicit cryptominer in one of three ways:
+They add the URL of a malicious repository to their Kodi installation so as to download some add-ons.
+The malicious add-on is then installed whenever they update their Kodi add-ons.
+They install a ready-made Kodi build that includes the URL of a malicious repository.
+The malicious add-on is then installed whenever they update their Kodi add-ons.
+They install a ready-made Kodi build that contains a malicious add-on but no link to a repository for updates.
+They are initially compromised, though receive no further updates to the malicious add-on.
+However, if the cryptominer is installed, it will persist and receive updates.
+The top five countries affected by this threat, according to ESET’s telemetry, are the United States, Israel, Greece, the United Kingdom and the Netherlands, which is not surprising as all these countries are found on the list of “top traffic countries” in recent Unofficial Kodi Addon Community Stats.
+Other possible explanations for the geographical distributions are country-specific Kodi builds containing the malicious repositories, or malicious repositories with userbases in the countries in question, such as the aforementioned Dutch repository XvBMC.
+Figure 1 – Distribution of ESET detections of the cryptominer
+As of this writing, the repositories from which the malware first started spreading are either defunct (Bubbles) or no longer serving the malicious code (Gaia), however, unwitting victims who have the cryptominer installed on their devices are likely still affected.
+On top of that, the malware is still present in other repositories and some ready-made Kodi builds, most likely without the knowledge of their authors.
+Figure 2 – Campaign timeline
+After victims add the malicious repository to their Kodi installation, the malicious repository serves an add-on named script.module.simplejson – a name matching that of a legitimate add-on used by many other add-ons.
+However, while other repositories only have the script.module.simplejson add-on at version 3.4.0, the malicious repository serves this add-on with version number 3.4.1.
+Since Kodi relies on version numbers for update detection, all users with the Auto Update feature enabled (which is a common default setting) will automatically receive script.module.simplejson version 3.4.1 from the malicious repository.
+The only part of script.module.simplejson version 3.4.1 that is modified relative to version 3.4.0 is its metadata – the file addon.xml contains an additional <requires> line:
+This tells Kodi to download and install an add-on named script.module.python.requests, at version 2.16.0 or above.
+The script.module.python.requests add-on is served by the malicious repository only.
+It is a modification of the legitimate add-on script.module.requests, containing additional, malicious Python code.
+That Python code downloads, as appropriate, a Windows or Linux binary, and executes it.
+This executable is a downloader that fetches and executes the final payload, an executable cryptominer.
+If the installation of the cryptominer is successful, the malicious Python code proceeds to a self-removal phase and deletes itself.
+Figure 3 – The malware’s execution model
+In the sample analyzed here, the obfuscated malicious code is located in the file script.module.python.requests\lib\requests\packages\urllib3\connectionpool.py, lines 846-862.
+Figure 4.
+Obfuscated malicious code in connectionpool.py
+When deobfuscated and commented, the code becomes much more readable, as seen in Figure 5.
+Figure 5.
+Malicious code after deobfuscation (comments added by the researcher)
+It is clear that the code is written by someone with a good knowledge of Kodi and its add-on architecture.
+The script detects which OS it is running on (only Windows and Linux are supported; Android and macOS are ignored), connects to its C&C server, and downloads and executes an OS-appropriate binary downloader module.
+The Windows binary is written to C:\Users\[username]\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\TrustedInstaller.exe, while the Linux binary is written to /tmp/systems/systemd
+After retrieving and running the binary downloader module, the Python script – here connectionpool.py – runs its self-deletion routine.
+Looking back at Figure 4, we see that the malicious code is bracketed with the special markers #-+- and #-_-#.
+The code run after successful execution of the binary downloader opens this Python file, finds these special markers and deletes them, and everything between them.
+The cleaned Python file is then saved.
+As a result, the cryptominer installation cannot be easily traced back to this Kodi add-on.
+Figure 6.
+Self-removal in Python code (comments added by the researcher)
+The downloader module (64-bit EXE for Windows, 64-bit ELF file for Linux) retrieved by the Python code contains an encrypted cryptominer configuration and download links for the second-stage payload – the actual cryptominer binaries.
+The binary downloaders fetch OS-appropriate second-stage payloads (cryptominer binaries for different GPUs and a malicious launcher/updater module) in password-protected ZIP files.
+These binaries are compiled for both 64-bit Windows and 64-bit Linux and are based on the open-source cryptomining software XMRStak.
+The configuration for the cryptominer is as follows:
+{“monero”:{“default”:{“wallet”:”49WAk6TaCMX3HXN22nWPQAfBjP4J3ReUKg9tu3FoiPugcJs3fsnAvyGdrC41HZ4N6jcHEiwEGvH7z4Sn41PoZtLABFAVjm3″,”password”:””,”name”:””,”email”:””,”weight”:1,”format”:{“rig”:””,”address”:”%w%.%n%/%e%”,”password”:”%p%”}},”pools”:[{“host”:”xmr-us-east1.nanopool.org:14444″},{“host”:”xmr-eu1.nanopool.org:14444″},{“host”:”xmr-asia1.nanopool.org:14444″}]}}
+If you’re using Kodi on a Windows or Linux device and have installed add-ons from third-party repositories, or a ready-made Kodi build, there’s a chance you’ve been affected by this cryptomining campaign.
+To check if your device has been compromised, scan it with a reliable anti-malware solution.
+ESET products detect and block these threats as Win64/CoinMiner.II and Win64/CoinMiner.MK on Windows and Linux/CoinMiner.BC, Linux/CoinMiner.BJ, Linux/CoinMiner.BK, and Linux/CoinMiner.CU on Linux.
+On Windows you can use ESET’s Free Online Scanner, and on Linux the free trial of ESET NOD32 Antivirus for Linux Desktop, to check your computer for the presence of these threats and remove anything that is detected.
+Existing ESET customers are protected automatically.
+Although the main add-on repositories that initially seeded this malware into the Kodi ecosystem are now either closed or cleaned, that does not address the many devices that had already run the malicious add-ons.
+As can be seen in Figure 7, many devices are still mining Monero for the cybercriminals behind this campaign.
+Figure 7.
+Payments received by malware authors
+According to these statistics of the malware authors’ Monero wallet, provided by Nanopool, a minimum of 4774 victims are affected by the malware at the time of writing, and have generated 62,57 XMR (about 5700 EUR or 6700 USD) as of this writing.
+Aside from being the second malware, and first cryptominer, distributed though the popular media player Kodi, this malware campaign employed an interesting compromise technique.
+By utilizing the complex scripting functionality of Kodi’s add-ons, which works across the OSes Kodi supports – Android, Linux, macOS and Windows – the cybercriminals behind this campaign easily targeted Kodi on Linux and Windows.
+Cunning as that was though, they may have been able to target devices on more OSes.
+By building native versions of their cryptominer for those OSes, or providing alternative payloads more suited to the platform (for example, less power-intensive payloads for battery-powered devices), they could have compromised more of the OSes that Kodi supports.
+As OS security measures continue to tighten, opportunities afforded by application add-on and scripting functionalities, such as those that were exploited here, seem likely to become more popular targets with cybercriminals.
+We have seen this in the past, and then recycled more recently, with Visual Basic macros in Microsoft Office applications.
+Kodi add-ons might not be “the next VBA”, but the steps taken here may be an indication of things to come.
+Since the original repositories containing malicious add-ons (Bubbles and Gaia) are already deleted, we are providing example links to mirror repositories that still contain malicious code, and example links to a few randomly chosen, malicious Kodi builds.
+It is important to note that the owners of the secondary sources of malicious files, below, are most likely spreading them unknowingly.
+ESET detects the malicious Python code as Python/CoinMiner.W.
+ESET detects both cryptominer and downloader modules as Win64/CoinMiner.II and/or Win64/CoinMiner.MK.

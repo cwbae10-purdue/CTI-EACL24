@@ -1,0 +1,90 @@
+In the two previous blogs in this series from FortigGuard Labs, we discussed how to monitor process execution with command line arguments, file system events, and dylib loading events using MACF on macOS.
+In this blog, we will continue to discuss how to monitor network activities (another significant behavior for malware) using Socket Filters (a part of the Network Kernel Extension) on macOS.
+The network activities to be monitored include UDP, TCP, ICMP, DNS query, and response data.
+I provide all the technical details below, so let’s get started again!
+In general, malware on macOS performs a number of network activities to either retrieve an attack payload from a remote server, or to send sensitive information collected from an infected system to a remote server.
+It is a significant functionality of malware.
+Which is why I developed a module using Socket Filters to monitor network activities to discover these behaviors.
+This module is capable of monitoring UDP and TCP requests, DNS queries and responses, logging IP addresses and port numbers, etc.
+The socket filter is a powerful mechanism that enables the interception of network and IPC traffic in the kernel’s socket layer.
+A socket filter is a filter associated with a particular socket, as shown in Figure 1.
+These extensions can filter inbound or outbound traffic on a socket.
+They also can filter out-of-band communications, including calls to setsockopt, getsockopt, ioctl, connect, listen, and bind functions.
+The life cycle of a socket filter can be summed up as follows.
+Socket filters are installed in the kernel by invoking the sflt_register, typically from the filter’s initialization routine.
+Later, when the filter is instantiated on a socket, the protocol calls the filter’s sf_attach_func callback.
+This callback may return a unique cookie through its first parameter that can be used for tracking storage specific to a given filter instance (attached to a specific socket).
+When the filter is detached, the filter’s sf_detach_func callback is invoked.
+At this point, the filter should free any socket-specific resources that it has allocated (generally in the sf_attach_func).
+The socket filter may, at some point, decide that it wishes to be unloaded.
+If so, it should invoke sflf_unregister.
+This will prevent the filter from being attached to new sockets in the future and will begin the process of detaching the filter from existing sockets.
+The declaration of the function sflt_register is shown in Figure 2.
+This function requires four parameters.
+The 1st parameter is a pointer to the sflt_filter structure.
+A socket filter is registered by filling out the desired callbacks in the sflt_filter structure, as shown in Figure 3.
+As you can see, there are quite a few callbacks, but only a few, such as sf_attach and sf_detach, are mandatory.
+Non-mandatory callbacks not needed by a filter can be set to NULL.
+The 2nd parameter domain represents the protocol domain (only PF_INET and PF_INET6 are supported), the 3rd parameter type represents the socket type, and the 4th parameter protocol represents the protocol attached by filter.
+Currently, we support four socket filters, as seen in Table 1.
+The following is a code snippet of the socket filters that I registered.
+Let’s look at the initializations of two instances (gSflt_TCPIPV4 and gSflt_UDPIPV4) of the structure sflt_filter.
+They are, respectively, intended to filter TCP protocol and UDP protocol for IPv4.
+To filter TCP protocol for IPv4, we only set two callbacks – sf_connect_in and sf_connect_out.
+The callback monitorAgent_sflt_connect_out implemented by us is used to intercept calls to the connect() system call for outgoing connections.
+The sf_connect_in function is not called in response to a system call like sf_connect_out, but called by a protocol handler just before a new connection is established.
+The sf_connect_in callback is currently only invoked for TCP and does not apply to UDP.
+The following is the key code snippet of the callback monitorAgent_sflt_connect_out.
+We can now record a log that shows a process launching an outgoing connection on a specific IP address and port.
+For example, when a malware tries to connect to the remote control server on TCP, the callback monitorAgent_sflt_connect_out can record the info of an outgoing connection.
+Similarly, the callback monitorAgent_sflt_connect_in can record the incoming connection on TCP.
+To filter UDP for IPV4, we only set two callbacks – sflt_data_out and sflt_data_in.
+Others are set as NULL.
+They allow the interception of incoming and outgoing packets.
+At this point, we can use them to intercept DNS query and response data packets.
+In the callback monitorAgent_sflt_data_out we can monitor DNS query and then parse its data packet to get the query name.
+The declaration of the callback sflt_data_out is as follows:
+The following is the code snippet for parsing the data packets of DNS query:
+The variable memBuf is the data buffer of DNS query.
+We use the function mbuf_copydata to copy the data the buffer receives to the local data buffer allocated by us.
+I defined a structure to represent the DNS header, and its definition is shown below.
+At this point, we check to see if the top bit of the member variable flags of structure dnsHeader is equal to 0.
+If so, it represents a DNS query.
+We then calculate the count of queries by referencing the member variable qdcount.
+We can ignore any data packets that don’t have queries.
+Next, we continue to parse the queries.
+The following is the key code snippet.
+Finally, we record the DNS query log, as shown in Figure 11.
+For other UDP packets not on port 53, we currently just record the remote IP address and port number.
+For example, after I launch a free call in Skype, the tool can record that info, including the IP address, port, process name, pid, ppid, etc.
+More detailed info will be supported in a future version.
+Additionally, I also can monitor the ICMP data packets in the callback monitorAgent_sflt_data_out.
+After performing a ping command, we see the following log.
+So far, we have discussed the significant callback monitorAgent_sflt_data_out that intercepts outgoing data.
+Next, let’s look at how to intercept incoming data using callback monitorAgent_sflt_data_in.
+In this callback, I’m only interested in intercepting the data packets of DNS response.
+Our goal is to get IP:URL mappings from DNS response.
+Just as in the previous activity, we check to see if the top bit of the member variable flags of structure dnsHeader is equal to 0x1.
+If so, it represents that the data packet is a name service response for DNS.
+We then check the count of answers in the DNS header.
+Next, we parse the queries and answers parts in the data packets of DNS response.
+The following is the code snippet used to parse the part of answers.
+Next, let’s look at the log info recorded by our KEXT in the Console app.
+We can see that the tool is able to effectively monitor the DNS query and response, and record detailed info, including the query name and IP address.
+Finally, I’d like to show you the module’s capability for monitoring network activities.
+I chose some regular applications to test.
+For example, in Figure 17 we can see that uTorrent launches communications using UDP with many remote nodes (IP:port).
+Next, when opening web pages in Safari, we can see the following log in the client program.
+It can record the DNS queries, responses, and TCP outgoing connections.
+Finally, the following is the log from monitoring UDP traffic for Chrome and timed processes.
+In this blog, we discussed the key technical details regarding how to monitor network activities using Socket Filters.
+This is a powerful tool for monitoring the malicious network behaviors of malware on macOS, and it’s easy to recognize the C2 server for malware using this tool.
+In the three blogs of this series, we discussed how to monitor the common malicious behaviors of malware in the macOS kernel in detail.
+The utility I developed contains two parts; one is a KEXT, and the other is a client program in user space.
+The client program is intended to receive the data from the KEXT and display it to users.
+This utility is designed to dynamically analyze the malicious behaviors of malware on macOS, helping analysts or security researchers more efficiently analyze detected malware.
+You’re invited to make suggestions on ways to improve this utility.
+https://developer.apple.com/library/content/documentation/Darwin/Conceptual/NKEConceptual/socket_nke/socket_nke.html
+OS X and iOS Kernel Programming by Ole Henry Halvorsen | Douglas Clarke
+https://github.com/objective-see/LuLu/
+Sign up for our weekly FortiGuard intel briefs or to be a part of our open beta of Fortinet’s FortiGuard Threat Intelligence Service.

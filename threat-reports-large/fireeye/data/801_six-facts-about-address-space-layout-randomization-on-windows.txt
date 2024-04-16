@@ -1,0 +1,147 @@
+Overcoming address space layout randomization (ASLR) is a precondition of virtually all modern memory corruption vulnerabilities.
+Breaking ASLR is an area of active research and can get incredibly complicated.
+This blog post presents some basic facts about ASLR, focusing on the Windows implementation.
+In addition to covering what ASLR accomplishes to improve security posture, we aim to give defenders advice on how to improve the security of their software, and to give researchers more insight into how ASLR works and ideas for investigating its limitations.
+Memory corruption vulnerabilities occur when a program mistakenly writes attacker-controlled data outside of an intended memory region or outside intended memory’s scope.
+This may crash the program, or worse, provide the attacker full control over the system.
+Memory corruption vulnerabilities have plagued software for decades, despite efforts by large companies like Apple, Google, and Microsoft to eradicate them.
+Since these bugs are hard to find and just one can compromise a system, security professionals have designed failsafe mechanisms to thwart software exploitation and limit the damage should a memory corruption bug be exploited.
+A “silver bullet” would be a mechanism to make exploits so tricky and unreliable that buggy code can be left in place, giving developers the years they need to fix or rewrite code in memory-safe languages.
+Unfortunately, nothing is perfect, but address space layout randomization (ASLR) is one of the best mitigations available.
+ASLR works by breaking assumptions that developers could otherwise make about where programs and libraries would lie in memory at runtime.
+A common example is the locations of gadgets used in return-oriented programming (ROP), which is often used to defeat the defense of data execution prevention (DEP).
+ASLR mixes up the address space of the vulnerable process—the main program, its dynamic libraries, the stack and heap, memory-mapped files, and so on—so that exploit payloads must be uniquely tailored to however the address space of the victim process is laid out at the time.
+Writing a worm that propagates by blindly sending a memory corruption exploit with hard-coded memory addresses to every machine it can find is bound to fail.
+So long as the target process has ASLR enabled, the exploit’s memory offsets will be different than what ASLR has selected.
+This crashes the vulnerable program rather than exploiting it.
+Windows Vista and Windows Server 2008 were the first releases to feature support for ASLR for compatible executables and libraries.
+One might assume that prior versions simply didn’t randomize the address space, and instead simply loaded DLLs at whatever location was convenient at the time—perhaps a predictable one, but not necessarily the same between two processes or machines.
+Unfortunately, these old Windows versions instead went out of their way to achieve what we’ll call “Address Space Layout Consistency”.
+Table 1 shows the “preferred base address” of some core DLLs of Windows XP Service Pack 3.
+Table 1: Windows DLLs contain a preferred base address used whenever possible if ASLR is not in place
+When creating a process, pre-Vista Windows loads each of the program’s needed DLLs at its preferred base address if possible.
+If an attacker finds a useful ROP gadget in ntdll at 0x7c90beef, for example, the attacker can assume that it will always be available at that address until a future service pack or security patch requires the DLLs to be reorganized.
+This means that attacks on pre-Vista Windows can chain together ROP gadgets from common DLLs to disable DEP, the lone memory corruption defense on those releases.
+Why did Windows need to support preferred base addresses?
+The answer lies in performance and in trade-offs made in the design of Windows DLLs versus other designs like ELF shared libraries.
+Windows DLLs are not position independent.
+Especially on 32-bit machines, if Windows DLL code needs to reference a global variable, the runtime address of that variable gets hardcoded into the machine code.
+If the DLL gets loaded at a different address than was expected, relocation is performed to fix up such hardcoded references.
+If the DLL instead gets loaded as its preferred base address, no relocation is necessary, and the DLL’s code can be directly mapped into memory from the file system.
+Directly mapping the DLL file into memory is a small performance benefit since it avoids reading any of the DLL’s pages into physical memory until they are needed.
+A better reason for preferred base addresses is to ensure that only one copy of a DLL needs to be in memory.
+Without them, if three programs run that share a common DLL, but each loads that DLL at a different address, there would be three DLL copies in memory, each relocated to a different base.
+That would counteract a main benefit of using shared libraries in the first place.
+Aside from its security benefits, ASLR accomplishes the same thing—ensuring that the address spaces of loaded DLLs won’t overlap and loading only a single copy of a DLL into memory—in a more elegant way.
+Because ASLR does a better job of avoiding overlap between address spaces than statically-assigned preferred load addresses ever could, manually assigning preferred base addresses provides no optimization on an ASLR-capable OS, and is not needed any longer in the development lifecycle.
+Clearly, these versions have been out of support for years and should be long gone from production use.
+The more important observation relates to software developers who support both legacy and modern Windows versions.
+They may not realize that the exact same program can be more secure or less secure depending on what OS version is running.
+Developers who (still!)
+have a customer base of mixed ASLR and non-ASLR supporting Windows versions should respond to CVE reports accordingly.
+The exact same bug might appear non-exploitable on Windows 10 but be trivially exploitable on Windows XP.
+The same applies to Windows 10 versus Windows 8.1 or 7, as ASLR has become more capable with each version.
+Legacy software may still be maintained with old tools such as Microsoft Visual C++ 6.
+These development tools contain outdated documentation about the role and importance of preferred load addresses.
+Since these old tools cannot mark images as ASLR-compatible, a “lazy” developer who doesn’t bother to change the default DLL address is actually better off since a conflict will force the image to be rebased to an unpredictable location!
+ELF images, as used in the Linux implementation of ASLR, can use position-independent executables and position-independent code in shared libraries to supply a freshly randomized address space for the main program and all its libraries on each launch—sharing the same machine code between multiple processes even where it is loaded at different addresses.
+Windows ASLR does not work this way.
+Instead, each DLL or EXE image gets assigned a random load address by the kernel the first time it is used, and as additional instances of the DLL or EXE are loaded, they receive the same load address.
+If all instances of an image are unloaded and that image is subsequently loaded again, the image may or may not receive the same base address; see Fact 4.
+Only rebooting can guarantee fresh base addresses for all images systemwide.
+Since Windows DLLs do not use position-independent code, the only way their code can be shared between processes is to always be loaded at the same address.
+To accomplish this, the kernel picks an address (0x78000000 for example on 32-bit system) and begins loading DLLs at randomized addresses just below it.
+If a process loads a DLL that was used recently, the system may just re-use the previously chosen address and therefore re-use the previous copy of that DLL in memory.
+The implementation solves the issues of providing each DLL a random address and ensuring DLLs don’t overlap at the same time.
+For EXEs, there is no concern about two EXEs overlapping since they would never be loaded into the same process.
+There would be nothing wrong with loading the first instance of an EXE at 0x400000 and the second instance at 0x500000, even if the image is larger than 0x100000 bytes.
+Windows just chooses to share code among multiple instances of a given EXE.
+Consider a program that a remote attacker can execute on demand, such as a CGI program, or a connection handler that executes only when needed by a super-server (as in inetd, for example).
+A Windows service paired with a watchdog that restarts the service when it crashes is another possibility.
+An attacker can use knowledge of how Windows ASLR works to exhaust the possible base addresses where the EXE could be loaded.
+If the program crashes and (1) another copy of the program remains in memory, or (2) the program restarts quickly and, as is sometimes possible, receives the same ASLR base address, the attacker can assume that the new instance will still be loaded at the same address, and the attacker will eventually try that same address.
+Consider a system running two buggy network services—one that leaks pointer values in a debug message but has no buffer overflows, and one that has a buffer overflow but does not leak pointers.
+If the leaky program reveals the base address of kernel32.dll and the attacker knows some useful ROP gadgets in that DLL, then the same memory offsets can be used to attack the program containing the overflow.
+Thus, seemingly unrelated vulnerable programs can be chained together to first overcome ASLR and then launch an exploit.
+Suppose a background service exposes a named pipe only accessible to local users and has a buffer overflow.
+To determine the base address of the main program and DLLs for that process, an attacker can simply launch another copy in a debugger.
+The offsets determined from the debugger can then be used to develop a payload to exploit the high-privileged process.
+This occurs because Windows does not attempt to isolate users from each other when it comes to protecting random base addresses of EXEs and DLLs.
+Even though 64-bit releases of Windows have been mainstream for a decade or more, 32-bit user space applications remain common.
+Some programs have a true need to maintain compatibility with third-party plugins, as in the case of web browsers.
+Other times, development teams have a belief that a program needs far less than 4 GB of memory and 32-bit code could therefore be more space efficient.
+Even Visual Studio remained a 32-bit application for some time after it supported building 64-bit applications.
+In fact, switching from 32-bit to 64-bit code produces a small but observable security benefit.
+The reason is that the ability to randomize 32-bit addresses is limited.
+To understand why, observe how a 32-bit x86 memory address is broken down in Figure 1.
+More details are explained at Physical Address Extension.
+Figure 1: Memory addresses are divided into components, only some of which can be easily randomized at runtime
+The operating system cannot simply randomize arbitrary bits of the address.
+Randomizing the offset within a page portion (bits 0 through 11) would break assumptions the program makes about data alignment.
+The page directory pointer (bits 30 and 31) cannot change because bit 31 is reserved for the kernel, and bit 30 is used by Physical Address Extension as a bank switching technique to address more than 2GB of RAM.
+This leaves 14 bits of the 32-bit address off-limits for randomization.
+In fact, Windows only attempts to randomize 8 bits of a 32-bit address.
+Those are bits 16 through 23, affecting only the page directory entry and page table entry portion of the address.
+As a result, in a brute force situation, an attacker can potentially guess the base address of an EXE in 256 guesses.
+When applying ASLR to a 64-bit binary, Windows is able to randomize 17-19 bits of the address (depending on whether it is a DLL or EXE).
+Figure 2 shows how the number of possible base addresses, and accordingly the number of brute force guesses needed, increases dramatically for 64-bit code.
+This could allow endpoint protection software or a system administrator to detect an attack before it succeeds.
+Figure 2: Recompiling 32-bit code as 64-bit dramatically increases the number of possible base addresses for selection by ASLR
+In a brute force attack, ASLR makes attacking a 64-bit program at least 512 times harder than attacking the 32-bit version of the exact same program.
+Suppose an attacker can make ten brute force attempts per second against a vulnerable system.
+In the common case of the target process remaining at the same address because multiple instances are running, the attacker would discover the base address of a 32-bit program in less than one minute, and of a 64-bit program in a few hours.
+A 64-bit brute force attack would produce much more noise, but the administrator or security software would need to notice and act on it.
+In addition to using 64-bit software to make ASLR more effective, systems should avoid re-spawning a crashing process (to avoid giving the attacker a “second bite at the apple” to discover the base address) or force a reboot and therefore guaranteed fresh address space after a process crashes more than a handful of times.
+As long as 32-bit software remains relevant, a proof-of-concept attack against the 32-bit variant of a program is likely easier and quicker to develop.
+The resulting attack could be more feasible and convincing, leading the vendor to patch the program sooner.
+Observe that even if a Windows system must ensure that multiple instances of one DLL or EXE all get loaded at the same base address, the system need not keep track of the base address once the last instance of the DLL or EXE is unloaded.
+If the DLL or EXE is loaded again, it can get a fresh base address.
+This is the behavior we observed in working with Windows 7.
+Windows 10 can work differently.
+Even after the last instance of a DLL or EXE unloads, it may maintain the same base address at least for a short period of time—more so for EXEs than DLLs.
+This can be observed when repeatedly launching a command-line utility under a multi-process debugger.
+However, if the utility is copied to a new filename and then launched, it receives a fresh base address.
+Likewise, if a sufficient duration has passed, the utility will load at a different base address.
+Rebooting, of course, generates fresh base addresses for all DLLs and EXEs.
+In particular, do not rely on the behavior of Windows 7 in randomizing a fresh address space whenever the first instance of a given EXE or DLL loads.
+Do not assume that Windows inherently protects against brute force attacks against ASLR in any way, especially for 32-bit processes where brute force attacks can take 256 or fewer guesses.
+Windows Vista and 7 were the first two releases to support ASLR, and therefore made some trade-offs in favor of compatibility.
+Specifically, these older implementations would not apply ASLR to an image not marked as ASLR-compatible and would not allow ASLR to push addresses above the 4 GB boundary.
+If an image did not opt in to ASLR, these Windows versions would continue to use the preferred base address.
+It is possible to further harden Windows 7 using Microsoft’s Enhanced Mitigation Experience Toolkit (commonly known as EMET) to more aggressively apply ASLR even to images not marked as ASLR-compatible.
+Windows 8 introduced more features to apply ASLR to non-ASLR-compatible images, to better randomize heap allocations, and to increase the number of bits of entropy for 64-bit images.
+See Table 2.
+Linker flags can affect how ASLR is applied to an image.
+Note that for Visual Studio 2012 and later, the ✔️flags are already enabled by default and the best ASLR implementation will be used so long as no 🚫flags are used.
+Developers using Visual Studio 2010 or earlier, presumably for compatibility reasons, need to check which flags the linker supports and which it enables by default.
+Marks the image as ASLR-compatible
+Marks the 64-bit image as free of pointer truncation bugs and therefore allows ASLR to randomize addresses beyond 4 GB
+“Politely requests” that ASLR not be applied by not marking the image as ASLR-compatible.
+Depending on the Windows version and hardening settings, Windows might apply ASLR anyway.
+Opts out 64-bit images from ASLR randomizing addresses beyond 4 GB on Windows 8 and later (to avoid compatibility issues).
+Removes information from the image that Windows needs in order to apply ASLR, blocking ASLR from ever being applied.
+Table 2: Linker flags can affect how ASLR is applied to an image
+Windows 8 and 10 contain optional features to forcibly enable ASLR on images not marked as ASLR compatible, and to randomize virtual memory allocations so that rebased images obtain a random base address.
+This is useful in the case where an EXE is ASLR compatible, but one of the DLLs it uses is not.
+Defenders should enable these features to apply ASLR more broadly, and importantly, to help discover any remaining non-ASLR-compatible software so it can be upgraded or replaced.
+ASLR relocates executable images by picking a random offset and applying it to all addresses within an image that would otherwise be relative to its base address.
+That is to say:
+If two functions in an EXE are at addresses 0x401000 and 0x401100, they will remain 0x100 bytes apart even after the image is relocated.
+Clearly this is important due to the prevalence of relative call and jmp instructions in x86 code.
+Similarly, the function at 0x401000 will remain 0x1000 bytes from the base address of the image, wherever it may be.
+Likewise, if two static or global variables are adjacent in the image, they will remain adjacent after ASLR is applied.
+Conversely, stack and heap variables and memory-mapped files are not part of the image and can be randomized at will without regard to what base address was picked.
+One of the biggest limitations and annoyances of ASLR is that seemingly innocuous features such as a debug log message or stack trace that leak a pointer in the image become security bugs.
+If the attacker has a copy of the same program or DLL and can trigger it to produce the same leak, they can calculate the difference between the ASLR and pre-ASLR pointer to determine the ASLR offset.
+Then, the attacker can apply that offset to every pointer in their attack payload in order to overcome ASLR.
+Defenders should train software developers about pointer disclosure vulnerabilities so that they realize the gravity of this issue, and also regularly assess software for these vulnerabilities as part of the software development lifecycle.
+Not all memory corruption vulnerabilities need to directly achieve remote code execution.
+Consider a program that contains a buffer variable to receive untrusted data from the network, and a flag variable that lies immediately after it in memory.
+The flag variable contains bits specifying whether a user is logged in and whether the user is an administrator.
+If the program writes data beyond the end of the receive buffer, the “flags” variable gets overwritten and an attacker could set both the logged-in and is-admin flags.
+Because the attacker does not need to know or write any memory addresses, ASLR does not thwart the attack.
+Only if another hardening technique (such as compiler hardening flags) reordered variables, or better, moved the location of every variable in the program independently, would such attacks be blocked.
+Address space layout randomization is a core defense against memory corruption exploits.
+This post covers some history of ASLR as implemented on Windows, and also explores some capabilities and limitations of the Windows implementation.
+In reviewing this post, defenders gain insight on how to build a program to best take advantage of ASLR and other features available in Windows to more aggressively apply it.
+Attackers can leverage ASLR limitations, such as address space randomization applying only per boot and randomization relocating the entire image as one unit, to overcome ASLR using brute force and pointer leak attacks.

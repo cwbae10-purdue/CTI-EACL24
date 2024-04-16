@@ -1,0 +1,47 @@
+The FireEye Labs Advanced Reverse Engineering (FLARE) Team would like to introduce the next installment of our IDA Pro Script series of blog posts in order to share knowledge and tools with the community.
+All scripts and plug-ins are available from our GitHub repository at https://github.com/fireeye/flare-ida.
+IDA’s stack analysis and propagation of type information is extremely useful when reverse engineering malware.
+Hex-Rays provides several .til files with IDA that contain data type and function declarations for a range of compilers and APIs.
+They also provide an additional tool named tilib as a separate download that allows users to create their own type libraries.
+Figure 1 shows IDA’s automatic markup based on these type libraries.
+It identified an import function named CreateProcessA and found a matching function prototype in the loaded .til files.
+During IDA’s analysis phase it automatically propagated the argument names and types and added the comments to assist with the reverse engineering.
+Figure 1 is how things look when everything works correctly.
+Figure 1: Normal API function call usage
+Unfortunately malware does not always do things as expected.
+Malware may import functions dynamically by resolving functions at runtime rather than relying on its PE import table.
+Last year we released an IDA plugin called StructTyper (https://www.mandiant.com/blog/applying-function-types-structure-fields-ida/) that searches through structure definitions for member names that are found in the loaded .til files.
+Figure 2 shows sample disassembly when this plug-in is used to automatically apply a function prototype to a structure member to take advantage of IDA’s analysis.
+Figure 2: After StructTyper has run
+StructTyper works great for code like in Figure 2 where the indirect call target uses a register+offset structure reference, but it turns out that StructTyper can’t help with code like that in Figure 3.
+In this case the code first copies the function pointer from the structure to a register and then performs the indirect call using that register.
+StructTyper was run on the code in Figure 3 and no automatic function type propagation was done by IDA.
+Figure 3: After StructTyper without useful propagation
+We’re releasing another IDA plug-in to help in the above situation named ApplyCalleeType.
+After installation, the plug-in adds a menu item under Edit\Operand type\ApplyCalleeType and a keyboard shortcut (Default: Alt+J).
+To use simply make sure that the cursor is on the line of an indirect call instruction, like 0x00415B8E in Figure 3, and you will be presented with a dialog as in Figure 4.
+You have a few options with this plug-in.
+You can manually type in a function prototype and press OK to have IDA apply that function prototype at the current cursor location.
+Figure 4: Running ApplyCalleeType with manual
+Pressing either “Use Standard Type” or “Use Local Type” prompts the user to select a type from either the loaded .til or from the local .idb database like in Figure 5.
+As in other IDA chooser dialogs, you can start typing the name of the function you’re interested in and the current cursor advances to the next matching item.
+Figure 5: Selecting a standard type to apply
+Figure 6 shows the same disassembly after the plug-in has run and the function prototype has been applied at the site of the indirect call.
+Figure 6: After ApplyCalleeType has run
+The plug-in may also benefit users of the HexRays decompiler.
+The same code is shown decompiled in Figure 7 after ApplyCalleeType has run.
+Figure 7: Decompilation after ApplyCalleeType has run
+Along with releasing ApplyCalleeType plugin we’ve released an update to StructTyper.
+The initial version of StructTyper searched defined structures for member names found in the loaded .til files and applied a function prototype to those members.
+This update allows the user to also search the current stack frame for variables to apply a function prototype.
+Figure 8 shows a before-and-after view of sample code with GetProcAddress being passed as a stack parameter.
+After this update the StructTyper plug-in can identify this function and apply its function prototype to the stack variable.
+Figure 8: GetProcAddress indirect call, before and after StructTyper runs
+As with our other IDA plug-ins, clone the git repository at https://github.com/fireeye/flare-ida.
+The python directory can either be copied to the %IDADIR%\python directory, or it can be in any directory found in your PYTHONPATH environment variable.
+The plugins\apply_callee_type_plugin.py file must be copied to the %IDADIR%\plugins directory if you want menu and keyboard shortcuts installed.
+Test the installation by running the following Python commands within IDA Pro and ensure no error messages are produced:
+To run the plug-in in IDA Pro go to Edit – Operand Type – ApplyCalleeType or press Alt+J.
+Users of IDA 6.7 should be aware that the ApplyCalleeType exercises a bug in the released build of IDA 6.7 that under certain circumstances may cause IDA to crash.
+Users are advised to update their version to IDA 6.8 (Beta is currently available by request from Hex-Rays support) to make sure that this plug-in does not inadvertently crash your IDA process.
+ApplyCalleeType and StructTyper have been useful tools for our own reverse engineering analysis and we hope others find some use from them as well.

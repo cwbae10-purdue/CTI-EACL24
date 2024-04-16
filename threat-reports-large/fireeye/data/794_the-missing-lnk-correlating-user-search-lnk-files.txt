@@ -1,0 +1,75 @@
+Forensic investigators use LNK shortcut files to recover metadata about recently accessed files, including files deleted after the time of access.
+In a recent investigation, FireEye Mandiant encountered LNK files that indicated an attacker accessed files included in Windows Explorer search results.
+In our experience, this was a new combination of forensic artifacts.
+We’re excited to share our findings because they help to paint a more complete picture of an attacker’s actions and objectives on targeted systems.
+Further, these findings can also be leveraged for insider threat cases to determine the path used to locate and subsequently open a file.
+The .lnk extension is associated with a class of files known as Shell Items.
+These binary format files contain information that can be used to access other data objects in the Windows shell (the graphical user interface).
+LNK shortcut files are one type of Shell Item.
+They are created by the Windows operating system automatically when a user accesses a file from a supported application but can also be created by the user manually.
+LNK shortcut files typically contain metadata about the accessed file, including the file name and size, the original path, timestamps, volume and system information (ex.
+drive type and system hostname), and network information (ex.
+network share path).
+Fortunately, there are tools available that can parse these files.
+While internally at Mandiant we leverage FireEye Endpoint Security to parse LNK files and identify suspicious user search terms, for the purposes of this blog post we will be using LECmd by Eric Zimmerman.
+Figure 1 shows the command line options for LECmd.exe.
+Figure 1: LECmd.exe command line options
+Parsed metadata within LNK shortcut files is relevant to forensic investigations for multiple use cases, including profiling user activity on a system or searching for references to malware that has since been deleted.
+Recently, Mandiant encountered LNK files whose format we did not initially recognize.
+The files came from a Windows Server 2012 R2 system and had paths like those shown in Figure 2.
+We guessed that they were LNK shortcut files based on their extension and file path; however, their content was not familiar to us.
+Figure 2: Full file path of the unfamiliar LNK files
+In the previous examples, a forensic investigator would use the LNK shortcut filename to conclude that a user opened a file named passw or gov.
+Then, they would use a tool like LECmd to recover additional metadata.
+This would provide them with the full file path of the accessed file and the timestamps of the file at the time it was accessed - among other forensic information.
+However, the previous LNK files did not reveal expected metadata.
+Figure 3 shows the output of LECmd for passw.lnk (some information omitted for clarity).
+Figure 3: LECmd.exe output for passw.lnk
+Of note, none of the expected information for LNK shortcut files is present.
+However, there were strings of interest in the Target ID Information section including Search Folder\passw as well as Search Results in Local Disk (C:).
+For comparison, Figure 4 highlights output for a standard LNK shortcut file using a test file.
+Notice that the target file timestamps, file size, full file path, and other expected file metadata are present (some information omitted for clarity).
+Figure 4: LECmd.exe output for standard LNK shortcut file test.txt
+Fortunately, during the investigation we also parsed the user’s NTUSER.DAT registry file (using Harlan Carvey’s RegRipper) and reviewed the WorldWheelQuery key which details user Explorer search history.
+The passw.lnk file suddenly became more interesting!
+Figure 5 shows the entries parsed from the registry key.
+Note that the search history includes the same term we observed in the LNK file: passw.
+Figure 5: WorldWheelQuery key extracted from the user’s NTUSER.DAT registry file
+Via the WorldWheelQuery registry key, we identified passw as the second most recent term in the user’s Explorer search history according to the MRUListEx order.
+MRUListEx is a registry value that lists the order in which other values have most recently been accessed—essentially, the order in which terms were searched in Explorer.
+passw also matched the filename of the unusual LNK file that contained the string Search Results in Local Disk (C:) (see Figure 3).
+These details seemed to suggest that LNK files were being created as a result of user Explorer searches.
+Therefore, we’ve started calling these “user search LNK files”.
+After searching the system for LNK files with the terms listed in the user’s Explorer search history, we found that not all terms had associated user search LNK files.
+Figure 6 displays LNK files and their accompanying file creation and modification timestamps that we identified as a result of this search.
+Note that while we found 15 searches via the WorldWheelQuery registry key, there are only four (4) user search LNK files.
+Figure 6: LNK files with associated WorldWheelQuery Explorer search terms
+Additionally, we noticed pairs of LNK files created at the same time that had similar names.
+As an example, Figure 7 lists two LNK files that were both created at 2019-11-09 08:38:29 UTC.
+Figure 7: LNK files created at the same time
+After further testing, we determined that the system created user search LNK files as a result of Explorer searches where the user opened one of the files produced as a result of this search.
+User search LNK files were not created if the user did not open a file returned by the search.
+In this example, the password.lnk file contained target file metadata, as would be expected for LNK shortcut files, and referenced a target file named password.txt located in the T:\ directory.
+passw.lnk, as previously discussed, only contained expected metadata for a user search LNK file, including the absolute path Search Folder\passw with reference to Search Results in Local Disk (C:).
+However, this discrepancy in directory—the user search LNK file search context of Search Results in Local Disk (C:) and the LNK shortcut file located in the T:\ drive—is actually as expected.
+LNK shortcut files contain metadata for the most recently accessed file, and we found the same to be true for user search LNK files.
+Based on differing creation and modification timestamps for passw.lnk, we know the user searched for passw in at least one other instance (we’re not able to conclude whether a search happened between these two points in time) and opened a file from the search results.
+This is seen in the timestamps for the passw user search LNK file in Figure 8.
+Figure 8: passw.lnk creation and modification timestamps
+The second occurrence of a search for passw occurred on November 13, 2019.
+In this instance, the user again searched for the term passw using Windows Explorer search, but this time searched within the context of the C:\ drive (Search Results in Local Disk (C:)), and subsequently clicked on a document named password2.txt.
+The results from LECmd for password2.lnk can be seen in Figure 9 (some information omitted for clarity and to protect client information).
+Notice the information embedded in user search LNK files is also embedded within the LNK shortcut file that is created simultaneously with the user search LNK file (underlined text).
+The search context for passw.lnk and full file path location for password2.lnk both match: C:\.
+Figure 9: LECmd.exe output for password2.lnk
+The takeaway here is that user search LNK files are only related to the search term and not search context.
+This means later searches for the same search term, e.g.
+passw, when the user subsequently opens a search result, but in a different drive or directory changes the modification timestamp for the user search LNK file as well as the search context contained in the user search LNK file.
+This keeps in step with LNK shortcut files, which are dependent on a simple filename—not the full file path.
+Historically, due to the structure of the WorldWheelQuery registry key and available timestamps in the Windows Registry, investigators could only determine the search time of the most recent term using the last modification time of the registry key.
+With user search LNK files, new timestamps are available to determine the times a user searched for a specific term when the user subsequently opened a file from the search.
+Going further, we can combine evidence from the user search LNK files and the WorldWheelQuery MRUlistEx registry key value to infer the order of searches completed by the user.
+For instance, since the user searched for gov (WorldWheelQuery search index 4), passw (index 6), and private (index 7), we can infer they also searched for air (index 5) but didn't open any files resulting from this search.
+LNK shortcut files have been a reliable method to determine user access to files and the associated file metadata at the time of access.
+With user search LNK files, we can now enrich our Windows Explorer search history findings and gain a more detailed picture of user activity through additional timestamps of user Explorer searches with subsequent access to files from the search.
+Thank you to Phillip Kealy and William Ballenthin for technical review and providing feedback on overall presentation.

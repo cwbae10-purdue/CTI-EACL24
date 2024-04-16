@@ -1,0 +1,74 @@
+In this feature, ESET’s Denise Giusto Bilić offers a detailed overview as to how to avoid certificate pinning in the latest versions of Android.
+We previously explained how to construct an analysis environment enabling the certificate pinning process to be bypassed in Android applications, in order to be able to examine network traffic and to easily determine what data is being transmitted over secure communications protocols.
+In particular, we looked at the steps to take to install Cydia Substrate and Android SSL TrustKiller, and therefore analyze packets sent using SSL.
+The disadvantage of these applications is that they are limited to Android versions no later than 4.2.2, despite the fact that the device or application we are auditing very often exceeds these specifications.
+We should be asking ourselves whether we can sidestep this protective framework within a controlled environment.
+This tutorial will teach you how to use Xposed and its JustTrustMe module to do this.
+There are various ways to find out which version of Android any given application was created for.
+The easiest way to determine the necessary API for running this application is through the uses-sdk tag which can be viewed in the manifest.
+This tag details the minimum API required for the application to function (minSdkVersion) and which API it was specifically designed for (targetSdkVersion).
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" ... >
+<uses-sdk android:minSdkVersion="17" android:targetSdkVersion="23" />
+...
+</manifest>
+However, this tag may not be present in some applications, especially in apps compiled using tools such as apktool.
+We therefore need to review the permissions listed in the manifest, as these will tell us which API will be needed to run them.
+For example, the GET_ACCOUNTS_PRIVILEGED permission was added in API 23, so if this permission is present, it tells us that we need a virtual machine with this version of Android.
+Finally, we can also look for conditional elements in the application code, which bifurcate the flow control if a set SDK is present.
+We may therefore find flow controls in some APK as follows:
+if (Build.VERSION.SDK_INT < 17) {
+// hacer algo
+} else {
+// hacer otra cosa
+}
+This tells us which virtual machine we need to create in order to activate the functionality we are specifically seeking to analyze.
+If we install the APK directly from the Play Store, this also makes it possible to identify the API in question, using the additional information section.
+For this article we will be using Genymotion as the virtualization engine.
+We will create a virtual machine selecting an Android version later than Android Jelly Bean 4.2.2.
+For this specific example, we will be using API 23, as it requires a few extra steps to configure.
+You should use the API required by the application you are analyzing, as we saw in step one.
+If you have never used Genymotion, there are plenty of step-by-step online tutorials that will show you how to download and install the application and create an initial virtual machine.
+We will need a system with root access.
+Depending on the API and the emulator we are using, we may need to root the virtual machine manually.
+This is what we have to do with API 23 in Genymotion, as there is no default SuperUser implementation.
+You could install any superuser application.
+In this case, we are using SuperSU.
+The executable file can be downloaded from various sources, one of which can be found here.
+We then extract the components from the zipped file to any system location and we copy them to the VM and execute the following script:
+adb shell mount -o remount,rw /system
+adb push <carpeta_SuperSU>/x86/su.pie /system/bin/su
+adb shell chmod 0755 /system/bin/su
+adb push <carpeta_SuperSU>/x86/su.pie /system/xbin/su
+adb shell chmod 0755 /system/xbin/suadb shell su --installadb shell "su --daemon&"
+adb shell setenforce 0
+adb shell mount -o remount,ro /system
+After opening the SuperSU application, you will be asked to update to the latest version available and then restart the VM.
+Do this.
+After starting up the system, you should have root access.
+Xposed is a framework that enables us to install additional modules to modify the behavior of the operating system and of the applications installed on it.
+To perform this process, we can use GenyFlash to alter (or, as we say in technical jargon, “flash”) the latest version of Xposed for API 23 and x86 architecture.
+We can then run the following script:
+git clone https://github.com/rovo89/GenyFlash
+cd GenyFlash && ./install.sh
+adb push <carpeta_xposed>/xposed-v86-sdk23-x86.zip /sdcard/
+adb shell flash-archive.sh /sdcard/xposed-v86-sdk23-x86.zip
+We then need to download and execute the Xposed installer, which we can access from the Xposed directory in XDA-Developers.
+To install it, all we need to do is use the mouse to drag it onto the VM.
+The application will appear in the applications menu.
+JustTrustMe is a module created to operate on Xposed enabling us to skip the certificate authentication process for traffic on SSL.
+You will need to download the latest release, which can be done from this link.
+You will then have to install it on the VM, dragging the APK with your mouse and dropping it on the VM, or using the command line through the instruction adb install.
+The application has no user interface.
+You will have to authorize it through Xposed, in the Modules section, marking the corresponding checkbox.
+To make the activation effective, you will need to restart the system.
+There are various ways to configure a proxy on an Android system, and there are many tools available to do this.
+In this article we are using Burp Suite, but you could also use ZAP or any other one with similar features.
+We will start by initializing Burp Suite.
+Select the tab Proxy > Options and add a new traffic interception configuration using the Add button.
+This will open a new window in which we need to establish the IP and port of our proxy (usually, the local IP and preferred port).
+Press “OK” and verify that the listener we are interested in is marked as running.
+We can then move on to configuring the emulator.
+We will continue modifying the Genymotion Settings.
+The network characteristics tab allows us to enter the IP and the port we initially defined in Burp Suite.
+Now we are going to install the application to be analyzed.
+In this case we are using the Gmail application to test whether our analysis environment can skip the certification controls for this platform.

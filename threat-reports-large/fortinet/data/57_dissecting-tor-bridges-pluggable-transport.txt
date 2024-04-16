@@ -1,0 +1,204 @@
+A FortiGuard Labs Threat Research Report
+At the SecureWV 2019 Cybersecurity Conference, held in Charleston, West Virginia, Peixue and I presented our talk “Dissecting Tor Bridges and Pluggable Transport.” We are now sharing more details of this research, with our analysis being posted in two blogs.
+In this first blog, I will explain how I found built-in Tor bridges and how Tor browser works with Bridge enabled using reverse engineering.
+Tor Browser is a tool that provides anonymous Internet connectivity combined with layers of encryption through the Tor network.
+When users explore websites using Tor Browser, their real IP address is hidden by the Tor network so that the destination website never knows what the true source IP address is.
+Users can also set up their own website in the Tor network with a domain name ending with “.onion”.
+That way, only Tor Browser can access it and nobody knows what its real IP address is.
+It’s one of the reasons why ransomware criminals require victims to access the payment page on a .onion website through Tor Browser.
+The Tor project team is aware of this practice because the Tor project blog clearly states that “Tor is misused by criminals.”
+Tor Browser is an open source project with a design based on Mozilla Firefox.
+You can download the source code from its official website.
+The Tor network is a worldwide overlay network comprising thousands of volunteer-run relays.
+It consists of two kinds of relay nodes: normal relay nodes and bridge relay nodes.
+The normal relay nodes are listed in the main Tor directory, and the connections to them can be easily identified and blocked by censors.
+The bridge information is defined in the profile file of Firefox, so you can display it by entering “about:config” in the address bar of Tor Browser, as shown in Figure 1.
+However, the bridge relay nodes are not listed in the main Tor directory, which means that connections to them can’t be easily blocked by censors.
+In this blog I will be discussing how to find these bridges and relay nodes using functions built into Tor Browser.
+To use a bridge relay in Tor Browser, there are two options.
+Tor Browser has some built-in bridges for users to choose.
+If the built-in bridges don’t work, the users can obtain additional bridges from the Tor Network Settings, by visiting https://bridges.torproject.org/, or by sending an email to bridges@bridges.torproject.org.
+This analysis is done on the following platform, as well as the following Tor Browser version and extensions:
+Windows 7 32-bit SP1
+Tor Browser 8.0
+TorLauncher 0.2.16.3 (one extension)
+Torbutton 2.0.6 (one extension)
+Figure 2 shows the version information of Tor Browser that I worked on.
+During my analysis, Tor Brower pushed out a new version: Tor Browser 9.0, on October 22, 2019.
+You can refer to the Appendix of this analysis for more information about it.
+This version of Tor Browser I analyzed provides four kinds of bridges: “obfs4”, “fte”, “meek-azure” and “obfs3”.
+They are called pluggable transports.
+You can see the detailed settings in Figure 3.
+Obfs4 Bridge is strongly recommended on Tor official website.
+All of the analysis below is based on this kind of bridge.
+I chose bridge “obfs4” in the list shown in Figure 3 to start my analysis.
+Looking into the traffic when Tor Browser makes an “obfs4” connection, I found that the TCP sessions are created by obfs4proxy.exe, which is a bridge client process.
+Figure 4 is a screenshot of the process tree when starting Tor Browser with “obfs4”.
+As you can see, “firefox.exe” starts “tor.exe”, which then starts “obfs4proxy.exe”.
+The process “obfs4proxy.exe” locates in “Tor_installation_folder\Browser\TorBrowser\Tor\PluggableTransports”.
+Originally, I thought the built-in “obfs4” bridges should be hard-coded inside the “obfs4proxy.exe” process.
+I started the debugger and attached it to “obfs4proxy.exe”.
+I then set a breakpoint on the API “connect”, which is often used to establish TCP connections.
+Usually, using reverse engineering could quickly discover the IP addresses and ports from this API.
+However, I never got it triggered before the connections to “obfs4” bridge were established.
+After further analysis of the process “obfs4proxy.exe”, I learned it used another API called “MSAFD_ConnectEx” from mswsock.dll instead.
+Figure 5 shows that “obfs4proxy.exe” is about to call the API “mswsock.MSAFD_ConnectEx()” to make a TCP connection to a built-in “obfs4” bridge, whose IP address and port are “192.95.36.142:443”.
+The second argument of this function is a pointer to a structure variable of struct sockaddr_in, which holds the IP address and Port to be connected to.
+Later on, it calls the APIs “WSASend” and “WSARecv” to communicate with the “obfs4” bridge.
+As you may have noticed, the debugger OllyDbg could not recognize this API because it is not an export function of “mswsock.dll”.
+In the IDA Pro’s analysis of mswsock.dll, we can see that the address 750A7842 is just the API of “MSAFD_ConnectEx()”.
+By the way, the instruction “call dword ptr [ebx]” is used to call almost all the system APIs that “obfs4proxy.exe” needs, which is a way to hide APIs against analysis.
+From my analysis, most of the PE files (exe and dll files, like “obfs4proxy.exe”) used by Tor seem to be compiled by the “GCC MINGW-64w compiler”, which always uses “mov [esp], …” to pass arguments to functions instead of “push …” instructions that create trouble for static analysis.
+By tracing and tracking the call stack flow from “MSAFD_ConnectEx()”, I realized that my original thought was wrong because the built-in IP addresses and Ports are not hard-coded in “obfs4proxy.exe”, but taken from the parent process “tor.exe” through a local loopback TCP connection.
+Usually, the third packet from “tor.exe” to “obfs4proxy.exe” contains one built-in obfs4 bridge’s IP address and Port in binary, just like in Figure 6.
+It is a Socks5 packet that is 0xA bytes long.
+“05 01 00 01” is a header of its Socks5 protocol, and the rest of the data are the IP address and port in binary.
+The packet indicates that it asks “obfs4proxy.exe” to make a connection to a bridge with the binary IP address and Port.
+“obfs4proxy.exe” then parses the packet and converts the binary IP and Port to a string, which in this case is “154.35.22.13:16815”.
+“tor.exe” uses a third-party module named “libevent.dll”, which is from libevent (an event notification library), to drive Tor to perform its tasks.
+Tor places most of its socket tasks (connect(), send(), recv() and so on) on events to be automatically called by libevent.
+When tracing the packet with the bridge’s IP address and Port in “Tor.exe”, you can see in the call stack context that many return addresses are in the module “libevent.dll”.
+In Figure 7, it paused on “Tor.exe” calling the API “ws2_32.send()” to send the packet containing the bridge’s IP address and Port, just like the received packet shown in Figure 6.
+Figure 7 is the “Call stack” window, which shows the return addresses of “libevent.dll”.
+Through tracing/tracking of “tor.exe” sending out the bridge’s IP address and Port, I found a place where it starts a new event with a callback function that then sends the bridge’s IP address and Port.
+The ASM code snippet below shows the context of calling “libevent.event_new()” in “tor.exe”.
+Its second argument is the socket handle; its third argument is the event action, which is 14H here, standing for EV_WRITE and EV_PERSIST; its fourth argument is a callback function (sub_2833EE for this case); and its fifth argument contains the bridge’s IP address and Port that will be passed to the callback function (sub_2833EE) once it is called by libevent.
+The following ASM code snippet is from “tor.exe”, whose base address for this time is 00280000h.
+[…]
+.text:00281C84 mov edx, eax
+.text:00281C86 mov eax, [ebp+var_2C] ;
+.text:00281C89 mov [eax+14h], edx
+.text:00281C8C mov eax, [ebp+var_2C] ;
+.text:00281C8F mov ebx, [eax+0Ch]
+.text:00281C92 call sub_5133E0
+.text:00281C97 mov edx, eax
+.text:00281C99 mov eax, [ebp+var_2C]
+.text:00281C9C mov [esp+10h], eax ; argument for callback function
+.text:00281CA0 mov [esp+0Ch], offset sub_2833EE ; the callback function
+.text:00281CA8 mov [esp+8], 14h ; #define EV_WRITE 0x04|#define EV_PERSIST 0x10
+.text:00281CB0 mov [esp+4], ebx ; socket
+.text:00281CB4 mov [esp], edx
+.text:00281CB7 call event_new ; event_new(event_base, socket, event EV_READ/EV_WRITE, callback_fn, callback_args);
+.text:00281CBC mov edx, eax
+.text:00281CBE mov eax, [ebp+var_2C]
+.text:00281CC1 mov [eax+18h], edx
+[…]
+By continuously reverse tracing in “tor.exe”, I found a bunch of Obfs4 Bridges that are in a data structure of the command “SETCONF”, as shown in Figure 8.
+It’s a data snippet of the command “SETCONF”, where “SETCONF” is the command name at the beginning of the structure, followed by the built-in bridges information.
+The data in the red lines is one Obfs4 Bridge block called the bridge configuration line.
+Each bridge node must be saved in one bridge configuration line.
+There are 27 such bridge configuration lines in total here.
+As you may see, the bridge type “obfs4” as well as the bridge’s IP address and Port inside it are in string format.
+The bridge information is not hard-coded inside the “tor.exe” process, either.
+Now we run into another question: where does the entire “SETCONF” data come from?
+Actually, it is from a received TCP packet from “firefox.exe”, which is the parent process of “tor.exe”.
+Once “tor.exe” starts, it opens TCP control port 9151 to receive commands from “firefox.exe” and TCP proxy port 9150.
+I will explain how “firefox.exe” sends commands to it later.
+By continuing the analysis in “tor.exe”, I noticed that besides the command “SETCONF”, it also supports other commands, like “GETCONF”, “SAVECONF”, “GETINFO”, “AUTHENTICATE”, “SETEVENTS’, “+LOADCONF”, “QUIT” and so on.
+“tor.exe” has a function to handle these commands and take different code branches.
+“tor.exe” performs many different tasks according to these commands.
+For example: The “SAVECONF” command tells “tor.exe” to save the bridge information into a file located in “Tor_installation_folder\Browser\TorBrowser\Tor\Data\torrc”; and “SETCONF” tells “tor.exe” the bridge information, which is then passed to bridge processes to establish the bridge connections.
+Tor uses many loopback TCP connections to pass commands between processes to perform its tasks.
+Wireshark started supporting the local loopback adapter in version 3.0.1, allowing you to capture the traffic on a loopback interface, like the “SETCONF” packet from “firefox.exe” to “tor.exe” over TCP control port 9151 on a local loopback interface.
+RawCap is another tool that can do the same thing.
+“firefox.exe” sends the command packet to “tor.exe” in a special way: one byte one packet.
+As you can see in Figure 9, there are many packets with a length of 1.
+Reassembling them produces the entire “SETCONF” command.
+As you may know, Firefox browser can perform extension functions through extensions addons, which are developed by third-party developers.
+Since Tor Browser was designed based on Mozilla Firefox, it has the same features as Firefox.
+Prior to version 9.0, Tor Browser comes with two extensions: Torbutton and TorLauncher.
+They are located in the folder “Tor_installation_folder\Browser\TorBrowser\Data\Browser\profile.default\extensions”.
+The corresponding extension files are torbutton@torproject.org.xpi and tor-launcher@torproject.org.xpi as shown in Figure 10, which are both Zip archives containing JS files and modules.
+Since Tor Browser version 9.0, however, these two extensions have been removed.
+Instead, their code and functionality have been incorporated into Tor browser.
+Refer to the Appendix for more information.
+Torbutton is used to set and display Tor settings, as well as display the information of Tor, such as “About Tor”.
+You can find it by clicking the Tor icon shown on the toolbar of Tor Browser (refer back to Figure 3).
+TorLauncher is in charge of controlling the Tor process according to the settings that are set through Torbutton.
+TorLauncher is loaded and its JS code is executed within the module “xul.dll” of Firefox, which is the core component of the Mozilla Firefox and is also the real module sending commands to “tor.exe”, such as “SETCONF” (implemented in network-setting.js), “GETCONF” (tl-protocol.js), and “GETINFO” (tl-protocol.js,torbutton.js).
+“xul.dll” module is a sort of JS engine to parse and execute the JS code of these commands.
+Now, let’s see the internal working mechanism of Tor Browser with bridges enabled.
+Once Tor Browser starts with bridges enabled, it performs the following steps:
+firefox.exe loads the basic profiles, preference definition, and extensions [involved modules: firefox.exe, xul.dll]
+The extension TorLauncher runs tor.exe with the settings in the command line [involved module: xul.dll)
+Anytime you can, change Tor settings using Torbutton [involved module: xul.dll]
+It sends commands to “tor.exe” and tells it how to work based on the settings provided through local loopback TCP connections [involved modules: xul.dll, tor.exe]
+tor.exe then runs one corresponding bridge process (obfs4proxy.exe for “obfs3” and “obfs4”, fteproxy.exe for “fte”, and terminateprocess-buffer.exe for “meek-azure”) to establish bridge communication [involved modules: tor.exe, bridge processes]
+tor.exe communicates with these bridge processes via local loopback TCP connections.
+[involved module: tor.exe, bridge processes]
+The bridge processes connect to the bridge relays [involved module: bridge processes]
+Tor Browser sends commands through a local loopback interface to control how the Tor client works.
+It then receives and parses the results of commands from the Tor client.
+From my analysis, all of the “obfs4” bridge information are defined in a number of named global variables, called preferences in Firefox, and stored in a local file.
+They are initialized when “firefox.exe” starts and they are accessed and used in TorLauncher by reading the preferences by their names, derived from “xul.dll”.
+For security reasons, I have hidden the file name that contains the entire set of bridge information definitions for all bridge types.
+In the Tor Browser version I analyzed, it includes 27 “obfs4” bridges, 4 “obfs3” bridges, 1 “meek-azure” bridge, and 4 “fte” bridges.
+In the above analysis, we mentioned bridge types: “obfs4”, “obfs3”, “meek-azure” and “fte”.
+All are called Pluggable Transport (PT).
+Their main task is to transform the Tor traffic and transport it between the client and its first hop (Tor relay).
+Thus, using PTs can make Tor traffic more difficult to be identified and blocked by censorship.
+Obfs4 is a stronger and more popular PT.
+The first Obfs4 hop is usually a bridge relay, which is not listed in the main Tor directory.
+Obfs4, the obfuscator, was developed and maintained by Yawning Angel.
+It is an open source project written in Go language that you can access on GitHub.
+In the past, Obfs Bridges had several versions, such as Obfs2 and Obfs3.
+Obfs4 is not much like them, but is closer to ScrambleSuit, because Obfs4’s concept is from Philipp Winter's ScrambleSuit protocol.
+That is why the Obfs4 client process can also act as a ScrambleSuit client.
+All features of Obfs4 are provided by the program “obfs4proxy.exe”, which is the Obfs4 client process for Tor users.
+As we already know, Tor browser is built on Firefox browser, and it uses Firefox’s extensions to provide users with anonymous Internet access.
+Once Tor browser is run, it actually starts “firefox.exe”, which loads the two Tor extensions (TorLauncher and Torbutton).
+Later, one of the Tor extensions starts “tor.exe”, which is the Tor client process.
+When Tor browser is set to enable the Obfs4 Bridge in “Tor Network Settings”, “tor.exe” will run “obfs4proxy.exe” up.
+In next 2 sections, we’ll explain how the 3 components (“firefox.exe”, “tor.exe” and “obfs4proxy.exe”) interact in-depth.
+The processes “firefox.exe” (Tor Browser) and “tor.exe” (Tor Client) communicate to each other through Tor’s TCP port listening on the loopback interface (127.0.0.1).
+From Figure 4 above, it is clear that “firefox.exe” starts “tor.exe”.
+To be more specific, “tor.exe” is started by the Firefox extension “TorLauncher” that is loaded and parsed by the module “xul.dll”.
+When it calls the Windows native API ShellExecuteExW() to start “tor.exe”, many command line parameters are passed to “tor.exe”.
+Figure 11 shows a screenshot of the command line parameters passed to “tor.exe” when “firefox.exe” was about to start “tor.exe”.
+There are 10 parameters passed to “tor.exe”.
+For a clearer view, I split them into the table below, one parameter in one line.
+In Table 1, “…\” is short for the Tor Browser’s installation path.
+There are two ports specified, shown the highlighted text in Table 1, which are “+__ControlPort 9151” and “+__SocksPort "127.0.0.1:9150 IPv6Traffic PreferIPv6 KeepAliveIsolateSOCKSAuth"”.
+“tor.exe” will listen on these two TCP ports 9151 and 9150 of the loopback interface (127.0.0.1), which are the default port numbers that “tor.exe” uses.
+Users can modify the two ports’ default values, which are defined in several local files.
+Here is the example code in a local file.
+TCP port 9151 is a control port used for exchanging control commands and results between “firefox.exe” and “tor.exe”.
+Tor provides SOCKS5 proxy service on TCP port 9150, which is used to transport SOCKS5 packets between “firefox.exe” and “tor.exe”.
+Below is an example of a control command.
+“firefox.exe” sent the command “GETINFO” to “tor.exe” via TCP port 9151 and asked for some information, then “tor.exe” parsed the command and sent back the result to “firefox.exe” from TCP port 9151.
+GETINFO status/bootstrap-phase
+250-status/bootstrap-phase=NOTICE BOOTSTRAP PROGRESS=0 TAG=starting SUMMARY="Starting"
+Tor performs proxy functionality on 127.0.0.1:9150, which transports normal packets (Tor-unencrypted) between “firefox.exe” and “tor.exe”.
+Figure 12 is the screenshot of a packet capture in WireShark, where I split them into two parts: the upper is Tor SOCKS5 Handshake, the bottom is packet transportation.
+Figure 12 shows the packets when visiting https://www.google.com in Tor Brower.
+In the Handshake part, “firefox.exe” tells “tor.exe” the destination to access is “www.google.com” within SOCKS5 packet.
+After the SOCKS5 Handshake is done, “firefox.exe” starts sending Google TLS Client Hello packet to “tor.exe”, where the packet gets encrypted in the Tor client.
+Moreover, the Google TLS Server Hello packet is sent back from the Tor client.
+From that point, “firefox.exe” starts to send request packets to and receives response packets from “tor.exe” through TCP port 9150.
+On the Tor client side, it receives packets via TCP port 9150 and finishes the SOCKS5 Handshake.
+It then receives the normal packets from “firefox.exe”, which are then encrypted.
+The Tor-encrypted packets are passed to the Tor entry relay in the chosen Tor circuit.
+Finally, the Tor exit relay decrypts the received packets to get normal packets, as seen between “firefox.exe” and “tor.exe”, which will then be sent to the destination server (like www.google.com).
+In the opposite direction, “tor.exe” receives encrypted packets from the Tor entry relay and then decrypts them to get plaintext packets, which are finally sent to “firefox.exe” from “tor.exe” through TCP Port 9150, as shown previously in Figure 7.
+Tor client (“tor.exe”) starts the Obfs4 client “obfs4proxy.exe” once the Tor client receives the “SETCONF” command from Tor Browser.
+“obfs4proxy.exe” opens a random TCP port on the loopback interface to provide Obfs4 Bridge service for Tor.
+It notifies its parent process “tor.exe” of the TCP port number via an inter-process pipe.
+Figure 13 is a screenshot of OllyDbg showing that the breakpoint on the Windows API WriteFile() was triggered when “obfs4proxy.exe” was about to inform “tor.exe” of its TCP port.
+As you can see in the memory, “CMETHOD obfs4 socks5 127.0.0.1:49496” is the data with the TCP port being sent to Tor client.
+This time the random TCP port is 49496.
+The first argument of WriteFile() is a file handle of the inter-process pipe, which this time is 00000100.
+After that, “tor.exe” can establish a connection to this TCP port to communicate with Obfs4 client.
+Tor separately sends the Bridge nodes to that port, one bridge once.
+From the screenshot of TCPView in Figure 14, you can clearly see that “tor.exe” sends bridges to “obfs4proxy.exe” separately.
+This is the entire process of how Tor Browser (“firefox.exe”) communicates with the Obfs4 Client (“obfs4proxy.exe”) through the Tor Client (“tor.exe”).
+In next blog, we’ll explain how the Obfs4 Client (“obfs4proxy.exe”) establishes a connection with the Obfs4 Bridge and how packets are transformed by Obfs4 to bypass censorship.
+In late October, 2019, Tor Browser version 9.0 was released, which removed the two extensions (TorLauncher and Torbutton).
+Without them, the Tor Browser now performs the tasks that these two extensions did previously.
+In fact, during my analysis, I found that the new version did not remove the code of the two extensions, but instead integrated their code into a Firefox JAR file called “omin.ja”.
+This file is loaded and parsed by Firefox when it starts.
+Thereafter, you can find the Tor Network Settings using the menu “Options”-> “Tor”, as shown in Figure 15, below.
+This change in the new version does not affect Tor Browser’s working mechanism, so this analysis is still valid even though it was based on the old version 8.0.
+Read part two of this series to learn how Tor uses Obfs4 Bridge to circumvent censorship.
+Learn more about FortiGuard Labs and the FortiGuard Security Services portfolio.
+Sign up for our weekly FortiGuard Threat Brief.
+Read about the FortiGuard Security Rating Service, which provides security audits and best practices.

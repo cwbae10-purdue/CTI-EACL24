@@ -1,0 +1,151 @@
+I am planning to do a blog series on malware analysis using the Zeus sample that I recently received in an email.
+The idea is not only to share what it does, but to focus mostly on sufficient details (without boring the average reader to death) of how it does what it does, and techniques and tools an analyst can use during the analysis.
+We will be looking at it through various angles and tools.
+It is quite common for malware to have several layers of encoding obfuscations and go through various steps of downloaders.
+Therefore, often a quick first stab at it is to let it run through a locally deployed automated dynamic analysis sandboxing solution such as Cuckoo or use various freely available services such as malwr.
+(Caveat: hastily submitting a targetted attack sample to an online service is not a very good idea, as this can alert the attackers that they have been discovered, but this is not we are talking about today).
+Furthermore, there is a cat and mouse chase going with malware defeating or making it hard to do automatic analysis and reverse engineering, so in many cases it makes sense to just take a look at an infected system via memory forensics and see how malware has established itself on our system, this way we can discover the various different aspects of malware and can work backwards and forewords on pieces that we are interested in further learning about.
+In this post we will take a look at what can we learn from an infected system, using Volatility and how can we extract the final piece of decrypted/decoded/unpacked malicious code for further analysis.
+So it begins with someone who spells her last name with a lower case letter sending me an email so I can review the export License and invoice:
+Kindly open to see export License and payment invoice attached, meanwhile we sent the balance payment yesterday.
+Please confirm if it has settled in your account or you can call if there is any problem.
+Thanks
+Karen parker
+But there is a problem I (and most likely you too) don’t get paid to review licenses and invoices.
+So let’s not worry about the information in the attachment for humans but review what it has for our machines.
+We will use Volatality a free available and very powerful tool for memory forensics.
+The first step is to acquire memory image, we will use the freely available VirtualBox to run a Windows XP VM, and using the technique described here, get a memory dump of the machine after running the attachment that contained an exe (invoice copy) file.
+More specifically I used the technique mentioned in section RAM_dump_with_VirtualBox:_via_pgmphystofile
+The first thing I would do is use psxview which enumerates processes using various techniques and is likely to detect processes hidden by rootkits as well.
+D:downloads&gt;volatility-2.2.standalone.exe –profile=WinXPSP3x86 -f TempXP_SP3_debug_VM_raw_mem_after_zeus.raw psxview
+Volatile Systems Volatility Framework 2.2
+Offset(P) Name PID pslist psscan thrdproc pspcdid csrss
+———- ——————– —— —— —— ——– ——- —–
+0x06541da0 svchost.exe 1140 True True False True True
+0x06531b10 wuauclt.exe 1040 True True False True True
+0x065e44d8 svchost.exe 952 True True False True True
+0x0667f818 VBoxService.exe 820 True True False True True
+0x0655eca8 svchost.exe 864 True True False True True
+0x0662fda0 smss.exe 368 True True False True False
+0x06649228 csrss.exe 584 True True False True False
+0x06384da0 alg.exe 1284 True True False True True
+0x066cebb8 winlogon.exe 608 True True False True True
+0x0658eda0 svchost.exe 2004 True True False True True
+0x0657a9a0 lsass.exe 664 True True False True True
+0x062fb020 wmiprvse.exe 2424 True True False True True
+0x067c69c8 System 4 True True False True False
+0x0658e6f8 VBoxTray.exe 1788 True True False True True
+0x065d4da0 svchost.exe 1100 True True False True True
+0x06581da0 ctfmon.exe 1796 True True False True True
+0x0658a4d8 services.exe 652 True True False True True
+0x066f7da0 jookov.exe 3504 True True False True False <– Were you invited to the party?
+0x066c9b10 explorer.exe 1532 True True False True True
+0x065de7f0 svchost.exe 1056 True True False True True
+0x0662e728 spoolsv.exe 1652 True True False True True
+0x063c6778 wscntfy.exe 1548 True True False True True
+As we will see below that the process has already exited and is not resident in memory, as an example of using knowledge from memory forensics to identify interesting pieces and investigate further, if we wanted to get more information about this suspicious process we can go back to VM, reverting it to a clean snapshot, infecting again and looking at procmon logs or via logs from automated dynamic analysis solution.
+Let’s take a look at log from procmon.exe:
+4:28:23.2233611 PM invoice copy.exe 3472 WriteFile C:Documents and SettingsARApplication DataYnigkejookov.exe SUCCESS Offset: 0, Length: 332,800
+4:28:23.2739396 PM invoice copy.exe 3472 Process Create C:Documents and SettingsARApplication DataYnigkejookov.exe SUCCESS PID: 3504,
+4:28:24.8114842 PM Explorer.EXE 1532 RegSetValue HKCUSoftwareMicrosoftWindowsCurrentVersionRunJookov SUCCESS Type: REG_SZ, Length: 132, Data: C:Documents and SettingsARApplication DataYnigkejookov.exe
+The process was not resident in memory when the dump was taken:
+D:>volatility-2.2.standalone.exe –profile=WinXPSP3x86 -f TempZEUS_invoiceXP_SP3_debug_VM_raw_mem_after_zeus.raw procexedump -v -D .
+-p 3504 Volatile Systems Volatility Framework 2.2
+Process(V) ImageBase Name Result
+———- ———- ——————– ——
+0x864f7da0 ———- jookov.exe Error: PEB at 0x7ffdf000 is paged
+What we have seen so far is that using the Run registry key the malware sets up a process to be started when Windows start, but the process then exits soon, one possible way that malware is still executing is by injecting code in the trusted processes.
+Volatility has several plugins that let us discover this and extract the injected code, note that this extracted code is very likely to be neither obfuscated nor encrypted/encoded, as this is what will be running in the context of the trusted processe(s) and is usually injected there after unpacking/decrypting etc.
+Volatility’s has a bunch of useful commands for Windows Malware Hunting, you can check them out here.
+We will look at some of them mostly the ones that gave us interesting information in this case.
+Running the apihooks command, we can have an idea of what routines does the Malware hook, and will also give an highlevel idea what the malware is upto.
+Taking a look at all the unique functions hooked we see a very interesting list:
+Function: Secur32.dll!EncryptMessage at 0x77fea68d
+Function: Secur32.dll!SealMessage at 0x77fea68d
+Function: Secur32.dll!UnsealMessage at 0x77fea6dc
+Function: USER32.dll!GetClipboardData at 0x7e430dba
+Function: USER32.dll!TranslateMessage at 0x7e418bf6
+Function: WININET.dll!HttpQueryInfoA at 0x3d94879d
+Function: WININET.dll!HttpQueryInfoW at 0x3d94bda8
+Function: WININET.dll!HttpSendRequestA at 0x3d95eea1
+Function: WININET.dll!HttpSendRequestExA at 0x3d9ba6da
+Function: WININET.dll!HttpSendRequestExW at 0x3d9ba733
+Function: WININET.dll!HttpSendRequestW at 0x3d94face
+Function: WININET.dll!InternetCloseHandle at 0x3d949098
+Function: WININET.dll!InternetQueryDataAvailable at 0x3d94bf93
+Function: WININET.dll!InternetReadFile at 0x3d94655b
+Function: WININET.dll!InternetReadFileExA at 0x3d963271
+Function: WININET.dll!InternetReadFileExW at 0x3d963239
+Function: WININET.dll!InternetWriteFile at 0x3d9a6116
+Function: WS2_32.dll!closesocket at 0x71ab3e2b
+Function: WS2_32.dll!freeaddrinfo at 0x71ab2b0b
+Function: WS2_32.dll!FreeAddrInfoW at 0x71ab2b0b
+Function: WS2_32.dll!getaddrinfo at 0x71ab2a6f
+Function: WS2_32.dll!GetAddrInfoW at 0x71ab2899
+Function: WS2_32.dll!gethostbyname at 0x71ab5355
+Function: WS2_32.dll!recv at 0x71ab676f
+Function: WS2_32.dll!send at 0x71ab4c27
+Function: WS2_32.dll!WSAGetOverlappedResult at 0x71ac0d1b
+Function: WS2_32.dll!WSARecv at 0x71ab4cb5
+Function: WS2_32.dll!WSASend at 0x71ab68fa
+So we see that malware is hooking low level socket communication functions, higher level WININET internet communication routines, crypto routines, along with thread creation and dll load routines.
+The processes that were hooked were:
+Process: 1040 (wuauclt.exe)
+Process: 1056 (svchost.exe)
+Process: 1532 (explorer.exe)
+Process: 1548 (wscntfy.exe)
+Process: 1788 (VBoxTray.exe)
+Process: 1796 (ctfmon.exe)
+I am assuming it would be hooking other interesting processes like browsers, had they been running at the time dump was taken.
+Each entry from the output of apihook looks like this
+Hooking module: <unknown>Disassembly(0):
+0x7c90d1ae e9a9c77286 JMP 0x303995c
+0x7c90d1b3 ba0003fe7f MOV EDX, 0x7ffe0300
+0x7c90d1b8 ff12 CALL DWORD [EDX]
+0x7c90d1ba c22000 RET 0x20
+0x7c90d1bd 90 NOP
+0x7c90d1be b836000000 MOV EAX, 0x36
+0x7c90d1c3 ba DB 0xba
+0x7c90d1c4 0003 ADD [EBX], AL
+Disassembly(1):
+0x303995c 55 PUSH EBP
+0x303995d 8bec MOV EBP, ESP
+0x303995f 83e4f8 AND ESP, -0x8
+0x3039962 83ec24 SUB ESP, 0x24
+0x3039965 a1f8170503 MOV EAX, [0x30517f8]
+0x303996a 53 PUSH EBX
+0x303996b 56 PUSH ESI
+0x303996c 57 PUSH EDI
+0x303996d 89442410 MOV [ESP+0x10], EAX
+0x3039971 e8 DB 0xe8
+0x3039972 21 DB 0x21
+0x3039973 25 DB 0x25
+************************************************************************
+So back to how do we extract the binary comprising of the injected code, fortunately, volatility has another plugin malfind that scans processes for memory pages containing injected code and dumps it as a binary.
+Running malfind on the image we get various entries showing various different binaries injected in a process, let’s take a look at what we see in regards to the ntdll.dll!NtCreateThread being hooked in explorer.exe
+We see that malfind detects injected binaries in three different regions in explorer.exe, and it dumps three binaries (if malfind was run with -D option) corresponding to these regions.
+Process: explorer.exe Pid: 1532 Address: 0x2b10000
+Process: explorer.exe Pid: 1532 Address: 0x3010000
+Process: explorer.exe Pid: 1532 Address: 0x3d920000
+Based on the apihook output, the hook for CreateThread is at 0x303995c, let’s take a look at the malfind output for 0x3010000
+0x3010001 5a POP EDX
+0x3010002 0000 ADD [EAX], AL
+0x3010004 0000 ADD [EAX], AL
+0x3010006 0000 ADD [EAX], AL
+0x3010008 0000 ADD [EAX], AL
+So we see that it successfully finds the MZ header as well, that may not be true every time, but we can still work with that, as most of the time the header is corrupted anyways.
+At this point we use impscan that scans and shows us which functions are imported, so we can give it a process id, and a base address where we think the injected code starts and it will tell us the about the imported functions:
+For what we are looking at the moment if we run it as
+impscan -v -b 0x03010000 -p 1532
+This gives us output like
+…
+This also, to some extent, gives us an idea of what the malicious code is upto.
+impscan also used to generate an IDC script to be run in IDA while analyzing the corresponding binary, it does not do that any more, but we can run a script on impscan’s output and get entries like
+We can then open the binary dumped by malfind in IDA (make sure you select open as a Binary File, and not the default “Portable Executable ..”, as the header is usually corrupted or not available and IDA may get confused.
+Don’t forget to rebase the binary to correspond to the the address it is loaded in memory.
+After that you can do
+File -> Script Command and run the above mentioned MakeName entries, and start reverse engineering with dynamic analysis of the injected code.
+This is it for now.
+I look forward to continue this series on Zeus analysis and would like to your comments.
+My VM image soon fetched some AV that was very concerned and was telling me how my machine was infected, but needed some $$$ to fix it.
+I look forward to continuing this series, and welcome your comments and feedback.

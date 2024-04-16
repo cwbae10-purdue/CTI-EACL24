@@ -1,0 +1,96 @@
+Win32/Spy.Hesperbot is a new banking trojan that has been targeting online banking users in Turkey, the Czech Republic, Portugal and the United Kingdom.
+For more information about its malware spreading campaigns and victims, refer to our first blog post.
+In this post we’ll cover the technical details of the malware, including the overall architecture, as well as the mobile component.
+Win32/Spy.Hesperbot is a new banking trojan that has been targeting online banking users in Turkey, the Czech Republic, Portugal and the United Kingdom.
+For more information about its malware spreading campaigns and victims, refer to our first blog post.
+In this post we’ll cover the technical details of the malware, including the overall architecture, as well as the mobile component.
+The Trojan is analyzed in three blog posts: Hesperbot – A New Advanced Banking Trojan in the Wild, Hesperbot Technical Analysis Part 1/2 and Hesperbot Technical Analysis Part 2/2.
+You can download the comprehensive whitepaper here.
+Like many other malware families, Win32/Spy.Hesperbot has a modular architecture.
+As the first step in infection, the victim downloads and runs a dropper component.
+The dropper is also protected by a custom malware packer and distributed in a ZIP archive.
+Figure 1 – Hesperbot initial modules overview
+The dropper’s role is to inject the main component – ‘core’ – into explorer.exe.
+The core then downloads and loads additional modules, plug-ins used to carry out malicious actions.
+Figure 2 – Description of Win32/Spy.Hesperbot modules
+The various modules are available both as x86 and x64 variants according to the host system platform.
+Selected internal functions of individual modules are available for other modules to use through a virtual method table (vtable).
+We have reverse-engineered the malware components and will highlight the most interesting features in the following paragraphs.
+Most malware components were compiled using Visual Studio 2010 and written in the C programming language, but without using the C Run-Time library.
+While this isn’t the most sophisticated malware we’ve analysed, Win32/Spy.Hesperbot can’t be dismissed as amateurish.
+dropper
+The dropper can use one of several methods for injecting the core component into the address space of explorer.exe:
+Starting a new instance of explorer.exe and patching its entry-point using NtGetContextThread to point to its own code (written using WriteProcessMemory).
+This can be done either directly or through an intermediate attrib.exe process.
+Injecting itself into the actual explorer.exe using the elaborate Shell_TrayWnd/SetWindowLong/SendNotifyMessage trick used in PowerLoader and other malware.
+(Aleks Matrosov has published multiple blog posts about it recently, so I won’t go into details here.)
+Injecting itself into explorer.exe using the common approach with CreateRemoteThread
+Interestingly, the injection method is also based on whether the cmdguard.sys (Comodo) or klif.sys (Kaspersky) drivers are found on the system.
+core
+The core module, now running in the context of explorer.exe, handles communication with the C&C server and launching other plug-in modules.
+Typical malware functionality, such as writing to the Run Windows Registry key, is also handled by core.
+In order to access the C&C server, Win32/Spy.Hesperbot.A uses either a hard-coded URL (different ones were seen in the variants used by the Czech, Turkish and Portuguese botnets) or generates new C&C URLs using a domain generation algorithm in case the first server is inaccessible.
+The following information is sent to the command-and-control server:
+Bot name based on the Computer Name
+Botnet name – so far, we have seen “cz-botnet”, “tr-botnet”, “pt-botnet”, “uk-botnet” and “super-botnet” (used in early “beta” versions)
+IP addresses of present network adapters
+Names of active smart-cards
+Information about installed Hesperbot plug-ins
+Figure 3 – Botnet identifier in Hesperbot code
+In return, the server can send:
+A configuration file
+Plugin modules
+An arbitrary executable to run
+A new version of itself
+Several technical details regarding the abovementioned functionality are worth mentioning.
+Firstly, the malware is able to enumerate smart cards present in the system using the SCardEstablishContext, SCardListReaders and SCardConnect API functions.
+Unlike more sophisticated attacks against smart cards (described by Aleks here and here), Win32/Spy.Hesperbot only collects smart-card names and doesn’t contain the ability to interact with them.
+Secondly, the downloaded data (namely the configuration file and plugin modules) is encrypted using the Twofish cipher.
+The 256-bit key is a hash based on:
+Computer Name
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion] “InstallDate”
+Windows version
+Processor architecture (x86, x64 or IA64)
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography] “MachineGuid”
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion] “DigitalProductId”
+For storing the downloaded data as well as other auxiliary binaries (e.g.
+the log created by the keylogger module), Hesperbot uses a randomly named subdirectory under %APPDATA%.
+The core module can inject itself into all running processes.
+Furthermore, an undocumented trick of hooking UserNotifyProcessCreate is used when running inside csrss.exe, to ensure that the trojan’s code will be injected into every new process.
+It’s common nowadays that banking trojans also utilize mobile components (like ZitMo and SpitMo, for instance) in order to bypass banks’ out-of-band authentication through mTANs (Mobile Transaction Authentication Number).
+In the web-inject scripts that we have seen so far, the malware injects code into the website, which prompts the user to install an application on their mobile phone.
+The victim is offered a dropdown list of phone models and after entering their phone number a link to download the mobile component is sent to their phone.
+Three mobile platforms are supported: Android, Symbian and Blackberry.
+Figure 4 – Supported mobile platforms in web-inject JavaScript
+We have analysed the Symbian and Android versions, but haven’t so far been able to obtain the Blackberry malware.
+The Symbian version supports a broad range of devices, including Symbian S60 3rd edition, Symbian S60 5th edition and the latest Symbian^3.
+Both of the analysed mobile trojans exhibit similar functionality.
+First, there is an “activation procedure”.
+The web-inject JavaScript on the Hesperbot-infected computer generates a random “activation number”, which is displayed to the user.
+The user is supposed re-type the number when prompted by the mobile application.
+The mobile app then displays a “response code”, which is calculated from the activation number.
+The user is then asked to enter it back into the webpage on their computer for verification.
+(The injected script contains the same algorithm for calculating the response code as in the mobile component.)
+This functionality provides the attackers confirmation that the victim has installed the mobile component successfully and ties it with the bot infection.
+Screenshot of Android component – Android/Spy.Hesperbot.A
+As expected, the code, both in the Symbian and Android versions (and likely in the Blackberry version as well), registers a service that waits for incoming SMS messages and forwards them to the attacker’s phone number.
+This way the attacker will get the mTAN necessary for logging into the hijacked bank account.
+The mobile code also implements the attacker’s ability to control the service remotely through SMS commands.
+The Android component is detected by ESET as Android/Spy.Hesperbot.A and the Symbian version as SymbOS9/Spy.Hesperbot.A.
+The keylogger module intercepts key strokes by hooking the functions GetMessage and TranslateMessage in user32.dll.
+They are then written to a log file, along with the originating process module name and window title text.
+Afterwards, the log gets sent to the C&C server.
+The screenshots and video capture is done by the httpi module, if specified in the configuration file.
+The video capture functionality has been used by the Zeus banking trojan spin-off Citadel and provides the attackers with an even better overview of what’s happening on the victim’s screen.
+It’s implemented using Avifil32.dll functions AVIFileCreateStream, AVIFileMakeCompressedStream, AVIStreamWrite, etc.
+Figure 6 – Part of Hesperbot’s video capturing code
+The more common screenshot functionality is implemented using the Gdi32.dll functions BitBlt, GetDIBits, etc.
+Hidden VNC
+The VNC functionality has previously been used in the infamous Carberp malware.
+(In fact, Carberp may have also been an inspiration to the Hesperbot creators after its source code leak.)
+It enables the trojan to create a hidden VNC server, to which the attacker can remotely connect.
+As VNC doesn’t log the user off like RDP, the attacker can connect to the unsuspecting victim’s computer while they’re working.
+The VNC session runs in a separate desktop (see CreateDesktop on MSDN), invisible to the user.
+The module also provides the attacker with the capability to launch a browser that’s installed on the host system.
+In this way, the attacker will also have access to all browser-associated data (cookies, sessions, etc.
+).

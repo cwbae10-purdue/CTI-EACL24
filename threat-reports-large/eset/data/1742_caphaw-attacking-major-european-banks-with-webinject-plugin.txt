@@ -1,0 +1,70 @@
+Analysis of malicious code dubbed Win32/Caphaw (a.k.a.
+Shylock) attacking major European banks, with ability to automatically steal money when the user is actively accessing his banking account.
+Malicious code dubbed Win32/Caphaw (also known as Shylock) has been attacking major European banks for more than a year (it started to spread in the fall of 2011).
+Caphaw caught my attention at the beginning of 2013 and I started tracking this threat closely.
+In this blog post I’ve collected the more interesting observations made over this time period, including the fact that this is one of the few pieces of malware that can automatically steal money when the user is actively accessing his banking account.
+(Earlier I published detailed analysis regarding attacks on Russian banks and cybercrime group activity in the Russian region:Carberp, Ranbyus, Hodprot, and others.)
+The most common regions for detecting Caphaw are the United Kingdom, Italy, Denmark and Turkey.
+According to ESET detection statistics, the period when it was most actively spreading was during the last months of 2012.
+ESET Virus Radar statistics show the regions most affected by Caphaw infection during the last week.
+Win32/Caphaw has functionality typical of banking malware and in this part of the blog I describe only its more interesting traits.
+This threat has many techniques for bypassing security software and evading automated malware samples processing.
+Caphaw injects its body into all running processes and has multithreading event based architecture for the execution of C&C tasks.
+Injected malicious code can use inter-process communication (IPC) mechanisms via a named pipe.
+Caphaw sets many hooks for system functions and one of the most interesting intercepted functions is InitiateSystemShutdownEx().
+This hook makes it possible to control the reboot/shutdown process and makes it possible for the malware to restore itself after some antivirus cleaning procedures have been carried out.
+All string constants in the Caphaw body are encrypted by a simple custom algorithm:
+Caphaw provides indirect checks for execution under popular virtual machine environments (VMware, VirtualBox and VirtualPC).
+Caphaw detects virtual machines based on names of active processes and drivers.
+All those names are stored in the custom hash values by following algorithm:
+This is what some example code for VMware detection looks like:
+These tricks make it possible for Capshaw to bypass automated sandbox analysis.
+And every few hours dropper files on the C&C server are repacked by a custom polymorphic cryptor service in order to bypass static detection by antivirus signature.
+Drive-by URLs with repacked droppers look like this list:
+The URLs have the following format:
+https://[random subdomain].
+[domain]/[DIR]/[DIR-random string]/[dropper file]?r=[random number]
+At first glance this may look as if random numbers in URL are created by a special generation algorithm.
+But this is not the case, and it’s possible for the malware to use any random numbers.
+In Caphaw’s body the random number generation algorithm looks like this:
+The URLs for requesting additional modules, webinjects, configuration files and transfer of data to the C&C are in the following format:
+Here’s an illustration of how a bot configuration file request from C&C is built according to a special pattern:
+http://[URL format]/[key]&id=[bot id]&inst=[master or slave]&net[botnet id] &cmd=cfg
+A response from the C&C side looks like this:
+Such responses have the following structure:
+http:// [random subdomain].
+[domain]/[DIR]/[file_name.jpg]?r=[random number]
+The bot configuration file is encrypted by an RC4 stream cypher.
+The encryption scheme has following structure: Base64(RC4(cfg_data)).
+After decryption the configuration file has XML code like this:
+Inside configuration file we find the name of the botnet, C&C addresses and request format for downloadable plugins.
+Win32/Caphaw has functionality for downloading and executing additional plugins.
+All the downloaded plugins for the whole period where we’ve been tracking this botnet are described in the following table:
+plugin name
+detection name
+Description
+A plugin that distributes Win32/Caphaw through Skype for the first time was tracked in January 2013 by Yurii Khvyl and Peter Kruse from CSIS (Shylock calling Skype).
+The next interesting plugin is an MBR-bootkit module (detected by ESET as Win32/Wolcape.A) which is downloaded to infected machines by special request from C&C.
+This bootkit is based on MBR modification and provides manual loading for an unsigned driver.
+The malicious int13 handler (this interrupt reads sectors from the hard drive) in the infected MBR looks like this:
+The malicious driver is stored in the NTFS file system in the following directory:
+The driver module is encrypted by RC4 cipher with a key length 256 bytes, but originally the entropy of the key is 4 bytes due to expansion of 4-byte constant “KuKu” (this constant fills the range with 256 bytes).
+Here’s the call graph for the routine that loads the malicious driver :
+The malicious driver hooks typical system functions for hiding files and processes.
+The most interesting hooks are implemented to intercept \\Driver\nsiproxy and \\Device\Tcp objects in order to monitor/modify network traffic on an infected machine.
+The bootkit module configuration file has the same encryption scheme as user-mode Win32/Caphaw.
+The decrypted configuration file has the same XML structure as Win32/Caphaw, as presented here:
+Downloaded webinjects take the same form as configuration data, but the encryption algorithm is different.
+This first compresses with zlib in deflate mode and subsequently encrypts with the same algorithm with string encryption.
+Decrypted webinjects look like this:
+Here is a list of attacked banks from the latest configuration files with webinjects:
+region
+attacked banks
+One of the interesting details in the code injected into a bank’s web page is the substitution of all phone numbers with fake numbers owned by the attacker (Merchant of Malice: Trojan.Shylock Injects Phone Numbers into Online Banking Websites).
+This substitution is based on a special configuration of webinjects and has a unique structure for the web page of each bank attacked.
+Win32/Caphaw is an interesting financial malware family: one of the few that has autoload functionality for automatically stealing money when the user is actively accessing his banking account.
+An infected user can’t recognize that his money is being stolen, because he sees fake data on the banking web page based on the webinjects’ rules.
+(Autoloads bypass one-time password security checks.)
+The same functionality was tracked in the Carberp (Carberp Gang Evolution), Gataka (Win32/Gataka banking Trojan – Detailed analysis), Win32/Spy.Ranbyus (Win32/Spy.Ranbyus modifying Java code in RBS Ukraine systems) and Tinba malware families.
+Just for the record, ESET antimalware does detect all of these threats.
+Special thanks to my colleagues Anton Cherepanov and Yurii Khvyl (CSIS)

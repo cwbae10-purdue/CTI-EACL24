@@ -1,0 +1,139 @@
+FireEye Labs recently observed an attack against the government sector in Central Asia.
+The attack involved the new HAWKBALL backdoor being delivered via well-known Microsoft Office vulnerabilities CVE-2017-11882 and CVE-2018-0802.
+HAWKBALL is a backdoor that attackers can use to collect information from the victim, as well as to deliver payloads.
+HAWKBALL is capable of surveying the host, creating a named pipe to execute native Windows commands, terminating processes, creating, deleting and uploading files, searching for files, and enumerating drives.
+Figure 1 shows the decoy used in the attack.
+Figure 1: Decoy used in attack
+The decoy file, doc.rtf (MD5: AC0EAC22CE12EAC9EE15CA03646ED70C), contains an OLE object that uses Equation Editor to drop the embedded shellcode in %TEMP% with the name 8.t.
+This shellcode is decrypted in memory through EQENDT32.EXE.
+Figure 2 shows the decryption mechanism used in EQENDT32.EXE.
+Figure 2: Shellcode decryption routine
+The decrypted shellcode is dropped as a Microsoft Word plugin WLL (MD5: D90E45FBF11B5BBDCA945B24D155A4B2) into C:\Users\ADMINI~1\AppData\Roaming\Microsoft\Word\STARTUP (Figure 3).
+Figure 3: Payload dropped as Word plugin
+DllMain of the dropped payload determines if the string WORD.EXE is present in the sample’s command line.
+If the string is not present, the malware exits.
+If the string is present, the malware executes the command RunDll32.exe < C:\Users\ADMINI~1\AppData\Roaming\Microsoft\Word\STARTUP\hh14980443.wll, DllEntry> using the WinExec() function.
+DllEntry is the payload’s only export function.
+The malware creates a log file in %TEMP% with the name c3E57B.tmp.
+The malware writes the current local time plus two hardcoded values every time in the following format:
+<Month int>/<Date int> <Hours>:<Minutes>:<Seconds>\t<Hardcoded Digit>\t<Hardcoded Digit>\n
+05/22 07:29:17 4 0
+This log file is written to every 15 seconds.
+The last two digits are hard coded and passed as parameters to the function (Figure 4).
+Figure 4: String format for log file
+The encrypted file contains a config file of 0x78 bytes.
+The data is decrypted with an 0xD9 XOR operation.
+The decrypted data contains command and control (C2) information as well as a mutex string used during malware initialization.
+Figure 5 shows the decryption routine and decrypted config file.
+Figure 5: Config decryption routine
+The IP address from the config file is written to %TEMP%/3E57B.tmp with the current local time.
+For example:
+05/22 07:49:48 149.28.182.78.
+The malware creates a mutex to prevent multiple instances of execution.
+Before naming the mutex, the malware determines whether it is running as a system profile (Figure 6).
+To verify that the malware resolves the environment variable for %APPDATA%, it checks for the string config/systemprofile.
+Figure 6: Verify whether malware is running as a system profile
+If the malware is running as a system profile, the string d0c from the decrypted config file is used to create the mutex.
+Otherwise, the string _cu is appended to d0c and the mutex is named d0c_cu (Figure 7).
+Figure 7: Mutex creation
+After the mutex is created, the malware writes another entry in the logfile in %TEMP% with the values 32 and 0.
+HAWKBALL is a backdoor that communicates to a single hard-coded C2 server using HTTP.
+The C2 server is obtained from the decrypted config file, as shown in Figure 5.
+The network request is formed with hard-coded values such as User-Agent.
+The malware also sets the other fields of request headers such as:
+The malware sends an HTTP GET request to its C2 IP address using HTTP over port 443.
+Figure 8 shows the GET request sent over the network.
+Figure 8: Network request
+The network request is formed with four parameters in the format shown in Figure 9.
+Figure 9: GET request parameters formation
+Table 1 shows the GET request parameters.
+Initially set to 0
+Initially set to 0
+String from decrypted config at 0x68
+The result of GetTickCount()
+Table 1: GET request parameters
+If the returned response is 200, then the malware sends another GET request (Figure 10) with the following parameters (Figure 11).
+Figure 10: Second GET request
+Figure 11: Second GET request parameters formation
+Table 2 shows information about the parameters.
+Initially Set to 0
+Initially set to 0
+The result of GetTickCount()
+Table 2: Second GET request parameters
+If the returned response is 200, the malware examines the Set-Cookie field.
+This field provides the Command ID.
+As shown in Figure 10, the field Set-Cookie responds with ID=17.
+This Command ID acts as the index into a function table created by the malware.
+Figure 12 shows the creation of the virtual function table that will perform the backdoor’s command.
+Figure 12: Function table
+Table 3 shows the commands supported by HAWKBALL.
+Set URI query string to value
+Collect system information
+Execute a provided argument using CreateProcess
+Execute a provided argument using CreateProcess and upload output
+Create a cmd.exe reverse shell, execute a command, and upload output
+Shut down reverse shell
+Shut down reverse shell
+Get drive geometry and free space for logical drives C-Z
+Retrieve information about provided directory
+Table 3: HAWKBALL commands
+Command ID 17 indexes to a function that collects the system information and sends it to the C2 server.
+The system information includes:
+Active Code Page
+Architecture Details (x32/x64)
+String at 0x68 offset from decrypted config file
+This information is retrieved from the victim using the following WINAPI calls:
+Gethostbyname and inet_ntoa
+GetCurrentProcess and IsWow64Process
+Figure 13: System information
+The collected system information is concatenated together with a semicolon separating each field:
+WIN732BIT-L-0;Administrator;10.128.62.115;1252;437;d0c;Windows 7 32bit
+This information is encrypted using an XOR operation.
+The response from the second GET request is used as the encryption key.
+As shown in Figure 10, the second GET request responds with a 4-byte XOR key.
+In this case the key is 0xE5044C18.
+Once encrypted, the system information is sent in the body of an HTTP POST.
+Figure 14 shows data sent over the network with the POST request.
+Figure 14: POST request
+In the request header, the field Cookie is set with the command ID of the command for which the response is sent.
+As shown in Figure 14, the Cookie field is set with ID=17, which is the response for the previous command.
+In the received response, the next command is returned in field Set-Cookie.
+Table 4 shows the parameters of this POST request.
+Initially set to 0
+Decimal form of the little-endian XOR key
+The result of GetTickCount()
+Table 4: POST request parameters
+The malware creates a process with specified arguments.
+Figure 15 shows the operation.
+Figure 15: Command create process
+The malware deletes the file specified as an argument.
+Figure 16 show the operation.
+Figure 16: Delete file operation
+The malware gets information for the provided directory address using the following WINAPI calls:
+Figure 17 shows the API used for collecting information.
+Figure 17: Get directory information
+This command retrieves the drive information for drives C through Z along with available disk space for each drive.
+Figure 18: Retrieve drive information
+The information is stored in the following format for each drive:
+The information for all the available drives is combined and sent to the server using an operation similar to Figure 14.
+The malware queries the value for the flag BeingDebugged from PEB to check whether the process is being debugged.
+Figure 19: Retrieve value from PEB
+The malware uses the NtQueryInformationProcess API to detect if it is being debugged.
+The following flags are used:
+Passing value 0x7 to ProcessInformationClass:
+Figure 20: ProcessDebugPort verification
+Passing value 0x1E to ProcessInformationClass:
+Figure 21: ProcessDebugFlags verification
+Passing value 0x1F to ProcessInformationClass:
+Figure 22: ProcessDebugObject
+HAWKBALL is a new backdoor that provides features attackers can use to collect information from a victim and deliver new payloads to the target.
+At the time of writing, the FireEye Multi-Vector Execution (MVX) engine is able to recognize and block this threat.
+We advise that all industries remain on alert, though, because the threat actors involved in this campaign may eventually broaden the scope of their current targeting.
+Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 6.1; Trident/4.0; SLCC2; .NET CLR 2.0.50727; .NET CLR 3.5.30729; .NET CLR 3.0.30729; Media Center PC 6.0; InfoPath.2)
+FireEye Email Security
+FireEye Network Security
+FireEye Endpoint Security
+FireEye Email Security
+FireEye Network Security
+FireEye Endpoint Security
+Thank you to Matt Williams for providing reverse engineering support.

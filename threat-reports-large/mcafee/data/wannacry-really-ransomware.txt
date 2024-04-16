@@ -1,0 +1,223 @@
+This post summarizes the significant efforts of a McAfee threat research team that has been relentless in its efforts to gain a deeper understanding of the WannaCry ransomware.
+We would like to specifically acknowledge Christiaan Beek, Lynda Grindstaff, Steve Grobman, Charles McFarland, and Kunal Mehta for their efforts.
+Ransomware follows a relatively simple model: data is encrypted, the victim pays, data is decrypted.
+At least that is what those who create ransomware want you to believe.
+This was also our assumption when we began our analysis of WannaCry—that those behind the campaign would decrypt victims’ data once they received payment.
+However, for a campaign with incredibly effective propagation techniques, reasonable key and data management, and a working anonymous communication fabric with Bitcoin payments, we found a major flaw: The WannaCry attackers appear to be unable to determine which users have paid the ransom and they cannot decrypt on a per-user basis.
+Our analysis into the encryption and decryption functions within WannaCry reveals an effective tool set.
+The authors:
+Created an 8-byte unique identifier (via CryptGenRandom) that identifies the current machine and all the encrypted files on that machine.
+This ID is used in all communications with the back end and is intended to allow per-user decryption.
+(See “Can the attackers be contacted?” for details.)
+Practiced reasonable data sanitization techniques to prevent the recovery of key material.
+(See “Does WannaCry prevent recovery of key material?”)
+Followed reasonable practices to prevent the recovery of plain-text file data.
+(See “Does WannaCry prevent recovery of file data?”)
+Developed a (somewhat unreliable) back end that keeps track of which users have encrypted files.
+(See “Can the authors respond?
+Can they return a private key?”)
+Made file decryption possible, provided that the “Check Payment” interaction with the back end results in the decrypted key being written to 00000000.dky.
+The authors know if the returned data is a key or a message to be displayed to the user.
+The authors must have tested this at least once, and have thus tested full decryption where the need for the correct private key was clearly known.
+(See “Recovering the user’s private key”)
+WannaCry appears to have been written by (at least] two authors or teams with different motives: One author favored Win32 APIs and wrapping those APIs or using object orientation.
+The other author favored C, common APIs (such as fopen), and long procedural functions.
+They may have been responsible for weaponizing the file encryptor/decryptor, but we do not know.
+If we are correct, this code probably introduced the unique ID idea but the interface was not updated to include a way to associate the ID with the user’s Bitcoin wallet.
+One author favored Win32 APIs and wrapping those APIs or using object orientation.
+The other author favored C, common APIs (such as fopen), and long procedural functions.
+They may have been responsible for weaponizing the file encryptor/decryptor, but we do not know.
+If we are correct, this code probably introduced the unique ID idea but the interface was not updated to include a way to associate the ID with the user’s Bitcoin wallet.
+The WannaCry authors demonstrated good technical governance, for example, the key handling, buffer sanitization, and private key security on disk using a strongly encrypted format.
+It is odd that with such good governance, the same group neglected to include something as essential as a unique ID for a user (or instance of attack) because this is mandatory to decrypt a specific user’s files.
+While much of the initial analysis described the WannaCry campaign as “shoddy,” the use of good technical governance suggests that there are elements of this campaign that are well implemented.
+This competence raises doubts that the campaign was shoddy.
+Given the level of capability demonstrated, we would expect the developers would have found and fixed basic errors.
+Indeed, could the inclusion of these basic errors be an attempt to make the campaign appear amateur?
+Without apprehending those behind the campaign, it is impossible to know their motivation; yet a thorough analysis of the technical artefacts questions the shoddy theory.
+What were the attackers’ motives?
+Is this real ransomware or something else?
+For a particular ransomware family to make money in the long term, it must be able to encrypt and decrypt files, and have a reputation that once payment is sent, data can be recovered.
+We have identified three potential motives:
+To make money WannaCry has the key components required for a financially successful campaign—including propagation, key management, data sanitization techniques to prevent data and key recovery, anonymous payment, and messaging and decryption infrastructure.
+To keep ransom payments flowing, the authors used current messaging infrastructure to ask users to send their Bitcoin wallet IDs to the attackers.
+This is the same messaging infrastructure that ultimately delivers the user’s private key, allowing full decryption.
+However, there is limited evidence from the field that payment yields data decryption.
+WannaCry has the key components required for a financially successful campaign—including propagation, key management, data sanitization techniques to prevent data and key recovery, anonymous payment, and messaging and decryption infrastructure.
+To keep ransom payments flowing, the authors used current messaging infrastructure to ask users to send their Bitcoin wallet IDs to the attackers.
+This is the same messaging infrastructure that ultimately delivers the user’s private key, allowing full decryption.
+However, there is limited evidence from the field that payment yields data decryption.
+To test key components of the ransomware This is likely because the malware contains almost no reverse engineering and debugging protection.
+We have already seen new WannaCry variants that are harder to analyze because components download 24 hours or so after infection time.
+This is likely because the malware contains almost no reverse engineering and debugging protection.
+We have already seen new WannaCry variants that are harder to analyze because components download 24 hours or so after infection time.
+To disrupt Ransomware as a destructive mechanism.
+The use of ransomware to destroy or generate noise, though not common, would be a particularly effective tactic.
+Ransomware as a destructive mechanism.
+The use of ransomware to destroy or generate noise, though not common, would be a particularly effective tactic.
+Determining the authors intent is not trivial, and likely not possible with the information available.
+However, to get closer to an answer, the question we need to answer is whether WannaCry is fully functional.
+Analyzing that leads to a few detailed questions that we explored:
+Can WannaCry decrypt files?
+Can the authors be contacted?
+Can the authors respond?
+Can they return a private key?
+Does WannaCry prevent the recovery of files?
+Does WannaCry prevent the recovery of key material?
+WannaCry can communicate with a back end that maintains its state and prevents the recovery of key material and file data.
+If one has the user’s private key, the user’s data can be recovered.
+Despite its bugs and design issues, WannaCry is effective.
+It is not high quality or well implemented, but it is effective.
+The short answer is Yes.
+WannaCry’s encryption, key management, and file formats have been documented by McAfee Labs, so we will not cover that here.
+Instead, we will focus on the decryption tool, which we know makes use of the following API sets:
+Microsoft’s crypto APIs.
+CryptGenKey, CryptGenRandom, CryptExportKey, CryptImportKey, CryptEncrypt, CryptDecrypt, etc.
+CryptGenKey, CryptGenRandom, CryptExportKey, CryptImportKey, CryptEncrypt, CryptDecrypt, etc.
+Microsoft’s file management APIs.
+CreateFileW, ReadFile, WriteFile, CloseHandle, etc.
+CreateFileW, ReadFile, WriteFile, CloseHandle, etc.
+C runtime library file APIs fopen, fread, fwrite, fflush, fclose, etc.
+fopen, fread, fwrite, fflush, fclose, etc.
+Using WinDbg or IDA Pro, we can set conditional breakpoints on the APIs used by @WanaDecryptor@.exe and dump out useful information.
+Given the lack of debugging protection in the ransomware, this is one of the fastest ways to understand WannaCry’s behavior.
+To encourage users to pay the ransom, the decryption tool @WanaDecryptor@.exe can decrypt a small number of files for free.
+After the “free” files have been decrypted, the decryptor looks for the file 00000000.dky, which should contain the user’s private key.
+If found, this key is used to decrypt all files on the system.
+If we have the user’s private key, can we decrypt all files?
+To prove that decryption is possible, we need the private key:
+Break on CryptGenKey and get the handle to any created key pair.
+Break on CryptExportKey and watch the export of the public and private keys to memory.
+Here we can steal the private key and check if decryption works.
+Here we can steal the private key and check if decryption works.
+[Optionally] put break points showing the encryption of the private key with the attacker’s public key (hardcoded within the encryptor binary), and save it to disk in 00000000.eky.
+To analyze the key creation, we can use the following breakpoints:
+Figure 1: Crypto API breakpoints for key import and export.
+As WannaCry initializes, it calls CryptGenKey to generate a new random key, the handle to which is returned in the fourth parameter.
+Figure 2: Creating a new random key.
+Next, WannaCry exports the public key from the generated key and saves it to the file 00000000.eky.
+Note the presence of 0x06 and RSA1.
+This indicates that the exported key blob is a public key.
+To view the key blob, save the address of the buffer and buffer size in temporary registers, allow the function to return, and dump the key blob using the address and size values from the temporary registers.
+Figure 3: Capturing the user’s public key.
+Next, WannaCry exports the private-public key pair to memory.
+Note the presence of 0x07 and RSA2 in the exported buffer.
+Figure 4: Capturing the user’s private-public key pair.
+Immediately afterward, WannaCry encrypts the user’s private key with the attacker’s public key and writes the file to 00000000.eky.
+The contents of this file are sent to the attackers when the user clicks “Check Payment” (as discussed further in “Can the attackers be contacted?”).
+At this moment, the private-public key pair is easily recoverable, so we can issue a command to dump that memory to a file, as shown below:
+Figure 5: Writing the private key to disk from WinDbg.
+In Figure 5, we have given the private key almost the correct name.
+If the file 00000000.dky exists and contains a valid private key that can decrypt files, WannaCry will abort its encryption run.
+To decrypt files, rename the file to 00000000.dky once all files have been encrypted, and click on Decrypt.
+Figure 6: Dialog after WannaCry successfully decrypts all files.
+Based on this analysis, WannaCry is capable of per-user decryption, provided that WannaCry can send the user’s private key to the back end, receive the private decrypted key, and place it in the correct location.
+WannaCry provides two methods of communication with the attackers: the “Contact Us” link and the “Check Payment” button on the main decryptor interface, shown below in Figure 7.
+Figure 7: WannaCry’s Decryptor interface.
+If WannaCry allowed recovery, both interface controls should function.
+Assuming that all communication is over standard network sockets, we can inspect the traffic in real time using WinDbg/IDA Pro with the breakpoints in Figure 8.
+Figure 8: Breakpoints for analyzing network traffic.
+Our goal is to determine what is being sent to and received from the back end.
+The detail is not shown here, but WannaCry makes use of TOR to anonymize communications with the attackers, cycling through many TOR servers.
+We looked for the user’s private key being sent to the back end, where we expected it to be decrypted and sent back if the user had paid the ransom (or if the attackers had decided to randomly decrypt a user’s key).
+We found one message that was large enough.
+An example is shown in Figure 9.
+Figure 9: A large and interesting buffer sent to the back end.
+However, the data did not match any part of the user’s private key stored on disk; could this communication be encrypted?
+Looking at the call stack, we saw several frames:
+Figure 10: Post encryption send call stack.
+Looking at the previous frame, we saw a simple wrapper around ws2_32!send, so this is not an encryptor.
+Figure 11: ws2_32!send wrapper.
+Looking at the frame before the send wrapper in Figure 11, we found a reasonably long function beginning at 0x0040d300 that appears to be responsible for obfuscating the buffer, and we confirmed that using IDA Pro with a second breakpoint, as shown below:
+Figure 12: Message obfuscator function breakpoint.
+Rerunning our Check Payment debugging run, our new breakpoint fired and revealed the message to be sent prior to obfuscation:
+Figure 13: Message to be sent to back end.
+The message encodes information that identifies the user.
+We color-coded the message components in Figures 13 and 15:
+Green: The 8-byte unique ID stored in the first 8 bytes of 00000000.res.
+This is created by a call to CryptGenRandom during WannaCry’s initialization and persists for the life of the attack.
+Orange: The computer name retrieved with GetComputerNameA.
+Red: The user’s name retrieved by GetUserNameA.
+Bold: The Bitcoin wallet ID that the user should have sent money to, and the amount that the user should have paid.
+Cyan: The encrypted user’s private key as read from 00000000.eky.
+Based on the message content, it is reasonable to assert that the attacker’s back end receives all the information required to identify users who have paid the ransom, and should be able to perform per-user decryption, provided there is a mechanism for users to tie their Bitcoin transfers to the 8-byte unique ID that represents their specific encryption instance.
+However, we found no mechanism to do this and there are no interface elements or instructions to help.
+Running the same experiment using the Contact Us interface shown in Figure 14, we sent a message “Hey!
+Can I have my files back?” to the attackers, and using our breakpoint from Figure 12, we determined that a common messaging framework is used.
+Figure 14: Messaging interface.
+Figure 15: Message sent to back end.
+The results in Figure 15 show:
+Both Check Payment and Contact Us appear to use a common messaging format 8-byte unique ID, machine name, username is always sent.
+The payload can vary according to message type.
+8-byte unique ID, machine name, username is always sent.
+The payload can vary according to message type.
+As a result, we conclude that the attackers should have been able to uniquely identify a user but they clearly omitted a mechanism to tie a payment to an ID, making per-user decryption technically impossible.
+Shortly after its release, Check Payment began returning a message to users instructing them to use the Contact Us mechanism to send the users’ Bitcoin wallet addresses, as shown in Figure 16.
+Figure 16: Request for a Bitcoin wallet address.
+This message confirms that the attackers can respond.
+It also gives us an opportunity to analyze the flow of Check Payment messages.
+Using the same send and recv breakpoints from Figure 8, we received the following obfuscated message:
+Figure 17: Encrypted response received from attackers.
+Using the following breakpoint, we then watched for that data being written to the obfuscated buffer; if the obfuscation removal occurs in place, we should be able to look at the decrypted buffer.
+Figure 18: Message decryption breakpoint.
+Once the breakpoint fires, we saw that the message was modified in place:
+Figure 19: In-place decryption of the encrypted message.
+Our analysis of the function in question in WinDbg and IDA Pro indicated that on return the message was in plain text.
+Issuing the gu command to step out of the function, we saw the message decrypted, as shown in Figure 20.
+Figure 20: Decrypted check-payment message.
+This is the same message that we saw displayed in the dialog box, so end-to-end communication is working.
+But, how is this message used?
+Again, we made use of a hardware breakpoint, as shown in Figure 21.
+Figure 21: Hardware breakpoint to track the decrypted message.
+The preceding breakpoint triggers during a call to fwrite to 0000000.dky; the message is written to a file that should contain the user’s private key, as shown below in a subsequent call to WriteFile as part of fwrite, fflush.
+Figure 22: Entire message being written to 00000000.dky
+The entire message, or whatever was sent back to the decryptor, is written to the file 00000000.dky.
+Thus we conclude that Check Payment should return a crypto API key blob for the user’s private key.
+By enabling our key import breakpoint shown in Figure 1, we verified this, as shown below:
+Figure 23: The decrypted message imported as a key in CryptImportKey.
+Note the value of eax at the bottom of Figure 23 after CryptImportKey has returned: eax is 0, which means that CryptImportKey failed.
+If CryptImportKey fails, then WannaCry eventually deletes 00000000.dky and displays the message to the user.
+If CryptImportKey succeeds, the user can successfully decrypt all the files.
+From this analysis, we conclude:
+The WannaCry communication fabric is active and can return messages.
+The WannaCry back end is live and tracking users because the help message is returned only once.
+The WannaCry client expects that a message or private key can be returned from the back end: If the message is not a private key (CryptImportKey fails), the client assumes the message is text that should be shown to the user.
+Private keys are left on disk in 00000000.dky and allow the user to decrypt their files.
+If the message is not a private key (CryptImportKey fails), the client assumes the message is text that should be shown to the user.
+Private keys are left on disk in 00000000.dky and allow the user to decrypt their files.
+Decryption does not work because the authors omitted a link between payment and the unique ID.
+But what happens if a user follows the instructions and sends the Bitcoin wallet ID to the attackers?
+Can the victim decrypt files?
+So far, a tiny sample of victims have reported the decryption of files, but this appears not to be tied to the payment-making function.
+Although the message indicates that a user may be able to get the files back (which supports the theory of shoddy design), our limited testing indicated that decryption keys are not returned and files cannot be restored even after payment, which adds weight to the possibility that WannaCry is a prank or test.
+Yes and no.
+There has been a lot of excellent research showing that in some circumstances, files are recoverable:
+Files on removable and nonsystem volumes.
+Read-only files.
+Temporary files.
+Files stored in the Desktop and Documents folders are the hardest to recover.
+What does this mean for our theories?
+Both are still supported:
+Developer incompetence: Incorrectly deleting and overwriting original files indicates a hurried or poor engineer.
+There is a difference between not realizing that per-user file decryption can never work without the unique ID and running into filesystem processing bugs for large batch operations; errors in batch processing are much easier to explain.
+There is a difference between not realizing that per-user file decryption can never work without the unique ID and running into filesystem processing bugs for large batch operations; errors in batch processing are much easier to explain.
+Prank: The techniques for preventing recovery support the theory that the developers did not go to great lengths to prevent recovery from unpredictable folders and devices: Removable, network, and fixed nonsystem volumes may support file carving as a recovery technique.
+This is also true for devices that make use of wear leveling.
+Online storage folders and some versioning tools may provide alternative recovery mechanisms for files.
+Desktop and documents folders are commonly file locations.
+Many users would not be able to recover most of their files.
+Removable, network, and fixed nonsystem volumes may support file carving as a recovery technique.
+This is also true for devices that make use of wear leveling.
+Online storage folders and some versioning tools may provide alternative recovery mechanisms for files.
+Desktop and documents folders are commonly file locations.
+Many users would not be able to recover most of their files.
+We do not believe that WannaCry file data recovery prevention strongly supports either thesis.
+The most important key for data recovery is the user’s private key.
+We used hardware breakpoints to see what happens to the exported key blob in our earlier example, as shown below:
+Figure 24: Hardware breakpoint to trigger on writes to the key blob.
+When this breakpoint fires, we found the following code zeroing out the exported key blob:
+Figure 25: Assembly of code that modifies the exported key blob.
+Thanks to care taken with data sanitization (such as that shown in Figure 25) and the correct use of CryptDestroyKey, WannaCry keeps the user’s private key in a nonencrypted form for the shortest possible time.
+Thus private key recovery is impractical beyond exploiting issues in the Windows APIs (as described by other authors).
+Although the attacker’s motive may remain unknown for some time, we commend the response from victims, who have generally decided to not pay.
+Our research continues into this campaign; we will release more data as more information arises.

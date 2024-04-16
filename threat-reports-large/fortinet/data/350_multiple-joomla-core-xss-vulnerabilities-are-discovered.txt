@@ -1,0 +1,84 @@
+Joomla!
+is one of the world's most popular content management system (CMS) solutions.
+It enables users to build custom Web sites and powerful online applications.
+More than 3 percent of Web sites are running Joomla!, and it accounts for more than 9 percent of CMS market share.
+As of November 2016, Joomla!
+had been downloaded over 78 million times.
+Over 7,800 free and commercial extensions are also currently available from the official Joomla!
+Extension Directory, and more are available from other sources.
+This year, as a FortiGuard researcher I discovered and reported two Cross-Site Scripting (XSS) vulnerabilities in Joomla!.
+They are identified as CVE-2017-7985 and CVE-2017-7986.
+Joomla!
+patched them [1] [2] this week.
+These vulnerabilities affect Joomla!
+versions 1.5.0 through 3.6.5.
+They exist because these versions of Joomla!
+fail to sanitize malicious user input when users post or edit an article.
+Remote attacker could exploit them to run malicious code in victims’ browser, potentially allowing the attacker to gain control of the victim’s Joomla!
+account.
+If the victim has higher permission, like system administrator, the remote attacker could gain full control of the web server.
+In this blog, I will share the details of these vulnerabilities.
+Joomla!
+has its own XSS filters.
+For example, a user with post permission is not allowed to use full HTML elements.
+When this user posts an article with HTML attributes, Joomla!
+will sterilize dangerous code like “javascript:alert()”, “background:url()” and so on.
+Joomla!
+has two ways to achieve this sterilization.
+On the client side, it uses the editor called “TinyMCE.” On the server side, it sanitizes the request before storing it on the server.
+To demonstrate these vulnerabilities, the test account ‘yzy1’ is created.
+It has author permission, which is not allowed to use full HTML elements.
+To bypass the client side sterilization, the attacker can use a network intercept tool like Burp Suite or just change the default editor to other Joomla!
+built-in editors, like CoodeMirror or None, as shown in Figure 1.
+Figure 1.
+Bypassing the client side XSS filter
+On the server side, I found two ways to bypass the XSS filters.
+They are identified as CVE-2017-7985 and CVE-2017-7986.
+The Joomla!
+server side XSS filter sterilizes dangerous code and saves the safe characters.
+For example, when we post the following code with the test account, Joomla!
+sterilizes it by double quoting the , deleting the , and adding safe links to the URLs, as shown in Figure 2.
+Figure 2.
+Joomla!
+XSS filter
+But an attacker could take advantage of the filter by trying to let the filter to reconstruct the code and rebuild the scripts.
+For example, we can add the code Note that the double quote in is the CORRECT DOUBLE QUOTATION MARK, as shown in Figure 3.
+Figure 3.
+Inserting the PoC for CVE-2017-7985
+When victims access the post, regardless of whether it’s published or not, the inserted XSS code will be triggered in both the main page and the administrator page, as shown in Figures 4 and 5.
+Figure 4.
+CVE-2017-7985 PoC triggered in the home page
+Figure 5.
+CVE-2017-7985 PoC triggered in the administrator page
+When posting an article, the attacker could bypass the XSS filter in an HTML tag by changing the script from to , because the is the mark “:” in HTML format.
+The attacker could then trigger this script code by adding a tag.
+For example, the attacker can insert the following code in an article , as shown in Figure 6.
+Figure 6.
+Insert the PoC for CVE-2017-7986
+When victims access the post, regardless of whether it’s published or not, and click the “Click Me” button, the inserted XSS code will be triggered in both the main page and the administrator page, as shown in Figures 7 and 8.
+Figure 7.
+CVE-2017-7986 PoC triggered in home page
+Figure 8.
+CVE-2017-7986 PoC triggered in administrator page
+Here I provide an exploit example for CVE-2017-7986 that allows an attacker with a low permission account to create a Super User account and upload a web shell.
+To achieve this, I will write a small piece of JavaScript code for creating a Super User account by using the site administrator’s permission.
+It first obtains the CSRF token from the user edit page , and then posts the Super User account creation request to the server with the stolen CSRF token.
+The new Super User will be ‘Fortinet Yzy’ with the password ‘test’.
+An attacker can add this code to Joomla!
+by exploiting this XSS vulnerability, as shown in Figure 9.
+Figure 9.
+Adding XSS code
+Once the site administrator triggers this XSS attack in the administrator page, a Super User account will be immediately created, as shown in Figures 10 and 11.
+Figure 10.
+Site administrator triggers the XSS attack in the administrator page
+Figure 11.
+A new Super User account is created by the attacker
+The attacker can then login to Joomla!
+using this new Super User permission and upload a web shell by installing a plugin, as shown in Figures 12 and 13.
+Figure 12.
+Uploading a web shell using the attacker’s Super User account
+Figure 13.
+Attacker accesses the web shell and executes commands
+All users of Joomla!
+should upgrade to the latest version immediately.
+Additionally, organizations that have deployed Fortinet IPS solutions are already protected from these vulnerabilities with the signatures Joomla!.Core.Article.Post.Colon.Char.XSS and Joomla!.Core.Article.Post.Quote.Char.XSS.

@@ -1,0 +1,60 @@
+Just a week after publishing our discovery of Trickbot’s networkDLL, the FortiGuard Labs monitoring system has found a new module called squlDll that is being actively distributed to the banking trojan’s victims.
+This new component is one of Trickbot’s several modules used for scraping email addresses from the machines of its victims.
+It targets Microsoft SQL Servers using legitimate libraries, similar to what we observed in its mailcollection module.
+Moreover, it is able to scrape credentials from the victim by force enabling WDigest authentication and utilizing the popular Mimikatz tool.
+As usual with Trickbot, the new module is comprised of embedded binaries that we’ve seen in previous modules.
+One of the familiar modules is screenLocker, which was previously assumed to be an underdeveloped lock-for-ransom capability.
+However, our analysis now suggests a different and simpler purpose for it.
+Sub-modules are written and executed in the user’s %TEMP% directory and then deleted after their functions are completed.
+As in previous Trickbot modules, every time a sub-module is executed by the loader, a shared memory is allocated by the main loader that the sub-module can access and use to store collected data.
+The main loader then retrieves the data through the shared memory.
+The first sub-module to be executed is sqlFinder, whose main function is to list all the network-visible instances of Microsoft SQL Servers from the compromised machine.
+To achieve this, it uses the legitimate SQL Server Database Management Objects (SQLDMO.DLL) COM interface to list all available SQL server instances on the victim’s network.
+Another sub-module is executed that gathers email addresses from the collected SQL server instances.
+It uses the ADO COM object interface to talk to the database.
+At first, it attempts to connect to all available SQL servers using Windows Authentication mode.
+If the user that is currently logged in on the infected machine has permission to connect to the SQL server, the connection attempt succeeds.
+After successfully connecting to a SQL server instance, the next thing that it does is to search for target databases.
+All SQL Server System Databases – such as “master”, “tempdb”, “model” and “msdb” – are skipped.
+From the target databases found, it queries all the tables using its information schema and then tries to collect emails.
+In the search_email function, it tries to find email addresses by executing an SQL query using the “LIKE” operator to capture all table field data that matches the wildcard string format, “%%@%%.%%”.
+In an attempt to extract credentials from the victim system, it uses the popular Mimikatz tool.
+One of the methods it uses is to target WDigest credentials that are stored in the LSA memory in plain text.
+When Microsoft released Windows 8.1 they introduced a way to mitigate such an attack by adding a switch in the form of the registry entry
+HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest\UseLogonCredential.
+Basically, the storing of WDigest credentials in memory can be disabled by setting the value of this entry to ‘0’.
+Otherwise, it can be set to ‘1’ as some services rely on WDigest authentication.
+In Windows 8.1 and newer versions, this feature is disabled by default.
+In 2014 Microsoft released a security update to integrate this setting into some older versions of Windows.
+To make sure that the tool succeeds in obtaining plain text credentials, this malware module makes sure that WDigest authentication is enabled by modifying/adding the registry entry.
+However, the user must log in after the feature is enabled in order for the credentials to be stored in the memory.
+This is where the screenLocker module comes into play.
+A number of researchers had previously assumed that this module was a screen lock ransom in the making.
+However, based on its usage here, it has a much simpler purpose.
+It initiates a routine to lock the screen of the victim to in order to somehow force the victim into entering their login credentials in order to log back in.
+This function is only executed on Windows 8/Server 2012 or newer versions.
+An embedded Mimikatz library is then decrypted and directly loaded in memory, which reduces the malware’s physical file trace in the victim’s system.
+The library’s export getUserPasswordPairs is then called to start gathering credentials.
+Trickbot is being actively updated in the wild, and this is just one of the several modules that we’ve found being pushed out to victims in the past few weeks.
+Most of these modules are focused on gathering credentials and scraping email addresses using different techniques – more addresses means more targets.
+As always, FortiGuard Labs will be on the lookout for any major developments of this botnet.
+-= FortiGuard Lion Team =-
+Fortinet users are protected with the following solutions:
+Trickbot components are detected by FortiGuard Antivirus
+FortiSandbox rates Trickbot execution as “High Risk”
+Malicious download URLs and C2s are blocked by our FortiGuard Web Filtering Service.
+File Samples
+b001d11ab1fc2b5ec52a79f6cfe5379a504bc6a79610e2a7dc6a04e74dd5df17 (main trickbot) - W32/Trickbot.KAD!tr
+079dc54026cc88aa72ca3111e1a7416a354ed95e6d0e8adaa0e48f6965d90256 (squlDLL module) - W32/Trickbot.KAD!tr
+696888c3131da282866fc339b78bd6d96b168a6ecfd78c3050fd40b7ebe484f2 (squlDLL module) - W32/TrickBot.AK!tr
+7ea10d92fcd48f3a35743643acd815496a6eb97a8ad1ed15c294034a09f9a579 (squlDLL module) - W32/TrickBot.AK!tr
+9d1393c11c4ead9d78d57ba0a04fa4ca1d66eba50dc0e5f99b43772ef0ad9995(squlDLL module) - W32/TrickBot.AK!tr
+93b057124ba35a9db9da7c04dfc2ccbbeddb4a0658e0376d1f9a11a2eabe32c4(mailCollector) - W32/Trickbot.KAD!tr
+5299d604945baf69032681ce110add6014501556eaafbeadc1e4e5d84b526541(sqlFinder) - W32/Trickbot.KAD!tr
+78f9394590eae9c2d68ff890709b9eb6ef5654d7a5c19dc0ee1b1b82a3c75da2(screenLocker) - W32/TrickBot.AK!tr
+93522b01a8335630a0903303a336bbd7013eeeefaac6efdf7320bb6623c88ed8(mimikatz) - Riskware/Mimikatz
+C2
+https://31.134.52.42:449 (main Trickbot)
+23.95.97.59 (squlDll)
+Check out our latest Quarterly Threat Landscape Report for more details about recent threats.
+Sign up for our weekly FortiGuard intel briefs or for our FortiGuard Threat Intelligence Service.

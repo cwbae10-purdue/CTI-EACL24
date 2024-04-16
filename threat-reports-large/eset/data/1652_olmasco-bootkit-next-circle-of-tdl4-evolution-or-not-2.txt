@@ -1,0 +1,46 @@
+Analysis of the Olmasco bootkit: a TDL4 variation with an interesting approach to dropper technology
+Olmasco (also known as SST, MaxSS) is a modification of the TDL4 bootkit family that we’ve been aware of since summer 2011.
+We started to track a new wave of activity from a new Olmasco dropper at the end of this summer.
+This bootkit family was the second to use VBR (Volume Boot Record) infection to bypass kernel-mode code signing policy since Rovnix (Rovnix bootkit framework updated) appeared in-the-wild.
+After completing our analysis we don’t have a bunch of facts to share about the new modification, because the main component of Olmasco doesn’t display interesting changes.
+Most of the malicious components found in the hidden file system have a timestamp 09/07/2012 and were compiled at the beginning of July.
+The most radically changed (and therefore most interesting) component of Olmasco is its dropper: this features absolutely new dropper code and was developed from scratch for a new distribution campaign.
+The new Olmasco dropper has many tricks on board for bypassing sandbox analysis and includes anti-memory dump protection.
+After the dropper executes, at the unpacking stage the dropper cleans some information from the PE headers as part of the unpacking process and so when it receives control at the OEP (original entry point) the PE headers in the unpacked code are already clean.
+The differences can be seen in the following figures :
+Cleaned PE headers in dropper body Restored PE headers in dropper body
+This trick makes for good protection against memory dumps during the debugging process or when analysis depends on automated unpacking.
+For detecting that execution is taking place in a virtual enviroment and for collecting information about the machine being infected the Olmasco dropper gathers information through the WMI (Windows Management Instrumentation) interface.
+The dropper makes requests over the WMI interface (SELECT * FROM %s WHERE $s LIKE “%%%s%%”) about all known virtual enviroments and emulators (Bochs, QUEMU).
+If a virtual enviroment is detected the dropper kills the execution process and deletes the file from the file system.
+All bootkit and hidden file system components are stored in the encrypted resource section.
+The complete structure of components from the dropper’s resource section looks like this:
+The decryption process uses an RC4 stream cipher and function code is presented in the figure below:
+After unpacking and preparing components from its resource section the Olmasco dropper has three ways of infecting the system:
+1) VBR infection for x64 operating systems
+2) VBR infection for x86 operating systems
+3) MBR infection, which begins if the first and second methods are not working correctly
+Before this version, Olmasco used only one method for infecting through VBR modification, but in the new dropper MBR (Master Boot Record) infection has been added.
+MBR infection has all the same functionality that the VBR method has, and the only significant difference is the infection route.
+The VBR code is only slightly modified from the previous version, mainly in order to bypass static antivirus detections.
+Some instructions look the same in mnemonics view, but include additional zero values in the opcode structure.
+[A technique surprisingly reminiscent of the use of random NOPs as a primitive anti-signature measure in early viruses.
+Just a thought… :-) (DH)] In the following figures we present the differences between previous VBR code and the new code:
+There is one more simple change in its choice of location for storing the encryption key for the RC4 cipher, for extraction of malicious components from hidden file system.
+The structure of the hidden file system (Defeating anti-forensics in contemporary complex threats) hasn’t been changed and looks like this:
+The main procedure for parsing the hidden file system looks absolutely identical to the previous version and confirms the supposition that the hidden file system is exactly the same as the old one.
+This version of the Olmasco bootkit has a new driver tdi32/tdi64 in the hidden file system.
+It follows from the name of the driver and our analysis confirms it that it’s working with the Transport Driver Interface (TDI).
+The driver is initialized from the main rootkit driver drv32/drv64 after the bootkit part of the process is completed.
+For driver installation it uses an old uncommented trick with IoCreateDriver() and following emulation system driver loader.
+The driver was finally installed on the system with the next function call: IoCreateDriver(L”Driverusbprt”, tdi32EntryPoint).
+The malicious TDI driver is attached to the next list of network devices:
+– DeviceTcp
+– DeviceUdp
+– DeviceIp
+– DeviceRawIp
+And the function code for attaching network devices is presented in the figure below:
+The main function of this driver is to monitor TDI_CONNECT requests for network connections.
+If a request is intercepted to IP address 1.1.1.1, then the driver will change it to 69.175.67.172 and set up port number 0x5000.
+Further activity on the part of the malicious TDI driver is associated with another driver that creates a device object with the name DeviceInspect.
+But during our analysis this device wasn’t created on the infected machine and we were not able to find it during the analysis of other Olmasco components.

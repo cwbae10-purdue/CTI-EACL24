@@ -1,0 +1,88 @@
+The FortiGuard Virtualization Execution X (VEX) system – a behavior-based, in-house framework designed to identify zero-day samples – has detected a previously undiscovered iteration of the BlackMoon Trojan.
+BlackMoon Trojan is a banking trojan that is designed to phish user credentials from various South Korean banking institutions.
+It was discovered in early 2014 and was named after a debug string, “BlackMoon”, that was present in its code.
+While the BlackMoon malware code has been constantly updated by its perpetrators, the extent of the campaign's infection is previously unknown.
+This post intends to share the findings of the FortiGuard Lion Team on BlackMoon’s prevalence and its latest code updates.
+PAC file utilization
+Traditionally, BlackMoon used to modify the local Hosts file of an infected system in order to redirect users to phishing pages that are controlled by the attackers when certain websites are accessed.
+However, the latest version of the malware now uses a proxy auto-config (PAC) file to achieve this.
+A PAC file is a function that is used to automatically define the appropriate proxy servers of web browsers for certain URLs.
+It contains a JavaScript function that BlackMoon abuses to intercept user credentials.
+Below is a screenshot of the obfuscated PAC file that BlackMoon sets up on the local host:
+Upon deobfuscating the JavaScript, we can see a list of website hashes that the malware monitors for credentials phishing:
+The malware computes the website hashes using its own algorithm that is also part of the PAC JavaScript code.
+This approach makes it harder for security researchers to identify the targeted websites.
+We back tracked previous samples of BlackMoon to get the previously targeted websites.
+Using the malware algorithm in the PAC JavaScript itself, we generated the hash of these websites and compared them to the hash list above.
+Out of 107 hashes, we were able to confirm 61 targeted Korean websites.
+When a user opens a website that matches one of the hashes in the list, it leads the user into a page that displays a fake error prompt:
+The error prompt then redirects the user to a phishing page that asks for further information:
+This malware is capable of exhibiting the said phishing routines for any Windows browser.
+Controlling code's workflow using anti-debugger
+While previous BlackMoon variants drop and executes a DLL containing its payload, the new version is now distributed via a dropper with neat anti-debugging tricks.
+While these anti-debugging tricks is mainly used to control the workflow of how the program is supposed to be executed.
+The malware first sets an exception handler function by calling the API RtlAddVectorExceptionHandler.
+After that the malware sets multiple hardware breakpoints on the following functions by calling the SetThreadContext API:
+A callback routine within the malware code
+DbgUiRemoteBreakin
+CreateThreadThreadEx+0x20
+SendMessageA
+The very first anti-debugging trick is checking the CPU execution time through GetTickCount.
+The malware creates a thread that constantly run the tick count check at every 500 milliseconds.
+However, the tick count value is obtained using a "code pullout" technique of GetTickCount to ensure that the tick count value obtained will not be tampered by any hooks that attempt to bypass this classic anti-debug check.
+The next and the most notable one is through the hardware breakpoint in SendMessageA.
+In a nutshell, it modifies the prolog of the SendMessageA to EB FE(Jump to self) causing an infinite loop whenever SendMessageA is called by the malware.
+Apparently the malware author attempts to use an extraordinary method to prevent analysis from dynamic debuggers.
+When the debugger is present, the debugger will take control in the event of SendMessageA is called.
+Because of the attached debugger, the Vectored Exception Handling (VEH) registered previously will never be executed and trapped in an infinite loop due to the "Jump to self" instruction.
+Additionally, if one attempts to restore the hook in SendMessageA API, it can either caused the machine running in high CPU, because of the other dead loop routines, or caused system halt by suspending CSRSS.exe depending on the anomalies found when the sample is being debugged.
+To increase the barrier for analysts, it also detects software breakpoints on some of the API functions that is important to the malware.
+In the cases where software breakpoints are found in the following API functions, the malware will also fall into the dead loop:
+GetThreadContext
+SetThreadContext
+RtlMoveMemory
+GetWindowTextA
+IsWindowVisible
+IsWindow
+In the event where debugger is not present, the SendMessageA API will always trigger the VEH handler without being trapped in the "Jump to self" hook.
+As such the malware constantly calls SendMessageA API in order to render debuggers, if any, become useless; this is why we noticed there are tons of SendMessageA API being called repeatedly as shown in the figure below before it actually executes its code injection routine.
+Every time VEH handler takes control, it will also check the tick count value.
+When the tick count value does not match, it will also cause the program trapped in a dead loop.
+In short, performing dynamic debugging using debugger on this malware is synonymously tampering the workflow of the program which will result in the malware refuse to run properly.
+Code Injection
+After reaching the threshold the malware now proceeds to its code injection routine.
+It first creates the process CACLS.EXE in suspended mode and inject its code.
+We aren't sure why CACLS.EXE was picked in this case, as it apparently will increase the suspicion due to the fact that CACLS.EXE is a command line utility and it shouldn't stay running as a background process after execution, which could be effectively treated as an indicator of compromise for non-tech savvy users.
+After the suspended process is in place, it overwrites the CACLS.EXE original image base with the main payload executable which appears to contain backdoor and credential stealing functionalities based on our preliminary analysis.
+To connect to its C&C; server, the malware first downloads its configuration from a social media site which, in turn, responds with a C&C; IP address:
+We discovered that the C&C; IP addresses that BlackMoon uses has an open directory that uses Chinese language.
+Below is a sceenshot of one of the latest BlackMoon C&Cs.
+; It appears to show the IP address and MAC address of infected PCs:
+A rough translation of the page gives us a better picture of the BlackMoon campaign’s prevalence.
+Specifically, the first line shows infection statistics where the total worldwide infection is over 110K.
+A little less than 109K of which is from South Korea:
+While C&C; displays an infection count for South Korean victims separately, it can be seen that PCs from other countries have also been infected.
+These likely account for the 1,280 difference between the Total and South Korea hit counts.
+It is also important to mention that the C&C; filters out duplicate infections in its statistics.
+That means that if a PC is infected twice, only the “Today visits” count is updated.
+Therefore, the infection counts displayed above are more than likely unique infections.
+In addition, we monitored the hourly infection count of the above C&C; from 12:30 4/20/2016 to 15:30 4/22/2016 under GMT+8 time zone.
+We can see that infection count increased significantly in the afternoon, specifically around 15:30 onwards (16:30 GMT+9 for South Korea time zone).
+It is possible that the actors are spreading the malware around this time:
+This research allowed us to understand better the impact of a malicious campaign that has been running for at least 2 years, but has somehow managed to keep a low profile.
+While BlackMoon appears to target South Korean victims, a significant infection count appears to be present from different parts of the world.
+BlackMoon possesses a unique coding style that includes multiple anti-debugging techniques.
+The obvious intention is to prevent it from being analyzed by malware researchers.
+However, putting into consideration all the findings in this post, we see a rather serious and persistent threat that is affecting many users worldwide.
+Fortinet detects BlackMoon binaries as W32/Banbra variants and blocks its network communication via the IPS signature Blackmoon.Botnet.
+With additional inputs from Tien Phan, Tony Loi, Kenny Yang and Floser Bacurio.
+-= FortiGuard Lion Team =-
+IOCs
+Related hashes: 9CB45F0170E80CE0EC8601030C540CB0 W32/Banbra.TLBY!tr DFD4DC577D02B76EFEA004CD2C131FF7 W32/Banbra.TLBY!tr 163F885CC88C0E69A4094122E5667190 W32/Banbra.TLBY!tr 3CFD66340F204E1B8697E7A8514C00AB W32/Banbra.TLBY!tr EE0DEF01D390CA7FD7CED414C83F9782 W32/Banbra.TLBY!tr 2AABD4FA21CCA0F153F57CCC1F3C54C0 W32/Banbra.TLBY!tr BBCBD3DC203829C9CDBF7D1B057F0E79 W32/Banbra.KR!tr
+Drops the file: C:\\WINDOWS\\8000
+Modified Registries: process path: C:\WINDOWS\\system32\\cacls.exe key: HKCU\\Software\\Microsoft\\Internet Explorer\\Main Type: REG_SZ value: Start Page data: www.naver.com
+process path: C:\\WINDOWS\\system32\\cacls.exe key: HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings Type: REG_SZ value: AutoConfigURL data: http://127.0.0.1:1176/{alphanumeric characters}
+process path: {Original Filename}.exe key: HKCU\\Software\\Microsoft\\Windows Script\\Settings Type: REG_DWORD value: JITDebug data: 0
+Autorun: process path: {Original Filename}.exe key: HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run Type: REG_SZ value: {Random Alphanumeric Value} data: {Original Filename}.exe
+C&Cs;: 100.43.185.34 174.139.0.211 107.151.158.196 206.161.216.35 207.226.136.14 100.43.185.42 174.139.194.82 205.209.141.84
+Information stolen in Phishing page: Division: Private customers, Enterprise customer Name Social Security Number Account Number Account password Mobile Phone Number Certificate password

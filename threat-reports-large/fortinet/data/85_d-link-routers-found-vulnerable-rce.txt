@@ -1,0 +1,49 @@
+In September 2019, Fortinet's FortiGuard Labs discovered and reported an unauthenticated command injection vulnerability (FG-VD-19-117/CVE-2019-16920) in D-Link products that could lead to Remote Code Execution (RCE) upon successful exploitation.
+We rated this as a critical issue since the vulnerability can be triggered remotely without authentication.
+Based on our findings, the vulnerability was found in latest firmware of the following D-Link products:
+DIR-655
+DIR-866L
+DIR-652
+DHP-1565
+At the time of the writing of this advisory, these products are at End of Life (EOL) support, which means the vendor will not provide fixes for the issue we discovered.
+FortiGuard Labs appreciates the vendor’s quick response, and we recommend that users upgrade to a new device series as soon as possible.
+The vulnerability begins with a bad authentication check.
+To see the problem in action, we start at the admin page and then perform a login action.
+The login action is performed via the URI /apply_sec.cgi.
+A quick search reveals that the apply_sec.cgi code is located at function do_ssc (0x40a210) in the /www/cgi/ssi binary.
+The value of current_user and user_username are taken from nvram:
+The function then compares the value of the current_user with the value of the variable acStack160.
+The current_user value in nvram will be set only after a successful user login, so by default its value is not initialized.
+The value of acStack160 is the result of base64encode(user_username), and by default the user_username is set to “user”, so there is no way the iVar2 can return a value of 0, so it won’t return to the error.asp page.
+In the do – while loop code, the program calls the function put_querystring_env() to parse the HTTP POST request and saves the value to ENV.
+Next, the function calls query_vars(“action”, acStack288, 0x80)
+This provides the value of “action”, which is saved in ENV to acStack288.
+If successful, the function returns a value of 0.
+With iVar2 equal to 0, we come to the ‘if’ condition.
+It compares the URI value with the string “/apply_sec.cgi”.
+If yes, the ppcVar3 will point to the SSC_SEC_OBJS array, otherwise, it will point to the SSC_OBJS array.
+Now, ppcVar3 is pointing to the SSC_SEC_OBJS array, which is a list of action values.
+If we input a value that is not in the list, the program will return LAB_0040a458, which outputs the error: “No OBJS for action: <action input>”
+You can see where the bad authentication check occurs in Figure 2.
+The code flow still executes even though we aren’t authenticated, which means we can perform any action in the SSC_SEC_OBJS array under the “/apply_sec.cgi” path.
+Where is the SSC_SEC_OBJS action array?
+It is in the register in the function init_plugin():
+When we go to the address 0x0051d89c and convert their variables to word type, we can see the following array:
+There is one action that caught our attention:
+When we go to sub_41A010, this function takes its value from param ping_ipaddr.
+It converts it via the inet_aton(), inet_ntoa() function and then performs the ping
+If we try to input any special character, such as double quote, quote, semicolon, etc., the ping fails.
+Unfortunately, if we pass the newline character, for example: 8.8.8.8%0als, we can perform the Command Injection attack.
+Here, we implement the POST HTTP Request to “apply_sec.cgi” with the action ping_test.
+We then perform the command injection in ping_ipaddr.
+Even if it returns the login page, the action ping_test is still performed – the value of ping_ipaddr will execute the “echo 1234” command in the router server and then send the result back to our server.
+At this point, the attacker can retrieve the admin password, or install their own backdoor onto the server.
+22 September, 2019: FortiGuard Labs reported the vulnerability to D-Link.
+23 September, 2019: D-Link confirmed the vulnerability
+25 September, 2019: D-Link confirmed these products are EOL
+3 October 2019: Public disclosure of the issue and released advisory
+In conclusion, the root cause of the vulnerability is due to the lack of a sanity check for arbitrary commands executed by the native system command execution, which is a typical security pitfall suffered by many firmware manufacturers.
+FortiGuard Labs has rated the vulnerability CVE-2019-16920 in the affected D-Link products to be a high severity level risk.
+It is crucial for D-Link users to upgrade to a new product immediately, as those devices are EOL according to the vendor.
+FortiGuard Labs released the following IPS signature, which covers the vulnerability mentioned:
+DLink.DIR866L.PingTest.RCE

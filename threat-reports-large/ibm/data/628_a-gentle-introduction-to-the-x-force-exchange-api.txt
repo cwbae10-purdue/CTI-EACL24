@@ -1,0 +1,168 @@
+IBM Security recently introduced the X-Force Exchange threat intelligence sharing portal.
+This facility opens the vast trove of current and historical threat information that the IBM Security X-Force has collected since the 1990s.
+X-Force Exchange offers a wide variety of information, including everything from the detailed vulnerability information provided on the X-Force Vulnerability Search page to the IP address, domain and URL reputation information from the X-Force AppLoupe portal.
+The portal provides a Web User Interface and a secure, RESTful, JSON-based application programming interface (API).
+This API allows clients to automate querying X-Force Exchange and to integrate with their systems and requirements.
+The APIs fall into three rough categories:
+A query to retrieve an anonymous authorization token that does not require a login and another to refresh it periodically;
+Public queries that require only an anonymous authorization token;
+Authenticated queries that require an authenticated authorization token.
+This article focuses on the public queries that clients can invoke with an anonymous authentication token.
+A blog article doesn’t have room to cover all of them in detail, so we’ll provide an overview of a few.
+On the lower left of the X-Force home page lies a link to the API.
+This page identifies the queries and options and the data model for the JSON results.
+It even allows you to interactively run the queries, showing an equivalent curl command, the request URL and the response body.
+This offers quick query testing before enshrining them in an application.
+As with many Web-based applications, X-Force Exchange omits response fields that have no value in the database.
+Clients must pay attention to the Model and Model Schema tabs on the documentation page to ensure they have all the necessary fields, and they must be prepared for certain values not to exist in some responses.
+You can get more detailed help using the xforce-exchange tag in IBM developerWorks.
+Excluding authorization and the TAXII interface, the public APIs fall into seven basic categories, each providing current data and some offering historical data.
+The /resolve/ query retrieves DNS information for domain names, URLs and IP addresses.
+It returns a JSON object that represents common DNS record types.
+The report accounts for both current (live) and historical information for the domain, including the results of passive DNS monitoring by the IBM Security sensor network.
+The /app/ queries return information on Internet Application Profiles (IAPs) for services such as Facebook, NFL.com and Instagram, among the reputable.
+Of course, the database includes many less-than-reputable applications, as well, and it offers risk assessments and categorization for each.
+Three queries allow clients to enumerate the IAPs, conduct full-text search for applications and retrieve the application specifics.
+Three /ipr/ queries retrieve IP address, geolocation, risk ratings and content categorization for IP addresses and subnets.
+These include malware samples associated with the IP address, if any.
+One query retrieves the reputation report for an IP address, another retrieves the reputation history and the third retrieves records of associated malware.
+The two /malware/ queries retrieve details on malware identified by name, family or MD5 hash.
+The results include details of domain names and IP addresses associated with the malware, as well as its detected origins.
+For example, malware detected attached to spam or phishing emails reports the subject of the emails in addition to the origin IP address and purported origin domain.
+A pair of /signatures/ queries retrieves details of security signatures implemented in network protection products.
+One query allows full-text search of the signature definitions, while the other allows clients to retrieve signature details.
+The /url/ queries retrieve URL risk ratings, content categories and malware information, complementing the IP address and domain queries.
+One retrieves the reputation and history of a URL, while the other retrieves information related to malware associated with the URL.
+The vulnerability information in X-Force Exchange is the aspect most likely to seem familiar to users of the X-Force database.
+X-Force Exchange and the API provide access to all the public vulnerability information amassed by X-Force since the 1990s.
+The vulnerability records provide not just details on a vulnerability, but also offer links to relevant online documents and CVSS scoring with component breakdown.
+New vulnerabilities entered into the system now receive CVSS V3 scores with breakdown, the only source using CVSS V3 at the moment.
+Four queries give access to this data:
+Retrieve the vulnerabilities most recently added to the database;
+Full-text-search the vulnerability database;
+Retrieve vulnerability details identified by an X-Force Database ID (XFDBID);
+Retrieve vulnerability details identified by industry standard identifiers, including Common Vulnerability Enumeration (CVE), CERT-CC VU number, Red Hat RHSA number and Bugtraq ID (BID).
+The queries offering full-text searching contain fulltext in their query paths.
+They allow you to perform case-insensitive searches for specific strings, optionally with single- and multiple-character wild cards (the ?
+and * characters, respectively).
+They also support more powerful search syntax using the Lucene query specification.
+The search language:
+Provides boolean operators AND (+), OR and NOT (-);
+Allows precedence grouping with parentheses;
+Offers fuzzy searching by adding a tilde (~) character to the end of a search term;
+Can even emphasize particular terms using the caret (^) operator.
+For example, the search phrase:
+will search for reports including the word email and also either the word stems phish or spam, but specifies that results matching the phish stem are twice as important.
+The API applies the search to all database fields that contain natural text, such as descriptions and titles.
+The Query Parser Syntax documentation at the Apache Software Foundation provides details on the search language syntax.
+You should pay particular attention to the Escaping Special Characters section of that document.
+In addition, the you must properly encode the search phrase so that it can form part of a valid URL.
+The full-text search queries return a maximum of 200 items, so you may have to add search terms to narrow results.
+Though X-Force Exchange has only existed for a short time, open-source client projects popped up very quickly on GitHub.
+If you use the same language as one of these, you can avoid doing some of the interface work.
+Note that none of these represent official IBM projects, nor does IBM endorse any of them.
+The goxforce project provides a Go language, or Golang, library.
+The ibmxforceex.checker project offers a Python library.
+The xForce project brings limited support for the R programming language.
+The Golang library seems to cover the largest subset of the API, with the Python project a close runner-up.
+The R project focuses on analyzing and graphing risk scores for IAPs.
+However, those fundamentals provide plenty of examples for extending it to cover more of the API.
+This rest of this article covers some of the nuts and bolts of interacting with the X-Force Exchange API, in case you implement your own interface.
+The examples use ECMAScript (JavaScript) since Python and Go are covered above.
+We present only snippets and examples rather than production code.
+In that vein, the examples use the HTTPS and JSON modules directly, rather than a richer framework.
+Since https.get() queries operate asynchronously, the call generally returns before the client receives a response.
+The examples encapsulate this operation in a function called startRequest().
+The caller passes in the full path for the query, including any parameters, all nicely escaped to be legal as URL components.
+The caller also passes the name of a function to process the JSON results.
+The startRequest() function uses a global variable called xfeOptions as a template of the access parameters for https.get().
+The HTTPS module expects those parameters to be delivered as a dictionary:
+The IBM Bluemix platform serves the X-Force Exchange API from the api.xforce.ibmcloud.com host over HTTPS (port 443).
+The queries use HTTP GET requests, and the API presents JSON-formatted results.
+The function makes a copy of the xfeOptions template and sets the query path using the path string argument.
+Then it invokes https.get() to actually make the request and receive the response, using callbacks to process errors, additional data and completion.
+Upon completion, the function dissects the response with the JSON parser and passes the results to the caller-supplied function.
+The startRequest() function:
+Similar to many network APIs, the X-Force Exchange API omits empty response values to conserve bandwidth.
+That means that you must take care to ensure that individual response values actually exist before trying to manipulate them.
+You must acquire an anonymous authorization token before any public API queries will succeed.
+The public API queries (except /auth/anonymousToken) require a valid authorization token in each request’s headers.
+To retrieve the authorization token, make a request to the /auth/anonymousToken API.
+The full URL for the request:
+If the request succeeds, it returns a JSON object containing a single token object, which contains a really long string.
+After receiving the response, you must extract the authorization token value and stash it away for use in subsequent queries.
+Each public API query must include the value “Bearer ” (note the space) followed by the token string as the value of its Authorization header.
+The startRequest() function expects that the processing function saved an appropriate header in the xfeOptions structure:
+These authorization tokens persist for three days.
+You can periodically revitalize existing tokens with the /refresh query or request a completely new token with the /auth/anonymousToken query.
+You can also use the token until queries return error 401 (Not Authorized) and refresh or replace the token at that time.
+With the token — or header, as it were — in hand, the public API opens for your business.
+In the discussion below, space constraints prevent full listings of the JSON results of these queries.
+You can use the interactive query capability of the X-Force Exchange API help page to see the full scope of the results.
+One of the simplest X-Force Exchange API queries retrieves current DNS data about a fully qualified domain name (FQDN), an IP address or a URL.
+The results provide additional value over actual DNS queries by integrating information accrued passively by the IBM Security sensor network in addition to the information that the DNS system provides in a live query.
+The request itself uses a simple syntax, and the results mirror those of common DNS queries.
+The query takes the form:
+where you replace {search-term} with the target of the query.
+For example, to retrieve information on the www.schneider-electric.com FQDN, you compose the query:
+We pick on this domain because it returns interesting results, as you will see below.
+The JSON result contains components reflective of DNS record types.
+In particular, it contains IPv4 and IPv6 address information, text records and mail exchange (MX) information.
+The JSON object represents these values as objects named after their DNS record type, when they are present.
+For example, only some domains can resolve to IPv6 addresses, so only some domains return AAAA objects.
+The response potentially contains objects named A, AAAA and TXT to represent the similarly named DNS records.
+Each holds an array of strings expressing the values.
+The response may also contain an object named MX to supply mail exchange information.
+The MX object contains an array of objects, one for each mail exchange.
+Each of those objects contains fields named exchange and priority, which supply the name of mail exchange server and its priority, just as a DNS MX query would.
+At the time of writing this article, the example domain returned the following:
+I mentioned interesting results earlier, and this is when things get interesting.
+Retrieving information about malware associated with a URL or domain uses a query as simple as the previous one, but it produces more complex results.
+The syntax of the query:
+As before, replace {url} with www.schneider-electric.com to produce the query:
+These results might surprise the network operations team at Schneider Electric!
+When writing this article, the query returned five malware samples associated with this domain, all detected between May 7, 2015, and May 26, 2015.
+Apparently, during the month of May, some enterprising spammers forged the domain name on spam email.
+The query returns a single JSON object named malware, containing an array of one object for each malware sample associated with the domain.
+Each object contains several fields that describe the malware instance and its association with the domain.
+type returns “SPM” in all five records, indicating that the malware was attached to spam emails with sender addresses in the domain.
+Other sources would report different type values as appropriate.
+The md5 object provides the MD5 hash for the sample to allow further queries in X-Force Exchange and other services.
+domain indicates that the sender address of the spam email was schneider-electric.com.
+The object ip gives the IP address from which the spam message originated.
+firstseen and lastseen identify the oldest and newest times the sensor network detected the sample, and count gives the number of instances seen.
+family offers a list of strings identifying families to which the malware belongs, such as Spam Zero-Day in this example.
+The evidence for address forgery comes mainly by checking the IP addresses from which the spam messages were sent.
+Obviously any email could forge any sender address regardless of the actual sender.
+The five samples originated from four different IPv4 addresses: 24.243.102.12, 24.173.27.194, 78.10.106.142 (two different samples) and 105.237.120.134.
+If they really originated with Schneider Electric, five samples probably would not originate from four different IPv4 addresses in widely scattered subnets.
+Further, checking those IP addresses, we find that exactly none of them have any apparent affiliation with the company or its domain name.
+Finally, let’s look at a query with very complex results: the malware query.
+This API takes the MD5 hash of a malware sample and produces a report of the instances and the context in which the IBM Security sensor network detected it.
+The query looks like:
+Using the first MD5 returned in the previous query, we get the request:
+Now you see what I mean by complex.
+The response JSON data contains a single object named malware, and it looks pretty simple at first.
+Then you notice that it contains a variety of objects that contain other objects, etc.
+The simple objects in the malware object identify high-level attributes of the malware sample:
+type identifies the type of report, in this case “md5.”
+Created gives a timestamp for the creation of the database record for the sample.
+Mimetype specifies the MIME data type that contained the malware when the sensor network detected it.
+Md5 reiterates the MD5 hash value passed in the query.
+The remaining response objects contain other objects.
+The family array provides the names of malware families in which X-Force Exchange categorizes the sample.
+For each family name, the familyMembers object contains a count of the number of samples of that family detected by the sensor network.
+The entries in the familyMembers array take the name of the family and contain an attribute count giving the count for that family.
+For example:
+[insert-content id=”377813″]
+Finally, the origins object contains four objects, each of them complex and possibly empty.
+The emails array contains details of email messages in which the sensor network detected the malware, and the objects in the subjects array describe the subject lines of those email messages.
+The CnCServers array contains objects giving details related to command-and-control (C&C) servers associated with the malware.
+Finally, the downloadServers array contains objects giving details of servers from which clients downloaded the malware.
+Each of these four objects contains two objects: count identifies the number of objects, and rows contains one object for each server.
+The objects in each rows array have different fields, determined by which of the four objects (emails, subjects, CnCServers or downloadServers) contains them.
+This article barely scrapes the surface of the X-Force Exchange API capabilities.
+As previously mentioned, the API help page provides the details of all available queries, describes their results and lets you interactively test them.
+Though X-Force Exchange only rolled out a few months ago, it continues to grow both in the scope of the data it hosts and the requests it supports.
+As the query capabilities expand, the API help page will document the additions.
+Doug Franklin is a Research Technologist at IBM Security Systems X-Force.

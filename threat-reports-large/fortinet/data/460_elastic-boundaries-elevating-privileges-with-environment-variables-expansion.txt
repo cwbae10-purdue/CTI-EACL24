@@ -1,0 +1,125 @@
+FortiGuard Labs Threat Analysis Report: This blog originally appeared on the enSilo website on August 18, 2016, and is republished here for threat research purposes.
+enSilo was acquired by Fortinet in October 2019.
+Even though any process includes variables from its environment, they are often overlooked by users, developers, and sometimes even by the OS itself.
+These environment variables are an essential part of any decent operating system, including but not limited to all flavors of Unix (Linux, BSD), Windows, and OS X.
+However, environment variable expansion also allows an attacker to gather information about a system prior to an attack, and eventually take complete and persistent control of the system at the time of choice by running a single user-level command, or alternatively, changing one registry key.
+The ShellShock exploit, for example, allowed command execution on Unix systems by environment variable injection.
+In Windows, this vector lets an attacker’s code, in the form of a DLL, load into legitimate processes of other vendors, or the OS itself.
+It can then masquerade its actions as the target process’ actions without having to use code injection techniques or memory manipulations.
+Third-party services that run on behalf of an administrator may also be vulnerable to this attack, allowing regular users to elevate their privileges inside the system.
+Any environment includes a collection of variables that are available for processes or users to read or write.
+In the world of Microsoft operating systems, they have existed since the first version of DOS, made their way into Windows, and are still around in current versions as well.
+These variables can be set by users, programs, or the OS, and are used to provide flexibility when running a process.
+Some examples of these variables includes paths in the file system, user names, and flags that control execution flow.
+Environment variables in Windows, for example, can be read and written using the DOS command set:
+Read:
+set <variable>
+Write:
+set <variable>=<value>
+Typing “set” alone on the command line will display all currently available variables.
+Note that “currently available” in this context means available to the very same process – the command interpreter run by the user.
+There is also an API function that can be used programmatically instead of the “set” command that produces the same result:
+Kernel32!SetEnvironmentVariable
+Changing the values of these will have an effect only on the current process and its children.
+In addition, wherever allowed, the system will replace any %VARIABLE% with its value.
+This replacement process is called “expansion”.
+For example, if we type on the command line:
+echo %username%
+The resulting output is the value of the variable after expansion.
+The command will have the same effect as if we initially typed our username instead of %username%.
+As said earlier, any environment variables that have been set by a process are available to that process and its children.
+Using Windows’ terminology, this type of environment is referred to as a “volatile environment.” It remains when the process is running and leaves no trace when the process terminates.
+In Windows there is also another kind of environment variable collection which is system-wide and persistent across reboots.
+It can be set in the system properties page by an administrator and affect all users through the use of the “setx” command, or directly by setting registry values under the key:
+HKEY_CURRENT_USER\Environment
+The Windows registry supports a value type of REG_EXPAND_SZ.
+This is a registry value of type string that instructs the reading process to expand any variable inside of it.
+This expansion process is carried out before the value is used by the application.
+It ensures the smooth operation of programs that depend on values in the registry without forcing the developer to keep track of environment variable values.
+Searching through the registry, it is clear that many programs, libraries, and objects are referenced using an expanded path that, in turn, is dependent on the environment.
+The most common variable is named “SystemRoot.” Under normal conditions, it points to the path where Windows is installed, typically “C:\Windows”.
+In a nutshell, we have environment variables that are available to Windows processes, are automatically expanded, and can be set by a user.
+Some of Windows’ libraries are referred to by these paths as well.
+Assumption
+If a DLL file is loaded by an expanded environment string, then an attacker can have a process load it by changing the environment variable provided to that process prior to its creation.
+In other words, any process that is a child of a process that is under the attacker’s control will have its environment set by the attacker for it.
+Possibility
+The loaded DLL—whether copied, modified, or completely replaced—will have the same permissions as the process that has loaded it.
+This is an effective way of “injecting” a DLL into a different process without using any injection techniques.
+Application
+The easiest way to implement this is using the command line.
+Generally speaking, the flow would be similar to:
+Make a copy of C:\Windows in C:\Wherever*
+Set environment variable: set SystemRoot=C:\Wherever
+Kill and restart explorer.exe process taskkill /F /IM explorer.exe C:\Windows\explorer.exe
+Explorer will start and load quite a few DLLs from the attacker’s directory.
+The attacker can replace them and change the execution flow
+* Only a few files are really needed but the method is intentionally simple
+This is basically the same as the previous scenario except that the another factor is added to the equation, as follows.
+In Windows, APIs that require a file or directory path will usually accept a UNC path that points to a remote machine.
+The process will try to access the given path using SMB protocol.
+Assumption
+If the attacker makes %SystemRoot% expand to a UNC network path, Windows will try to load the image from that remote path using SMB protocol.
+Possibility
+The loading of a DLL remotely from a server that is under the control of the attacker via SMB also divulges the victim machine’s IP address.
+Authentication against the remote server will be attempted using the logged in user’s credentials, providing the attacker with additional information.
+Application
+Same as Scenario 1, but using a remote path instead.
+For example, we can use the local machine shared C drive:
+set SystemRoot=\\127.0.0.1\c$\Windows
+Until now, an attack was not persistent, meaning that restart of the system, or even a restart of the process would reset everything back to normal.
+Assumption
+The attacker can set permanent (non-volatile) environment variables that will have an influence over the system control flow, regardless of whether a reboot occurs.
+Possibility
+Have a DLL loaded remotely during OS startup, or when specific conditions are met.
+Application
+Same as Scenario 1, but instead of the set command the attacker may use setx:
+setx SystemRoot C:\Wherever
+A restart of the system will start loading DLLs from the attacker’s directory into various processes.
+So far, we talked about environment variables under the attacker’s control that may have an effect on other processes.
+These other processes all belong to the user who executed the command in the first place, and are run with medium integrity level.
+However, yet another flaw exists.
+If the user is allowed to execute processes with elevation, as defined by Microsoft’s User Account Control mechanism, the process will be created as a child of svchost.exe, which has a preset environment outside the user’s control.
+The thing is that the child process created will get a copy of the current user’s environment despite it being a child of svchost.exe.
+Bypassing the Windows UAC mechanism may or may not be called elevation of privileges, depending on the reader’s philosophy.
+On one hand, Microsoft does not regard this as a vulnerability, but it usually does require actions to fix these issues.
+As ethics require, we have reported this issue to Microsoft and received a “non-vulnerability” response prior to publishing this article.
+Assumption
+Under default configuration, there are particular processes that are granted high integrity (or elevation) without the user’s consent.
+Generally speaking, what this means is that there is a collection of executables chosen by Microsoft that are allowed to run silently.
+This list is supposed to present a reasonable trade-off between system security and a user-friendly experience.
+However, an attacker can leverage this compromise and make the OS run one of these special executables while loading an untrusted DLL, thereby running the given DLL with elevated privileges while bypassing the security mechanism.
+Possibility
+This could result in the elevation of privileges without the user’s consent or notice, which is possible on default configurations.
+Security oriented Administrators may choose to improve security by overriding the default UAC setting, causing Windows to show a prompt for any process that requests this permission.
+However, an attacker can still place a malicious DLL file to be loaded later with the user’s consent.
+This kind of trap can be set up using many legitimate processes.
+Windows task manager (taskmgr.exe) is one example.
+Application
+This is similar to the Set environment explained in Scenario 3.
+It enables an attacker to run an auto-elevated process as Administrator.
+In our example, we used lpksetup.exe:
+ShellExecute(0,”runas”,”C:\\Windows\\System32\\lpksetup.exe”,NULL,NULL,0);
+In the previous example, we demonstrated the use of ShellExecute to run an elevated program.
+Windows also provides COM objects for the user to load.
+The concept and inner workings of COM is outside the scope of this post, but for our purpose they are not much different than the regular processes, executables, or libraries that are loaded using a different mechanism.
+Assumption
+If there is a COM object that is allowed to load with elevated privileges, and without the user’s consent, the attacker can use that mechanism instead of executing a command and creating a process of their own.
+Possibility
+Elevation of privileges, without spawning new processes.
+Application
+For this example, the object of choice is a COM interface provided by Windows that allows the changing of firewall settings.
+This is essentially the same as Scenario 4.
+The CLSID of this object is {752438CB-E941-433F-BCB4-8B7D2329F0C8}
+CoInitialize();
+CoCreateInstance() with the given CLSID, returning a pointer to an IFwlCpl interface.
+IFwlCpl->LaunchAdvancedUI()
+This will load mmc.exe, the Windows management console, with elevated privileges under svchost.exe.
+AT the same time, it will load a DLL from the attacker’s C:\Wherever.
+Environment variable expansion in Windows allows an attacker to gather information about a system prior to an attack, and eventually take complete and persistent control of the system at the time of choice by running a single user-level command, or alternatively, changing one registry key.
+This vector also lets the attacker’s code, in the form of a DLL, to load into legitimate processes of other vendors, or the OS itself.
+It can then masquerade its actions as the target process’ actions without having to use code injection techniques or memory manipulations.
+Third-party services that run on behalf of an administrator may also be vulnerable to this attack, allowing regular users to elevate their privileges inside the system.
+Proof of concept Python script is available in the BreakingMalware GitHub repository.
+Learn more about FortiGuard Labs threat research and the FortiGuard Security Subscriptions and Services portfolio.
+Sign up for the weekly Threat Brief from FortiGuard Labs.

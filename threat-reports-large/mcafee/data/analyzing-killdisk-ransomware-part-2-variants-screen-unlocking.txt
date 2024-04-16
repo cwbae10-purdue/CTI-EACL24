@@ -1,0 +1,134 @@
+This blog post was written by Sudhanshu Dubey.
+At McAfee Labs we recently analyzed the ransomware KillDisk.
+In part 1 of this analysis, we discussed the basics of the malware and its whitelisting to protect itself.
+In this part, we will provide more information about the malware’s internals, this variant, and steps to unlock the ransomware lock screen.
+Variant 1.
+This variant seems to be inspired by the TV series “Mr.
+Robot.” The lock screen uses the string “We are fSociety”:
+The KillDisk ransom note.
+While analyzing the encryption process of this variant, we observed some strange behavior.
+In contrast to Variant 2, this one behaved more like a destroyer, overwriting all the files with specific bytes.
+This step makes the data irrecoverable.
+Hence this variant’s block screen has no payment information.
+Instead, it appeals to victims to join them.
+Variant 2.
+This variant works like normal ransomware, encrypting data files.
+It keeps the encrypted data in each locked file along with some more bytes including an infection marker.
+For more information about this variant, refer to Part 1 of this post.
+Analysis
+Although the encryption of both the variants is different, they show the same arguments and behavior based on those arguments.
+We found three arguments, which we shall discuss.
+-set
+-est
+-opt
+KillDisk uses these arguments in key-value pairs and checks the values for the given key.
+-est.
+The value of this argument is in minutes.
+This argument is used to store the “current time + minutes” in the registry.
+-set.
+This argument is used to create service and registry entries.
+It receives the value in Date#Time format (for example, “-set=20.12.2016#05:00”) to fill the registry entry it creates.
+Before proceeding, it tries to get the handle of the event using OpenEvent() API, to check whether the malware is already executed.
+The event name has the following format:
+Global\{CLSID}
+If the malware finds the event, it first cleans up the registry and deletes the service.
+It then recreates the service and the registry with updated values.
+The malware uses the WinExec() API to execute the sc command, which creates a service whose binary path is set to itself, along with argument -opt=svc.
+(We will explain later.)
+Calling WinExec() to create a service.
+Both variants have different service names.
+The following screenshots show the services created by the variants.
+Services installed by KillDisk (both variants).
+Comparing the registry keys created by the variants, we infer that they have different names and paths.
+But the data in the registry values are the same and have been filled using the same method.
+KillDisk uses –set and –est argument values passed to the executable.
+It creates three registry values that store time, in TimeStamp format, that is, seconds since 1/1/1970.
+Here is more information about registry values:
+First registry value : Current time
+Second registry value : Time given with -set argument
+Third registry value : Current time + minutes given in -est argument
+The following screenshot shows the registry entries created by the malware when executing with the arguments -set=20.12.2016#05:00 -est=1440:
+Registry entries.
+Both the variants use different registry path, key and value names.
+-opt.
+This argument has five values:
+frc
+chk
+cnc
+svc
+pic
+The malware’s behavior depends on the values of this argument, which the malware keeps in encrypted form.
+Before comparing the argument values, KillDisk first decrypts them.
+The following code snippet shows the decryption and comparison of argument values:
+Decrypting and comparing -opt argument values.
+Let’s see how the malware behaves with different argument values.
+-opt=pic.
+This value leads to the creation of the ransom note and locking the screen.
+The malware imports functions from GDI32.dll and User32.dll to design the image.
+It opens a window using the CreateWindow() API and then creates the image over it.
+The following code snippet from Variant 2 draws the ransom message on the screen:
+Ransom note creation code in Variant 2.
+RGB (255, 83, 0) is a shade of orange.
+After creating the ransom note, KillDisk starts a thread that keeps the window always on top by using the SetWindowPos() and SetForegroundWindow() APIs with specific arguments.
+The following code keeps the ransom note on top:
+The HWND_TOPMOST flag places the window above all non-topmost windows, even after the window is deactivated.
+-opt=frc.
+This value triggers the encryption process.
+Variant 1, the destroyer malware, overrides the files with 0x100 bytes that contain either the string “mrR0b07” or “fS0cie7y,” both inspired by the TV series “Mr.
+Robot.” The following screenshot shows the infected files:
+Files infected files by Variant 2.
+Before overwriting the files, the malware ensures that it has full access to the file.
+To get the access rights, it uses the Windows tool icacls.exe to modify the Access Control Lists for files and folders:
+Modifying the Access Control List for all files from C drive.
+/T => Traverse all subfolders
+/C => Continue on file errors
+/Q => Quiet, suppress success messages
+/grant user: permission => Grant access rights to the user, F: Full access
+This variant also creates 50MB garbage files (filled with null) on the Windows drive, to fill up the disk space.
+To keep the garbage files, it creates a folder at the root of the Windows drive with a CLSID name.
+To hide them from victims, the malware keeps the folder attribute to system hidden.
+-opt=cnc.
+This value is used to clean the malware from the system.
+It uses the ControlService() API to send a stop signal to the service and the QueryServiceConfigA() API to get the file path from the service properties.
+The malware then deletes the registry entries and service from the system and also deletes the file.
+-opt=chk.
+This value is likely to be used during debugging.
+It checks for the service and registry entries, and then prints accordingly.
+-opt=svc.
+This value is given to the application while installing the service.
+It leads to the execution of the service handler function, registered through the RegisterServiceCtrlHandler() API.
+While debugging the code, we can see the code that executes commands to ping the local host and then delete itself with the help of the WinExec() API:
+WinExec() executes commands to ping and delete itself.
+On restarting, this malware deletes itself but it does not remove the service and remains installed.
+Unlocking the screen
+We successfully bypassed the ransom note block screen with the help of “Windows key + tab” feature, which is available in Windows 7 and later versions.
+To use this technique, you’ll need Window 7 or later infected with KillDisk, a keyboard connected to the system, and good eyes.
+(You have to look carefully.)
+See our demo video.
+Here are the steps to unlock the blocking screen of KillDisk:
+Step 1: Press Windows Key + Tab.
+You will be prompted with the open applications window.
+Step 2: Press “Windows Key + D” or switch to the desktop using Step 1.
+Step 3: Open “run” using “Windows key + R” and check whether you have the run window using Step 1.
+Step 4: Type “cmd” and hit enter.
+You will get the command prompt; confirm using Step 1.
+Step 5: Type “tasklist” and Hit enter.
+Step 6: Using “Windows Key + Tab,” check the process name on the list.
+(Good eyes needed.)
+Because the malware killed all the other processes, it is likely all the processes will appear in a single command window.
+If not, change the command prompt size using the following command:
+mode con: cols=Value lines=Value // Update “Value” to fit your display
+Step 7: After getting the process list, identify the malware process from the output of tasklist.
+If you know the malware process name, good.
+Otherwise you have to check the running processes from the whitelist previously mentioned and select the process that is not on the list.
+(That will likely be the malware process.)
+Step 8: Get the PID of the malware process from the second column of the tasklist output.
+Step 9: After getting the malware PID, kill the process using the following command:
+Taskkill /PID Malware_PID /F
+After following these steps successfully, you will get your system back but the files will still be encrypted.
+This technique might work on other ransomware.
+Conclusion
+KillDisk is new to the world of ransomware.
+It has implemented a whitelisting technique to protect itself.
+We have discussed its internal working and a way to unlock the screen locked by ransomware.
+McAfee products detect all known variants of this malware.

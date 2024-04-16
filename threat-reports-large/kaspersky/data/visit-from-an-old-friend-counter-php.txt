@@ -1,0 +1,71 @@
+Around one year ago I posted about what were the most common web attacks in Spain and how the malware was spread.
+It is time for an update!
+We regularly collect data regarding infected web sites based in our detections on KSN.
+Apart from the general verdicts that I usually find in the top of the rank, there was another one in the top 3 for the last months that caught my eye: Trojan.JS.Iframe.aeq.
+This verdict was quite popular during the last months specially in .ES sites.
+The detection shows that the victims of are quite widespread:
+The name is quite self-descriptive, a Javascript code redirecting the victim by creating an iframe.
+This is good enough for a verdict, but I want the details.
+So let’s take a look to the infected sites.
+The malicious code is quite obvious.
+At the end of the source code of the infected web site we find this:
+Counter.php has a long story of malicious redirections in many different ways.
+In this case it was interesting to see the iframe after the tab.
+My colleague Micha-san found some examples back in March as you can see here.
+Interestingly most of the sites analyzed in Japan were also hosted in Spain.
+Counter.php then returns something like:
+The redirection won’t return you the code under some conditions, as we will see later.
+The first condition is not to access twice from the same IP.
+When executed (there are the typical checks for avoiding execution in a non-browser environment) translates into:
+So here we get the second redirection for the exploit kit site with an unique ID.
+This was the first time I personally found Styx exploit kit in the wild.
+You can find more information about it here .
+Basically it runs a script function called PluginDetect to profile the victim:
+At the end of the HTML we find the code for selecting the exploit:
+for complicating things a bit more, the “gujny” element is referenced by an iframe:
+and contains:
+combining this content with the calling code we have:
+and now everything makes more sense.
+Depending on the Java version detected by the PluginDetect function, it chooses the right exploit in jorg.html (versions [5-6.32] or [7-7.09]), jlpn.html (versions [7.1-7.21]) or pdfx.html for the rest (non Java exploit).
+According to the analysis by our colleagues of McAfee here the vulnerabilities exploited are:
+“jorg.html” CVE-2013-0422
+“jlnp.html” CVE-2013-2423
+“pdfx.html loads “fnts.html” CVE-2011-3402
+“jovf.html” CVE-2013-1493
+and downloads a .pdf file CVE-2010-0188
+We can confirm that jorg.html exploited the CVE-2013-0422, but we didn’t analyze the kit exhaustively (for the other vulnerabilities).
+You can find a very interesting analysis of this vulnerability when it was found in the wild as a 0 day here.
+This is the downloaded applet with the parameter for downloading the binary:
+The applet was not easy to analyze as no Java decompiler can handle it, you can find my analysis in Securelyst.com/Analysis soon.
+It is interesting to see how the applet was only detected by Kaspersky Lab (according to VT and at the moment of the analysis) thanks to the Anti Exploit Prevention technology.
+All exploits target quite recent vulnerabilities, which is worrisome.
+Let’s check how popular they are in our stats and what do they target:
+CVE-2013-2423 Oracle java – This is the most common vulnerability according to KSN
+CVE-2013-0422 Oracle java – 11th most common vulnerability
+CVE-2011-3402 Win32 TrueType – not in the top 20
+CVE-2013-1493 Oracle java – 9th most common vulnerability
+CVE-2010-0188 Adobe Reader – not in the top 20
+Well, now we have more data to be worried about, as this kit exploits the most common vulnerability according to our data.
+How did the sites distributing this malware get infected in the first place?
+As we said in the beginning, counter.php has a long story of malicious appearances, but it regularly changes the infrastructure, the iframes and the javascript code.
+All the infected sites (a surprisingly high number hosted in Spain) run different technologies, are hosted in different providers and apparently have nothing in common.
+So I decided to contact the hosting companies for more details.
+I was suspicious of a vulnerability in software like Plesk (there was one last May and a 0day found in June), WordPress or something like that.
+After checking the evidences with the hosting companies, we think that the FTP accounts of the users of these websites were compromised.
+We don’t know how, but this data may have been stolen months or years ago.
+Hosting companies where very collaborative (thank you guys) and they shared the famous counter.php where all the users are redirected in the first place.
+Let’s take a look:
+That translates into this.
+Interestingly different functions and strings are stored in base64 into arrays:
+And now we see more details of the global structure.
+When users are redirected to counter.php, then there is a second redirection to stat.php after checking that the user agent of the request does not contain google, bing, yahoo, baidu, msn (search engine evasion) or opera,safari,chrome (browser selection).
+This second redirection to stat.php has the following parameters:
+hXXp://globalbrowserstatistic.com/statG/stat.php?
+ip=YOUR_IP &useragent=mozilla%2F4.0%20(compatible%3B%20msie%207.0%3B%20windows%20nt%206.0) &domainname=REFERER_DOMAIN &fullpath= REFERER_FULL_PATH &check=0
+Counter.php was filtering requests to the exploit kit avoiding reinfections.
+As stat.php does not check that the parameter IP is the remote address, now we know how to create requests for getting samples from the exploit kit.
+The malware is freshly generated for new requests to avoid signature detection.
+Basically it drops a heavily packed dropper that, depending on the geolocation of the referer IP, drops a fakeAV or ZeroAccess (at least) in the second stage.
+My colleague Marta helped me with this part and she will post very soon the analysis of the downloader.
+Apparently, it dropper has Russian speaking origins, as we can see in the metadata:
+FileDescription:

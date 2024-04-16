@@ -1,0 +1,88 @@
+The second part of this series will examine the mechanisms that rootkits use in order to provide stealth, data collection, and protection for BOTs and other malware.
+Since this is a lengthy topic, this part will start with user-land techniques and then part 3 will discuss kernel techniques.
+User-Mode hooking, or Application Programming Interface (API) hooking is the predominant method of stealth and obfuscation.
+The process works bascially in this manner:
+User-Mode hooking, or Application Programming Interface (API) hooking is the predominant method of stealth and obfuscation.
+The process works bascially in this manner:
+A User process attempts to list the contents of a directory, or in Windows uses the explorer to open a window that lists the contents of the directory.
+The utility or program makes use of the API call FindNextFile in order to get the file names in the target directory.
+FindNextFile is a function found in Kernel32.dll that is accessed by the program by "linking in" this dll when the program starts.
+FindNextFile in kernel32.dll then calls NtQueryDirectoryFile in ntdll.dll which makes a SYSENTER instruction kernel "trap" for the equivalent kernel function for FindNextFile.
+Since kernel32.dll is loaded into the application's private address spaces and can therefore be overwritten by a rootkit.
+In addition, the Import Address Table (IAT) for the application can also be altered so the API call to FindNextFile goes to the rootkit first and then to the kernel32.dll FindNextFile function.
+The process for installing a rootkit in this manner is two fold.
+You need to inject the code you want into the respective address space and then hook the APIs you want to monitor and modify.
+Hooking techniques will be covered first and then DLL injection techniques.
+When an application is loaded by the OS, the OS parses the Application's IMAGE_IMPORT_DESCRIPTOR structures and loads the required shared libraries or DLLs into the application's address space.
+Once the DLL is loaded, the OS locates each imported function in memory and overwrites one of the IMAGE_IMPORT_BY_NAME entries with the actual address of the function in the respctive DLL.
+Therefore when the application calls this function within its code, it has been mapped to this imported address within the DLL.
+To hook these API calls, you simply need to inject the rootkit's hook function into the application's address space.
+Then you can replace the desired entry in the IAT with your rootlkit's hook function, allowing you to intercept all calls to this API function within this application.
+While this technique is simple and elegant, it is fairly easy to detect and there is also the issue of when these API calls are mapped by the application.
+The process described above is called early-binding, and relies on the OS to perform the mapping on application load.
+Applications that use late-binding, where the addresses are not resolved and mapped until they are needed, may be difficult to hook.
+If the application uses LoadLibrary and GetProcAddress in order to resolve the DLLs and functions itself, then the IAT is not used for these DLLs and the hooks will not function.
+Inline Hooking, while a little trickier, is much more powerful a technique.
+It does not rely on the application's housekeeping data structures but rather re-writes the function calls within the binary itself.
+This technique is valid in User and Kernel memory spaces.
+First you need to inject the rootkit's hook function into the application's address space.
+To hook, the first few bytes of the target function are saved.
+This is typically where the preamble is for a function that sets up the local stack space and maps passed arguments.
+An immediate jump is written into those bytes which goes to the rootkit hook function.
+The rootkit can then call the original function call on the application's behalf.
+Once the function call returns, the rootkit's hook can modify or change the retireved data at will and then return this to the application.
+This is similar to the previous technique, however instead of the initial bytes of the target function being modified the starting commands for the function are modified.
+To achieve this, a simple code analyzer is required that can determine the length of machine code commands and be able to compute their length in bytes.
+The technique works as follows:
+The rootkit searches the machine code at the target function's entry point and evaluates if this "complete instruction" is greater or equal to the size of the hook code.
+The hook code will invariably be 5 bytes, which is the size of a JMP instruction.
+If the current instruction is less, the next instruction is evaluated until a suitable target is located.
+This address is saved as HOOK_ADDR.
+Once a target has been located, the bytes are copied into a buffer and concatentaed by machine code that will jump to the HOOK_ADDR + the size of the copied bytes.
+Essentially the next instruction past our JMP instruction.
+The rootkit then uses a CALL to call the buffer, which will then JMP to the hooked function and run normally.
+However, the RET instruction will cause the program flow to return to the rootkit where we can modify data as we please.
+After that, the rootkit can return control back to the original application.
+This technique is very simiar to the previous one, with the exception that the hook candidates are previously evaluated and then coded as signatures into the rootkit.
+Other than the pre-analysis and pattern matching code, this technique functions the same as the previous one.
+This technique uses some of the ideas of a virus.
+The idea is as follows:
+The rootkit adds code to the dll for its hooking mechanisms, this would be akin to the "infection".
+Then, the dll's export table is modified so that the appropriate hook functions are called, which are appended to the dll itself.
+The DLL is loaded as normal except that with the OS maps the exported function addresses, its mapping the hook function.
+The hook, after making modifications to the data, then returns control back to the caller.
+On NT, 2000, XP, 2003, and Vista there is a registry key HKEY_LM/Software/Microsoft/Windows NT/CurrentVersion/Windows/AppInit_DLLs.
+Setting this value to one of your rootkit's DLLs that handles the hooking portion of the process will allow you to get your code installed and hook by way of the DLLs main function.
+User32.dll loads the DLLs listed in this key and calls DllMain within that library with a reason of DLL_PROCESS_ATTACH.
+This will, in effect, allow your hooking mechaism to be mapped and called for every process that uses User32.dll.
+Windows uses an event type of system in order to pass messages from process to process.
+Examples of this would be keystrokes, mouse movement, application start and ending signals, and so on.
+There is an API call provided be Microsoft that allows you to hook messages from another process.
+The SetWindowsHookEx API call allows you to specify a dll instance and function and correlate them to a message in a different process.
+When the target process gets a message, for example a keyboard stroke, it will load your dll and call your hook function thereby allowing you to install your rootkit hooks.
+The last technique is to create a thread in another process or a remote thread.
+First, you call OpenProcess in order to get a handle to the process you want to inject into.
+Next you need to get the process address of LoadLibrary in the target process.
+This means that your target process has to link kernel32.dll, which is pretty common but required for this to work.
+Next, you need to call VirtualAllocEx, so that you can allocate a string in the target process and write to it using WriteProcessMemory.
+You then provide the appropriate name of the rootkit's dll.
+Once the dll is loaded, it again calls the dll's DllMain function, and you can hook the API calls as outlined above.
+Brumley, David (1999-11-16).
+Invisible intruders: rootkits in practice.
+USENIX.
+Implementing and Detecting an ACPI Rootkit, by John Heasman, presented at BlackHat Federal, 2006.
+Implementing and Detecting a PCI Rootkit by John Heasman, 15 November, 2006.
+Jamie Butler and Greg Hoglund.
+Rootkits: Subverting the Windows Kernel.
+Addison Wesley, 2005.
+ISBN 0-321-29431-9
+Oleg Zaytsev, Rootkits, Spyware/adware, keyloggers and backdoors: Detection and Neutralization.
+2007 ISBN 1-931769-591
+Greg Hoglund, Gary McGraw.
+Exploiting Software: How to break code.
+ISBN 0-201-78695-8
+Ric Veiler.
+Professional Rootkits.
+Wrox, 2007.
+ISBN 978-0-470-10154
+Security Researcher: DH

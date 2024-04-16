@@ -1,0 +1,187 @@
+A FortiGuard Labs Threat Research Report
+This is the second half of my two-part series on “Dissecting Tor Bridges and Pluggable Transport”.
+In the first blog, I went into great detail in explaining how the Tor browser’s built-in bridges were passed through three processes (“firefox.exe”, “tor.exe,” and “obfs4proxy.exe”), how Tor Browser communicates with the Obfs4 Bridge client, as well as the relationship between those three processes.
+In this blog, I will continue to explain how Tor uses Obfs4 Bridge to circumvent censorship.
+Before talking about Obfs4 Bridge, I would like to explain what the difference is between the Tor Browser enabling Obfs4 Bridge and operating without it.
+To make it clear and easy to understand, I drew two Tor traffic flow charts, shown as Figures 1 and 2, below.
+Figure 1 shows a normal Tor communication flow without Obfs4 Bridge.
+The brief process is as follows: The Tor client obtains three Tor relays from the Tor main directory as the entry relay, middle relay, and exit relay.
+Once the user accesses a website, the Tor client receives a request packet from Tor Browser (firefox.exe).
+It then encrypts the packet three times with the session keys from the exit, middle, and entry relays.
+This multiple-encrypted packet is then sent to the entry relay, middle relay, and exit relay.
+After being decrypted by them, the exit relay gets the original packet and sends it to a destination server, like “www.google.com”.
+This is pretty much the way Tor transmits an original packet from Tor Browser to its destination website.
+However, the Tor-encrypted traffic, shown by the red arrow in Figure 1, is easily identified and blocked by censorship.
+Figure 2 shows a new communication path using Obfs4 Bridge.
+You can clearly see that once Obfs4 Bridge is enabled, the Tor traffic goes down to the Obfs4 client (obfs4proxy.exe) to be transformed and transported to the bridge relay.
+The Bridge relay is now the entry relay instead of the old Tor entry relay.
+And as a result, the total number of relays of any given Tor circuit is always three for good performance.
+The Obfs4 Bridge client takes the Tor-encrypted payload and seals it up with the Obfs4 function.
+The sealed packets are then sent to the Obfs4 Bridge relay.
+Unsealing them, the Bridge relay gets the Tor encrypted packets and forwards them to the next Tor relay of the Tor circuit.
+A similar thing happens on reverse direction packets.
+This is a brief explanation of how the Obfs4 Bridge works.
+Next, I’ll talk about what techniques Obfs4 Bridge uses to make the traffic harder to be identified.
+Tor Browser (“firefox.exe”) sends the command “SETCONF” with built-in Obfs4 Bridge information to “tor.exe” via the control TCP port 9151.
+The command format is like the one below:
+“SETCONF” at the beginning of the command is the command name.
+“UseBridges=1” tells Tor that the Bridge feature is enabled by the user.
+The following data includes entire built-in Obfs4 Bridge blocks, which are called bridge configuration lines on the Tor website.
+Each bridge node must be saved in one bridge configuration line.
+Here I only kept the first one for an example.
+Each bridge configuration line starts with “Bridge=”.
+Let’s look at what content is inside.
+It contains:
+Bridge type: obfs4, tells the bridge type.
+Bridge server IP and port: 109.105.109.165:10527.
+Bridge ID: 14H long hexadecimal.
+Bridge cert: base64 encoded nodeID, IdPublicKey of an Obfs4 relay.
+Bridge IAT-mode: The IAT mode flag can be set to “0”, “1”, or “2”.
+Tor handles this command and then starts a child process of “obfs4proxy.exe”, which is the Obfs4 Bridge client.
+“obfs4proxy.exe” uses the same procedure, transferring packets through TCP ports on the loopback interface between the Obfs4 Bridge client and the Tor client.
+The Tor client separately sends Obfs4 Bridges to “obfs4proxy.exe” and asks it to make a connection with an Obfs4 Bridge relay.
+Tor uses the SOCKS5 protocol to transport data with the Obfs4 Bridge client.
+Figure 3 is a screenshot of the communication packets between “tor.exe” and “obfs4proxy.exe” in WireShark.
+The packets in red are from “tor.exe” to “obfs4proxy.exe” (through the random TCP port on the loopback interface).
+The response packets are in blue.
+As you can see, it also uses the SOCKS5 protocol.
+First, Obfs4 Bridge information containing base64-encoded “cert=” and IAT-mode was sent to “obfs4proxy.exe” from “tor.exe”.
+Later, “tor.exe” continued to send the binary IP address and Port of the Obfs4 Bridge relay in a SOCKS 5 “Connect (1)” packet (starting with “|05 01 00 01|”).
+“obfs4proxy.exe” then connected to this Obfs4 Bridge relay with the IP address and Port.
+Once the connection was successfully established, it sent a “Succeeded (0)” packet (“|05 00 00 01 00 00 00 00 00 00|”) back to “tor.exe”.
+That means that the Obfs4 handshake was successfully completed (I’ll explain the handshake process in the next section).
+Afterwards, “tor.exe” can send and receive all packets to be transformed and transported by the Obfs4 Bridge over this connection.
+Connecting Obfs4 Bridge requires a handshake process, the purpose of which is to transport public keys and to verify each other.
+Before explaining the handshake packet, I will take a moment to talk about the cryptography algorithm that Obfs4 uses and the structure of a “Keypair”.
+Obfs4 Bridge uses ECC (Elliptic-Curve Cryptography) algorithm to encrypt the Tor payload to ensure secure communications between the Obfs4 client and the relay.
+As we know, ECC is a public key encryption technique based on elliptic curve theory.
+The ECC that Obfs4 uses is implemented in a Go language package called “curve25519”, which offers two important functions: ScalarBaseMult() and ScalarMult().
+This is the definition of the Keypair structure, whose primary function is to save the public and private keys:
+Both the client and server must have their own Keypair instances.
+Let me explain the relationship between them.
+The Private Key is randomly generated in a certain range according to a definition in the curve25519 package.
+As per the ECC, a public key is computed from a private key by calling curve25519.ScalarBaseMult().
+A representative key is then transformed from a public key, which can also be easily restored to a public key whenever needed by calling the function extra25519.RepresentativeToPublicKey().
+The definition and initialization of this Keypair is implemented in the NewKeypair() function defined in source file “ntor.go”.
+Each side of the client and server should keep their private key, and send their public key in a representative key to each other.
+The Obfs4 client starts the connection from a handshake packet, so let’s see what this client handshake packet looks like.
+Here is an overview of the packet structure:
+The first part of the Client’s Handshake packet is the Keypair.representative, which is 20h bytes long.
+On the server side, it can be used to restore the client’s public key.
+The second part is padding data filled with random bytes, whose data size can range from 4Dh to 1FC0h.
+This padding data can obfuscate the handshake packet size, which makes it harder to be identified.
+The third part is called “mark” in Obfs4 source code, which is a HMAC value of the first part —Keypair.representative.
+Obfs4 uses SHA-256 to generate HMAC, which is 20h bytes long.
+Obfs4 only keeps the first 10h bytes as HMAC, so the rest of the 10h bytes are discarded.
+Obfs4 uses the current system time to compute an hour value of UNIX Epoch time (it’s a time since 00:00:00 Thursday, 1 January 1970 UTC).
+In a period, the client and server should run out an identical hour value from their different local times.
+It then computes a HMAC value of all three parts in the packet out lined above, plus the hour value in a string.
+Similarly, the resulting value is 20h bytes long, and the first 10h bytes are used as the fourth part of the packet.
+Figure 4 is a screenshot of Ollydbg showing the client’s handshake packet.
+I have split the memory portion of the image into four parts, each with different colors.
+In this case, the padding data is 52h byte long.
+The third part (“mark”) and last part (“HMAC of Entire Data”) can be used to verify the client’s handshake packet at server side.
+Even if you used all of the data outlined above correctly, your Obfs4 Bridge would still fail the handshake process if your system is using an incorrect system time.
+Figure 5 shows that exact situation because my test system’s time was not up to date, causing the TCP session to close in packet #6 after the server received the client handshake in packet #4.
+Once a connection request is established, the Obfs4 relay starts a new thread to process the communication with the client, which is where the client’s handshake packet gets processed as well.
+The server side does the same thing as the client side – that is, it generates the server’s Keypair instance corresponding to the client’s Keypair.
+It computes out a representative and public key from a randomly chosen private key by calling its curve25519.ScalarBaseMult().
+The server side then parses and verifies the client’s handshake packet.
+After ensuring everything in the packet is correct, it restores the client’s public key from the representative value, which is in the first part of the handshake packet, by calling the function extra25519.RepresentativeToPublicKey().
+The next step is crucial for the ECC algorithm’s “scalar multiplication” (the function curve25519.ScalarMult()).
+Scalar multiplication is a one-way function and there is no scalar division function, which keeps the ECC algorithm very strong.
+It performs scalar multiplication using the server’s private key and the client’s public key.
+Similarly, the client will perform the same operation when it receives the server’s handshake packet.
+At the end of the process, the two results of the scalar multiplication must be the same, which leads to this equation shown in figure 6.
+The equation is an essential part of the ECC algorithm, ensuring the two sides are equal to each other.
+As you can see, the left part is computed on the server side, and the right one is on client side.
+BTW, these randomly generated public and private keys are only valid in one TCP connection session, so they are called session public/private keys.
+They are different from ID public/private keys, which are fixed for one Obfs4 relay.
+Next, do you remember the IdPublicKey and nodeID that were extracted from the base64 encoded “cert” in a bridge configuration line, that I discussed earlier?
+Do you know where that IdPrivateKey is???
+In fact, it is always kept in the Obfs4 relay.
+When an Obsf4 relay is installed and starts, it generates an IdPrivateKey/IdPublicKey pair.
+It keeps the IdPrivateKey and then publishes the IdPublicKey in the bridge configuration line that the Obfs4 client will be using.
+These are fixed to one Obfs4 relay.
+Both of these keys are ECC concept private/public keys, just like the session keys.
+Next, both the client and the server call ScalarMult() twice to generate two common results.
+Let’s first look at how the server does it:
+The server calls ScalarMult() with the server’s session private key and the client’s session public key, and then calls it again with the IdPrivateKey and the client’s session public key.
+We have now produced two function results.
+They are then put together with the nodeID and some constant strings to generate a common “keySeed” and the server’s “auth”.
+Now, it’s time to create the server’s handshake packet.
+It contains all the components of the client handshake packet, and it has the server’s auth element tucked between the representative and some padding data and a different padding data size range, as you can see in Table 2.
+The server’s auth element is used for the authentication of the client.
+The padding data size ranges from 0h ~ 1F73h, which keep the packet size random across a large range.
+This packet is then sent back to the client (obsf4proxy.exe) for verification.
+Remember, the server now has the common “keySeed” for the current TCP connection session.
+When the server’s handshake packet gets back to the client, it verifies the last two parts of the packet to ensure the packet is valid.
+It then extracts the server’s session public key from the first part of the packet (i.e.
+server.representative).
+Now the client can call ScalarMult() twice, just like the server did.
+It calls ScalarMult() with the client’s session private key and server’s session public key, and then calls it again with the client’s session private key and the IdPublicKey.
+Once again, we have two function results.
+The client then puts them together, and adds the nodeID and some constant strings that are same to the server’s to generate a common “keySeed” and “auth” data.
+The client then compares the just generated “auth” data with the one from server’s handshake packet to complete the verification.
+The common “keySeed” client just generated should be exactly the same as the server’s.
+Using this common “keySeed”, both the client and the server can proceed to generate their own final Encryption/Decryption keys for Tor-payload’s encryption and decryption.
+The client’s encryption key is same as the server’s decryption key, and the client’s decryption key is same as the server’s encryption key.
+This is the entire Obfs4 client and bridge handshake process.
+As a result, the packet size becomes random because it has a large range, and the data looks random too – which makes the handshake packets harder to be recognized by censors.
+Both the client and the server initialize their Encoder and Decoder instances using the just-generated encryption key and decryption key derived from the common “keySeed”.
+Obfs4 then uses these two instances to implement the sealing and unsealing of the Tor payload.
+The encoder instance is used for encryption, while the decoder instance is used for decryption.
+For now, the obfs4 client has two connections; one is for data being exchanged between Tor (“tor.exe”) and the Obfs4 client (“obfs4proxy.exe”), and the other one is for the Tor payload transfer between the Obfs4 Bridge client and the Bridge relay.
+Once the handshake process is completed, the Obfs4 client will bind the two connections.
+Figure 7 shows the code of the function copyLoop (in source file obfs4proxy.go) binding the two connections, where arguments “a” and “b” are instances of the two connections.
+The function “io.Copy(destination, source)” copies data from the source to the destination.
+The process is as follows: it calls the source.Read() function first and extracts specific data from it and then it calls destination.Write() with that extracted data in the parameter.
+The Obfs4 client overrides both Write() and Read().
+The Write() function encrypts the Tor payload packets (called Sealing) and sends that sealed data out to the Obfs4 relay.
+Accordingly, the Read() function is in charge of receiving the packets from the Obfs4 relay and then decrypting them (called Unsealing).
+“io.Copy” then transfers the decrypted Tor packets to Tor.
+Let me detail how these two functions do this.
+As you can see in Figure 8, in Write(), it calls the function makePacket(), where it then calls another function, Encoder.Encode(), to encrypt the Tor payload.
+Decoder.Decode() is then called in the function “readPackets()”, which is called in Read().
+Encoder.Encode() finally calls secretbox.Seal() to encrypt and make a MAC of the Tor payload.
+Correspondingly, Decoder.Decode() calls secretbox.Open() to decrypt the payload received from the Obfs4 relay.
+The encrypted data encrypted is not only the Tor payload.
+That payload is also copied into a data buffer at offset+3 because the first 3 bytes is sort of a header structure containing the packet type and size of the Tor payload just copied.
+This is all the data that Encoder.Encode() encrypts.
+Figure 9 shows an example of when the Obfs4 client is about to call Encoder.Encode().
+One of its parameters points to the data buffer in memory, where the first byte is the packet type (00 means it’s a payload packet), and the followed one word 0x00BF is the size of the Tor payload in network byte order.
+The data starting from offset+3 is the Tor payload, which comes from “tor.exe”.
+Obfs4 also obfuscates the packet size by appending a random size of padding data to the encrypted data.
+This is also a way to resist censorship.
+Besides the random padding of data, Obfs4 supports another anti-detection technique to resist censorship.
+That is the IAT-mode.
+In earlier sections of this analysis, “IAT-mode” was mentioned when describing Obfs4 Bridge information.
+IAT-mode is short for Inter-Arrival Timing, which can split a large packet (a packet size of more than 1448 bytes) into MTU size (Maximum Transmission Unit) or smaller packets.
+MTU is defined as the largest packet or frame size that can be used to transmit data.
+Network drivers split large packets into MTU size packets (negotiated in the TCP handshake), which can easily be reassembled – and identified by censors as well.
+That’s why Obfs4 introduced IAT mode.
+The values of IAT-mode can be “0”, “1”, or “2” in obfs4.
+“0” means that the IAT-mode is disabled and that large packets will be split by the network drivers, whose network fingerprints could be detected by censors.
+“1” means splitting large packets into MTU-size packets instead of letting the network drivers do it.
+Here, the MTU is 1448 bytes for the Obfs4 Bridge.
+This means the smaller packets cannot be reassembled for analysis and censoring.
+Figure 10 shows the code snippet of Obfs4 used to compute the MTU size.
+“2” means splitting large packets into variable size packets.
+The sizes are defined in Obfs4.
+The smaller split packets will be sent to the Obsf4 relay separately.
+In this way, it can obfuscate any network fingerprinting and make Obfs4 traffic harder to be recognized.
+Figure 11 shows an example of Obfs4 traffic, with its IAT-mode set to “1”.
+Each red rectangle shows a large packet split by IAT-mode.
+The packets with a blue dot are the small split packets.
+For the first one, the original packet size is 2719, which was split into 2 smaller packets according to the Obfs4 MTU size (1448).
+Tor users can get the Obfs4 Bridges three ways: The Tor Network Setting, The Tor website, and via email.
+Every time, you obtain three Obfs4 bridge configuration lines.
+Figure 12 is a screenshot of the Tor bridge website used for obtaining Obfs4 bridge configuration lines.
+Once you have obtained the Obfs4 Bridges, you next need to copy and paste them to get them working, as shown in Figure 13.
+Through the analysis of the Obfs4 Bridge, we have learned that it can protect Tor traffic from being identified and blocked by censorship because:
+Obfs4 encrypts Tor traffic and obfuscates packet sizes by adding padding data, including in the handshake packets.
+Large Obfs4 packets can be split by IAT-mode to obfuscate the network fingerprint.
+Besides the built-in Obfs4 Bridges, Tor provides three other ways to obtain additional private Obfs4 Bridges.
+Learn more about FortiGuard Labs and the FortiGuard Security Services portfolio.
+Sign up for our weekly FortiGuard Threat Brief.
+Read about the FortiGuard Security Rating Service, which provides security audits and best practices.

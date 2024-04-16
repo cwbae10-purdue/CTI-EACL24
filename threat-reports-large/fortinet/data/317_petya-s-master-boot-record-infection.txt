@@ -1,0 +1,68 @@
+Last week we started our technical analysis on Petya (also called NotPetya) and its so-called “killswitch.” In that blog post we mentioned that Petya looks for a file in the Windows folder that has the same filename (no extension) as itself (for example: C:\Windows\Petya).
+If it exists, it terminates by calling ExitProcess.
+If it doesn't exist, it creates a file with the attribute DELETE_ON_CLOSE.
+This seems to imply that instead of a killswitch, this file is meant to be a marker to check and see if the system has already been infected.
+After this file is created, Petya proceeds to perform its disk accessing functions.
+Petya first opens the C: volume and calls the DeviceIoControl API with the IOCTL_DISK_GET_DRIVE_GEOMETRY control code, which retrieves information about the physical disk’s geometry - specifically the number of bytes per sector.
+It allocates fixed memory by calling LocalAlloc, then overwrites the second sector of the C: volume with the newly allocated bytes.
+This is where the volume boot record runs the bootloader (NTLDR), at least in Windows XP systems, which will corrupt the boot sequence.
+Figure 1.
+The 2nd sector, before and after being overwritten
+Next, it checks its process flag to determine whether to overwrite the MBR with its code, or to just simply corrupt it.
+This process flag was set earlier when it searched for certain processes in memory.
+If this flag indicates that the process “avp.exe” is found, it proceeds to the function that we call corrupt_mbr.
+If its process flag indicates that the process “avp.exe” is not found, it enters the function that we call overwrite_mbr_func, which replaces the MBR.
+Figure 2.
+Checking the process flag
+The function corrupt_mbr, seen in Figure 2 above, just writes bytes from uninitialized memory (0xBAADF00D) to the first 10 sectors of the disk.
+This effectively renders the disk unbootable.
+The other function, overwrite_mbr_func, is where the malware attempts to overwrite the MBR with its own code.
+Petya begins by calling the CreateFileA API with the filename \\.\PhysicalDrive0, which corresponds to the Master Boot Record.
+It then calls DeviceIoControl with the IOCTL_DISK_GET_PARTITION_INFO_EX control code to retrieve extended information about the type, size, and nature of the MBR partition.
+It uses this information to check if the PartitionStyle member of the PARTITION_INFORMATION_EX structure is indeed an MBR.
+Petya then generates 60 (0x3C) random bytes using the CryptGenRandom API.
+Using an index and these 60 random bytes, it generates a personal installation key.
+Figure 3: Indexing function to generate the personal installation key
+Note that this generated key is what is displayed to the user as part of the ransom message.
+Figure 4.
+Generated personal installation key
+Next, the malware reads 0x200 bytes from the first sector of the physical drive, and XORs the bytes by 7.
+This is stored later back into the disk at Sector 34.
+To check if the disk is big enough to store its malicious boot loader, it reads the last partition’s LBA value (which gives the position of the cylinder, head, and sector of the disk) making sure it is greater than 0x28.
+In the next few steps, Petya replaces the various sectors of the physical drive:
+- Sectors 0-18 are replaced with its own malicious MBR code, making sure to keep the original disk signature and partition entries
+- Sector 32 is replaced with the Salsa20 key/nonce, personal installation key, and bitcoin address (shown in Figure 5, below)
+- Sector 33 is filled with ‘07’ hex bytes
+- Sector 34 is filled with the original MBR first sector, XORed by 7
+Figure 5: Bytes written to Sector 33
+If any step of the overwriting process fails, Petya retaliates by calling its corrupt_mbr function (see Figure 2).
+As we mentioned, this function corrupts the first 10 sectors of the disk, making it unbootable.
+The news on Petya may have slowed down for now, but this does not mean that we can be complacent with the security of our systems.
+As this recent outbreak has shown, many systems remained unpatched even after the damage created by WannaCry was made known all around the world.
+After this latest outbreak, there really is no excuse for not applying available patches.
+But let's not stop there.
+A good defense system (as outlined in the blog post here) can greatly reduce the points of entry that new malware may take.
+MD5: 71b6a493388e7d0b40c83ce903bc6b04
+AV Signature:
+W32/Petya.EOB!tr
+W32/Agent.YXH!tr
+Other signatures are being investigated.
+IPS Signature:
+MS.Office.RTF.File.OLE.autolink.Code.Execution
+Created
+Apr 13, 2017
+Last Updated
+Jun 19, 2017
+MS.SMB.Server.SMB1.Trans2.Secondary.Handling.Code.Execution
+Created
+Mar 14, 2017
+Last Updated
+Jun 05, 2017
+In addition, Fortinet’s WannaCry IPS rules appear to protect against exploits targeting thse vulnerabilities.
+Fortinet teams are verifying this claim.
+Sandbox Detection:
+Fortinet Sandbox (FSA) detects this attack.
+TOR Communications:
+Block TOR Outbound traffic via AppControl signatures.
+Security Update for Microsoft Windows SMB Server: March 14, 2017
+Security update for Office 2016: April 11, 2017

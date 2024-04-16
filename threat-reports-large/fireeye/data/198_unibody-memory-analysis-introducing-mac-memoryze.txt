@@ -1,0 +1,108 @@
+Today, Mandiant is introducing a new free tool, Memoryze™ for the Mac 1.0, which brings memory imaging and analysis to the Mac.
+It joins a growing list of freeware tools Mandiant currently provides.
+Memoryze™ for the Mac 1.0 brings many of the features of Memoryze™ to the Apple Macintosh platform.
+This new tool enables acquisition of memory images via the command-line or a simple GUI.
+In addition, Memoryze™ for the Mac 1.0 can perform offline analysis against memory images or live analysis on a running system.
+The tool supports the following features:
+Imaging the full range of system memory
+Acquiring individual processes memory regions
+Enumerating all running processes Including those hidden by rootkits
+Including those hidden by rootkits
+For each process, Memoryze™ for the Mac 1.0 can:
+Report all open file handles in a process (e.g.
+all files,sockets, pipes, etc.)
+List the virtual address space of a process including loaded libraries and allocated portions of heap and execution stack
+List network connections Active and listening
+Active and listening
+Enumerate All loaded kernel extensions including those hidden by rootkits The System Call Table and Mach Trap Table All running Mach Tasks
+All loaded kernel extensions including those hidden by rootkits
+The System Call Table and Mach Trap Table
+All running Mach Tasks
+Okay, enough of the marketing.
+Memoryze™ for the Mac 1.0 can be downloaded here.
+To help get you started we'll present a few of the features in this blog post.
+For offline analysis your first step is going to be acquiring memory.
+The Mac Memory Dumper App makes this process as simple as pushing a button.
+To begin the acquisition, Memoryze™ for the Mac 1.0 will require you to authenticate so that the application can load a memory dumping driver.
+After selecting the location to store the image and authenticating, Memoryze™ for the Mac 1.0 will begin the acquisition process.
+The tool will provide you with a progress bar and an image size monitor for each of your acquisitions (fancy, huh?
+).
+Note that the final size of the dumped image may exceed the size of your physical RAM.
+If the system has 8GB of physical RAM installed the dump may be 10GB.
+You may ask yourself, "Self, why is the dumped image bigger than my actual memory size?"
+There are regions that are physically addressable but are not part of actual DRAM, pesky memory-mapped devices.
+These regions are written to the image file as 0x0-bytes to help preserve the correct offsets within the image.
+Once Memoryze™ for the Mac 1.0 finishes the acquisition; we can use it to perform memory analysis(note Memoryze™ for the Mac 1.0 can also perform analysis on images acquired by other tools).
+With our data ready, let's run through several of the process analysis features we mentioned above.
+We'll start by performing a basic process listing based on the memory image we just created.
+Execute the command below:
+macmemoryze proclist -f ~/Documents/my.mem 2>err.txt
+Memoryze™ for the Mac 1.0 will open "my.mem" for analysis and detect two critical pieces of information about the image: the operating system version and whether the system is running 32 or 64-bit kernel.
+Armed with this information the proclist analysis module locates the operating system data structure that maintains the list of running processes.
+If you take a look at the output below, you can see that Memoryze™ for the Mac 1.0 extracts the PADDR, or physical address, of each process (this is also the offset of the process in the acquired memory image file).
+You can use the PADDR to quickly locate the process in question in an offline tool such as a hex editor.
+Memoryze™ for the Mac 1.0 also extracts other standard identifying information such as the process NAME, PID and parent PID (PPID).
+In addition, the tool provides the start time for each process in UTC.
+Finally, Memoryze™ for the Mac 1.0 extracts each process' associated USERNAME, effective userid (EUID), and real userid (RUID).
+Based on the process listing above, we may be interested in getting a more complete understanding of what a particular process may be doing.
+We can list file descriptors and memory sections for all of the processes in the listing, but this would get pretty lengthy and present too much information at once.
+Using filters we can limit display to a smaller subset or a single process.
+We can use the "-n" option to filter processes by NAME or the "-p" to filter processes by PID.Execute the following command:
+macmemoryze proclist -w -p 14 ~/Documents/my.mem 2>err.txt
+In the image above, we show a snippet of a file descriptor listing for PID 14 using the command-line switch "-p 14".
+This shows us all open file descriptors for the given process.
+This includes files, UNIX domain sockets, networking sockets (such as TCP), and so on.
+For several of the types/subtypes, Memoryze™ for the Mac 1.0 will provide a value associated with the item type.
+The value for a descriptor of type FILE is the filename associated with the file descriptor while the value for a type SOCKET subtype TCP is the source IP address, destination IP address, and associated ports.
+Now that we've completed some filtering, let's dig a little deeper and perform detailed analysis of the "notifyd" process.
+The image below contains a snippet of its memory sections listing.
+Memoryze™ for the Mac 1.0 shows us the start and end virtual addresses and a human-readable size for each section.
+For some memory sections, Memoryze™ for the Mac 1.0 also provides a type, such as MALLOC or IOKIT.
+These types provide insight into the purpose of the memory section.
+For other memory sections, Memoryze™ for the Mac 1.0 displays the filename that is located at (or was used to initialize) that particular memory region.
+Please execute:
+macmemoryze proclist -s -p 14 ~/Documents/my.mem 2>err.txt
+Neat, huh?
+So now we've analyzed the standard operating system (OS) process list structure.
+If it's good enough for the OS, it's good enough for us, right?
+Not really.
+It's fairly trivial for malware to unlink itself from the process list that the OS maintains.
+In light of this, Memoryze™ for the Mac 1.0 provides a process carving feature that allows it to enumerate and analyze processes based on their signature in memory.
+This means that Memoryze™ for the Mac 1.0 does not have to depend on the OS to provide a list of processes.
+This enables Memoryze™ for the Mac 1.0 to discover processes that have been hidden from standard OS listings.
+This same carving feature extends to the kextlist and syscalllist Memoryze™ for the Mac 1.0 features, allowing you to discover other hidden data within the OS.
+Now don't forget, Memoryze™ for the Mac 1.0 can be run offline using an acquired memory image, or live, analyzing the running system in real-time.
+Below we show a system call table listing using the live memory analysis feature of Memoryze™ for the Mac 1.0.
+Notice the missing "-f" option.
+We can use this listing to check for system call table hooking.
+System call table hooking allows attackers to surreptitiously monitor or filter user-level programs interactions with the OS kernel.
+This is commonly used to hide files and network connections from user-level programs.
+The syscalllist feature also supports discovery and listing of the Mach Trap table.
+Mach Trap, what?
+The mach trap table is analogous to the system call table in the BSD portion of OS X, but within the Mach portion of OS X.
+So we want to ensure we can check for possible hooking within that table also.
+To perform a live listing execute:
+sudo macmemoryze syscalllist -s
+In order to hook the syscall table we would probably want to use a driver.
+Have no fear!
+Memoryze™ for the Mac 1.0 can carve loaded kexts from memory.
+A decent malware author would probably want to hide itself from the OS by unlinking from internal data structures.
+To combat this, Memoryze™ for the Mac 1.0 will parse live memory or a dead file to find loaded drivers, as shown in the screenshot below.
+Memoryze™ for the Mac 1.0 supports an XML output option ("-x") that will create an XML file with an extended version of the console output, only in XML format.
+"Extended version," you ask?
+There is only so much console real estate.
+We must make decision about what information to display.
+So therefore, stuff gets left out.
+For example, we parse the full file path of the executing process and the process arguments.
+These are not displayed in the console output, but are accessible if using the XML output option.
+These XML files can also be loaded into Mandiant Redline™ (currently windows only, boo!)
+for viewing in a GUI.
+There are other features of Memoryze™ for the Mac 1.0 that we have not detailed here, but we don't want to give you all the answers.
+What's the fun in that?
+We really want you to use the tool and provide us with some feedback on features, interface, usages, and so on.
+Memoryze™ for the Mac 1.0 currently supports:
+Mac OS X Snow Leopard (10.6) 32/64-bit
+Mac OS X Lion (10.7) 32/64-bit
+We hope to continue to improve the state of Mac memory analysis for incident responders and security professionals.
+"Mac" is a trademark of The Apple Corporation.
+Mandiant is not affiliated with or endorsed by The Apple Corporation.

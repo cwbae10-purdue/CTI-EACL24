@@ -1,0 +1,72 @@
+Win32/Gapz has a new technique for code injection and a new VBR infection method.
+The dropper has many tricks for bypassing detection by security software.
+The Win32/Gapz malware family was mentioned publicly for the first time in the middle of November 2012, by the Russian antivirus company Doctor Web (Trojan.Gapz.1 infecting Windows in a new manner).
+But I didn’t find the technical details about this threat in that report and so prepared a deeper analysis.
+Win32/Gapz uses many exploitation techniques for implementing local privilege escalation (LPE) and infecting the VBR (Volume Boot Record) and MBR (Master Boot Record) in the earliest samples seen.
+The first interesting finding is that the VBR infection method is really new and not something we’ve seen before in other bootkit families.
+And the second interesting characteristic is the method used for injecting the malicious payload into user-mode system processes.
+The VBR infector changes only four bytes in bootstrap code in order to get control so as to deliver the malicious shellcode payload.
+Another interesting detail is that Win32/Gapz doesn’t have a malicious driver and all the bootkit functionality is loaded with the operating system boot process as shellcode sequences.
+More details about the bootkit part of the malware have been prepared by my colleague Eugene Rodionov (Win32/Gapz: New Bootkit Technique).
+In this blog post I focus on describing some interesting tricks used by the Gapz dropper.
+At the time of publication we have information about three different versions of the dropper.
+The characteristics of each of these dropper versions are presented in the following table:
+The first known version of the dropper was compiled at the end of April, but this version names many internal debug strings and it’s possible that this version was not developed for mass distribution.
+It seems likely that Win32/Gapz started mass distribution at the end of summer or beginning of September.
+The latest versions of the dropper use three approaches to escalating privilege:
+CVE-2011-3402 (TrueType Font Parsing Vulnerability)
+CVE-2010-4398 (Driver Improper Interaction with Windows Kernel Vulnerability)
+COM Elevation (UAC whitelist)
+The mechanism for escalating privilege using a COM Elevation technique trick on 64-bit systems has already been already described in my blog post about purple haze TDL4 modification (TDL4 reloaded: Purple Haze all in my brain).
+But none of these exploitation techniques are new and patches have already been made available.
+The most interesting part of the dropper is its new technique for code injection into the user-mode address space.
+During the infection process the dropper checks the version of the operating system in use, using the following code:
+Win32/Gapz is capable of infecting the following versions of Microsoft Windows operating systems:
+• x86: Windows XP SP2 and higher (except Windows Vista and Vista SP1)
+• x64: Windows Vista SP2 and higher
+The current version of theWin32/Gapz dropper is able to infect WinXP and Win7 including x64 versions, but on Win8 the bootkit part does not work reliably after infection and the kernel-mode code is not executed after the system has booted.
+The malware is installed on to the system by means of quite an elaborate dropper.
+Besides installing malware the dropper is also able to bypass HIPS and elevate its privileges.
+What makes it interesting is the detail of its implementation.
+If we look at what the dropper exports we will see the following picture:
+There are three exported routines to which we should pay attention: start, icmnf and isyspf.
+Here is a brief description of each of them:
+start – the dropper’s entry point injects the dropper into explorer.exe address space
+icmnf – responsible for elevating privileges
+isyspf – performs infection of the victim’s host machine.
+The following diagram depicts the sequence of their execution and the activities that they perform:
+Win32/Gapz uses a non-standard technique for code injection in all known dropper versions.
+This approach allows it to inject code into explorer.exe address space, bypassing security software.
+This technique works on all current versions of Microsoft Windows operating system.
+Its essence is to inject a shellcode into the Explorer process that loads and executes the malicious image.
+Here is the number of steps required to achieve this outcome:
+Open one of the shared sections from BaseNamedObjects mapped into explorer.exe address space, and write shellcode into this section
+After the first step shellcode is already written to explorer.exe address space and the next step is for the dropper to search for the window “Shell_TrayWnd”
+The dropper calls the WinAPI function GetWindowLong() so as to get the address of the routine related to the “Shell_TrayWnd” window handler
+At the next step the dropper calls WinAPI function SetWindowLong() to modify “Shell_TrayWnd” window-related data
+It calls SendNotifyMessage() to trigger shellcode execution in explorer.exe address space.
+Here is the list of the section in BaseNamedObjects for which the malware looks for during step 1:
+Once the section is opened malware writes the shellcode at the end of it as shown below:
+After SendNotifyMessage() is executed “Shell_TrayWnd” receives and transfers control to the address pointed to by the value previously set by SetWindowLong().
+The address points to the KiUserApcDispatcher() routine:
+This eventually results in transferring control to the shellcode mapped into explorer process address space, as presented in the following figure:
+The shellcode creates the thread in explorer.exe process context and restores the original value previously changed by SetWindowLong() WinAPI function.
+The newly created thread runs the next part of the dropper for escalating privilege.
+After the dropper obtains sufficient privileges it attempts to infect the system.
+Good question, and on this occasion it’s not a random choice of name.
+The GAPZ string is used as a tag for allocating the memory region in the shellcode as well in the kernel-mode.
+Its code looks like this:
+The oldest known version of the dropper (Win32/Gapz.C) used a special log file stored in the %TEMP% directory and wrote extended debugging information.
+The log file after a successful infection looks like this:
+Win32/Gapz is a really interesting threat, containing a new technique for code injection never seen before in other malware families, and a new VBR infection method.
+The dropper has many tricks for bypassing detection by popular security software.
+Shellcode techniques used in Gapz make this dropper difficult to research.
+According to ESET’s LiveGrid telemetry, not many detections of this threat have been seen, but in the coming year this platform for stealth infection may become more popular.
+In my opinion Win32/Gapz one of the most interesting complex threats of 2012.
+Special thanks to my colleague Anton Cherepanov.
+Aleksandr Matrosov, Security Intelligence Team Lead
+SHA1 hashes for the Win32/Gapz dropper samples mentioned are shown in the following table:
+Detection name
+SHA1 hash
+Description
+dropper dropper exploit (XP) exploit (Win7)

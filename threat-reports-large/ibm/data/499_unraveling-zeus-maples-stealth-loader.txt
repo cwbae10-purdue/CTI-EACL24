@@ -1,0 +1,60 @@
+IBM X-Force research routinely analyzes malicious activity to unravel the tricks used by malware to infiltrate machines and carry out its covert activity.
+In a recent analysis, X-Force researchers noticed a rather interesting loader that was fetching the ZeuS.Maple banking Trojan.
+Upon examination of the mystery loader, researchers found it was using an interesting twist on what’s known as the self-debugging technique, leveraging Microsoft’s PAGE_GUARD page protection modifier.
+This technique was, until now, unimplemented in the works of other malware.
+On top of its use by ZeuS.Maple’s operators, the same loader was identified in the infection process of the Gamarue malware.
+ZeuS.Maple is a ZeusVM iteration that was named after its operators’ top target geography: Canada.
+The Trojan emerged in mid-2014 as what appears to be the property of a closed cybercrime faction.
+It uses ZeusVM’s code plus a few clever tweaks regularly made by its developer.
+ZeusVM in itself is a branch of the original Zeus v2.0.8.9’s leaked source code.
+As a ZeusVM offspring, this Trojan relies on the same core resilience mechanism to make things more complicated for anyone who may attempt to tamper with it.
+Rather than compiling the entire source code into native machine code, developers made part of it compile into intermediate bytecode that they themselves created.
+That makes the malware contain a special runtime environment within — hence the name VM, which knows how to execute the intermediate bytecode.
+The end result of the VM addition to Zeus does not make it harder to detect, and the runtime engine that is compiled is not polymorphic.
+This feature only makes the malware more resilient to reverse engineering.
+In terms of its fraud capabilities, ZeuS.Maple is a banking Trojan that features effective data stealing abilities, webinjection mechanisms and the tools to automate illicit transfers out of online bank accounts through a mix of social engineering and remote access to infected machines.
+At the onset of the analysis, the loader was analyzed with the more common tools that can identify malicious codes run in memory and classify them into the type of malware and malware family.
+The loader did not allow for this sort of analysis to take place.
+Rather, it was immediately visible that it was blocking interaction with any of the research tools applied, sending back an Access Denied message upon each run.
+The same occurred when the loader was subjected to heuristic tests and in-system memory analyses.
+Since the loader was actively fetching ZeuS.Maple, which is an evolving banking Trojan operated by a closed cybercrime faction, further investigation was applied to reveal the loader’s modus operandi.
+Some technical information about the research appears in the next section.
+Loader begins by its own execution and performs system checks to characterize the target endpoint.
+In this first stage, the loader may look quite benign, with no suspicious behavior on the endpoint.
+The loader launched a second instance of its own process, but this time it does so as a child process, activating the DEBUG_PROCESS flag.
+This is used when a debugging process has been started; legitimate debuggers will use this flag.
+This behavior is reminiscent of another malware loader’s method: ZeroAccess.
+ZeroAccess is a malware dropper known for using advanced security evasion techniques and its strong anti-research capabilities, which enable it to function as a stealthy delivery platform for any type of malware.
+At this point, the new loader seemed interesting, but it did not display any new capabilities.
+In the third stage of its malicious activity on the endpoint, the loader decodes and injects a code chunk into the child process it opened in stage two.
+This chunk of code does not appear harmless — the first thing it does is launch a series of anti-VM checks and anti-research checks, verifying whether it is run in a testing environment.
+The series is actually familiar from other malware deployment sequences, only here there was something extra that caught our attention: Before execution, pages in memory belonging to the aforementioned child process were marked with the PAGE_GUARD flag enabled.
+At this point, the loader determines conditions for payload launch have been met.
+When the code inside the child process is ready to run, the loader passes the actual execution of the payload to a different function.
+For clarity’s sake we will name that function a DebuggerMachine.
+This function’s main purpose is to analyze events arriving from the child process during its execution and ensure that deployment runs according to plan.
+What’s the deployment plan?
+See Figure 1 for a schematic view, described as follows:
+If the program starts and an exception is called, do as follows:
+When exception is Execution Completed, close handle and exit.
+When exception received from child process or DebuggerMachine is PAGE_GUARD, restore the default permissions to the child process’s memory page.
+Then re-enable PAGE_GUARD.
+When done, proceed (see Figure 2).
+When any other exception is called, proceed with execution.
+The execution instructions appear below in Figure 2.
+Up to this point, the loader successfully executes the flow to install the malware payload it was sent to launch, applying a “self-debugging” trick.
+What’s the novelty here?
+Let’s go over a few details.
+We must keep in a mind a few factors of how the Windows operating system behaves by design.
+In this case, when code attempts to access a page in memory with the PAGE_GUARD flag enabled (either from the user or from the kernel space), an exception is always raised and then passed to the program running.
+In this way, the program can be “notified” that its code is being examined.
+Windows then removes the flag so that subsequent calls to read the protected page will not cause another exception and potential crashes.
+When Maple’s loader comes into play, it interferes with this mechanism to create a loop: After the Windows kernel removes the PAGE_GUARD flag, it puts it back on.
+By making the PAGE_GUARD flag permanent on the pages in memory that are of interest to its deployment plan, the loader thwarts the attempts of security software and research tools to examine or interact with its code.
+VirusTotal analyzed the detection rate for this threat.
+Its MD5 hash is 28a022dc9c6bd2f51e77a7db5b27be21.
+Our research showed that ZeuS.Maple’s operators have adopted the use of a custom loader that employs a new twist designed to bypass and block security researchers from analyzing it.
+By coding tricks that are less often encountered by researchers, and especially by blocking debugging capabilities, malicious actors hope to evade security and have their malware installed on more endpoints.
+The direct result is a larger botnet and more options to monetize it!
+On the flip side of that coin, by unraveling the inner workings of malware loaders, X-Force security research builds intelligence into threat detection solutions and platforms, bolstering protection from within to stop malware and cybercrime before actual attacks take place.
+Read the white paper: Accelerating growth and digital adoption with seamless identity trust

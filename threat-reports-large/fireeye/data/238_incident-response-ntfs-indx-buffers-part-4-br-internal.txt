@@ -1,0 +1,56 @@
+By Jeff Hamm & William Ballenthin
+On August 30th, 2012, we presented a webinar on how to use INDX buffers to assist in an incident response investigation.
+You can review an archived recording of this presentation here.
+This four part blog post series addresses questions we were not able to get to during the presentation.
+This post is the fourth, and final, posting of the series.
+The four installments are:
+Part 1: Extracting an INDX Attribute
+Part 2: The Internal Structures of a File Name Attribute
+Part 3: A Step by Step Guide to Parse INDX
+Part 4: The Internal Structures of an INDX Structure
+In part 1 of the series, we discussed how to extract the INDX attribute from an MFT record during a forensic investigation.
+In Part 3, our example illustrated how you can use the tool INDXParse.py to recover evidence of deleted files from an NTFS volume.
+This post will build on Part 2 of the series, which covered the structure of another NTFS attribute: the filename attribute.
+Recall that NTFS structures the Master File Table ($MFT) into small segments, called records, each of which describes one file or directory.
+Figure 1 diagrams the layout of the $MFT in an NTFS volume.
+Each $MFT record contains attributes, which store the metadata for the record.
+When these $MFT records correspond to directories, the record tracks the contents of the directory.
+INDX attributes are the sub-structures that track the contents of a directory.
+The NTFS driver structures an INDX attribute in such a way that the driver can quickly look up if and where a particular file exists.
+NTFS optimizes for locating files across a large volume, rather than performing efficient file listings.
+In fact, this is why it can take a while to open a large directory in Explorer (such as C:WINDOWSSystem32), however, launching a program found deep in the file system does not.
+Specifically, the attribute places INDX records in a B+ tree, where the key is the filename.
+A B+ tree is a data structure where arbitrary records are organized by a sortable key value, such as a number or a string.
+Each node in the tree may have many branches that lead to further nodes.
+Locating the data associated with a key value boils down to traversing the nodes and using the key value to decide which branch to take.
+For a forensic investigator, the effect of the B+ tree is that INDX records associated with a node are stored as a chunk in alphanumeric order.
+The size of a B+ node is a parameter to the NTFS file system; however, it is typically 4096 bytes.
+This means that the size of an INDX allocation attribute will always be a multiple of 4096 bytes.
+Within the node, INDX records are arranged consecutively with no space between neighboring records.
+Since there are usually fewer records than a node's full capacity, there is often slack space between the last INDX record and the end of the B+ tree node.
+Figure 2 diagrams the layout of an INDX allocation attribute.
+When a file is added to a directory, a new record is added to the INDX attribute of the directory.
+Within the B+ tree, NTFS finds the appropriate node and inserts the new record --- shifting records down, if necessary.
+When this happens, the slack space at the end of the node shrinks.
+When a file is deleted from a directory, the opposite operation happens, and NTFS removes an INDX record from the B+ tree node.
+During this removal, NTFS shifts records back up to fill the newly created space.
+During INDX operations, the Microsoft Windows NTFS driver does not rewrite the entire B+ tree node.
+Instead, the driver only modifies the addresses of active INDX records found alphanumerically after the deleted record.
+Due to this, Windows does not zero out the slack space, and an investigator may recover old copies of INDX records from this area.
+When INDXParse.py recovered metadata of deleted files in Part 3, it parsed unused copies of INDX records from a node's slack space.
+Figure 3 diagrams the behavior of the Microsoft NTFS driver as an INDX record is deleted.
+When the driver removes INDX record "F", it shifts the records "G" and "H" to fill the space.
+As the contents of record "H" shift, a recoverable copy (inactive record "H' ") remains in the newly expanded slack space.
+By now, we know that an INDX record is an entry in a B+ tree that allows NTFS to quickly look up the contents of a directory.
+The INDX record contains data that describes one file or subdirectory in the INDX attribute of a parent directory.
+As it turns out, the structure of this record is familiar to us.
+The structure of an INDX record is the same as an NTFS filename attribute, wrapped with two extra values.
+In part 2, we reviewed the information and layout of data stored in a filename attribute.
+The INDX record structure reuses the layout of the filename attribute, including the filename field, the file timestamp fields, and file size field.
+In addition to the filename attribute structure, the INDX record starts with a reference to the $MFT record of the file and a set of descriptive flags.
+Figure 4 lists the filename attribute structure formatted as a C type, while Figure 5 l lists the INDX record structure.
+In this blog post series, we discussed how NTFS uses INDX attributes to track the contents of a directory.
+As forensic investigators, we can exploit the behavior of the Microsoft Windows driver to recover information about deleted files from a file system.
+This is a powerful technique in our arsenal, so Parts 1 and 3 documented exactly how to use the appropriate forensic tools.
+In this final post, we dug deep into the binary structure of INDX attributes to explain the patterns you may see during an investigation.
+We hope you enjoyed this series!

@@ -1,0 +1,79 @@
+A FortiGuard Labs Threat Analysis Report: This blog originally appeared on the enSilo website on June 21, 2016, and is republished here for threat research purposes.
+enSilo was acquired by Fortinet in October 2019.
+Microsoft’s Control Flow Guard (CFG) is a security feature that prevents the abuse of indirect calls by calling addresses that are not marked as safe.
+CFG can cause problems for anyone trying to execute malicious memory manipulations on Windows.
+In such cases, this can be bypassed by adding an exception to the CFG bitmap (a mapping of all the “safe” addresses).
+How can we add such an exception?
+There are actually two ways to do this: one is documented, the other is undocumented.
+In this post, we’ll walk you through both while analyzing the undocumented syscall in depth.
+(The enSilo threat research team (now part of FortiGuard Labs) continually researches vulnerabilities in our quest for the best endpoint protection.)
+A combination of compile and run-time support from CFG implements control flow integrity that tightly restricts where indirect call instructions can execute.
+The compiler does the following:
+Adds a lightweight security check before each indirect call in the compiled code
+Identifies the set of functions in the application that are valid targets for indirect calls
+The runtime support, provided by Windows (both kernel mode and user mode code are involved) performs the following:
+Efficiently maintains state that identifies valid indirect call targets
+Implements the logic that verifies that an indirect call target is valid
+For those who would like to get better acquainted with CFG internals, I recommend looking into the following reading material:
+Exploring Control Flow Guard in Windows 10
+Windows 10 Control Flow Guard Internals
+While working on a completely different project (a new Windows code injection technique that I will be posting about in the coming weeks, so stay tuned!)
+I encountered CFG, which meant I had one more hurdle to jump over.
+I was able to successfully inject code into various 3rd party applications, such as VLC and Chrome, but when I tried to inject code into mspaint.exe (on Windows 10, mspaint.exe is compiled with CFG support, while VLC and Chrome are not), the application crashed.
+And this was the result:
+I ran it again with my debugger attached to “mspaint.exe” to see what had happened.
+If you’ve never seen “int 29h” I would advise you to run a quick Google search for “int 29h Windows”.
+You’ll find a few interesting articles that will tell you that “int 29h” leads to nt!KiRaiseSecurityCheckFailure which will not help you very much because it’s very generic.
+At any rate, it looks like we failed some kind of security check (maybe stack cookies?).
+The next step would be to look at the call stack to see if perhaps that would give us a hint as to what was the root cause of the exception.
+Looking at this call stack, things are starting to make sense.
+It looks like a call was made to ntdll!LdrpValidateUserCallTargetBitMapRet.
+So let’s take a look at ntdll!LdrpValidateUserCallTargetBitMapRet with IDA:
+Looking at the disassembly (after undefining these three functions and redefining them as one) we can probably infer that the call was actually made to ntdll!LdrpValidateUserCallTarget.
+This can also be verified by further examining the call stack – which we will do in a future post.
+The call to ntdll!LdrpValidateUserCallTarget led to the call to ntdll!RtlpHandleInvalidUserCallTarget.
+Clearly, we did not pass CFG’s check and were therefore led to ntdll!RtlpHandleInvalidUserCallTarget.
+The call to ntdll!RtlpHandleInvalidUserCallTarget led us to ntdll!RtlFailFast2.
+ntdll!RtlFailFast2 is a very simple function that looks like this:
+If you are not familiar with these functions run a quick search for “LdrpValidateUserCallTarget”.
+It shouldn’t be too hard to understand that this is CFG’s validator function.
+Right before the exception occurred the address, to which an indirect call was attempted to be made to, was stored in ESI.
+The attempted indirect call address was NtSetContextThread (the syscall behind the beloved API call: SetThreadContext).
+This function has been used to bypass CFG in the past and has therefore been marked as invalid.
+Now, if we look at the code surrounding the call to ntdll!RtlFailFast2 we can see a call to another function with a rather interesting name: ntdll!RtlpGuardGrantSuppressedCallAccess.
+This function is a wrapper around the new ntdll!NtSetInformationVirtualMemory syscall.
+And if we take a quick glance at the MSDN, we also learn that it is only partially documented.
+The only VmInformationClass being referenced in the documentation is VmPrefetchInformation.
+If we take a look at the definition of VIRTUAL_MEMORY_INFORMATION_CLASS:
+We can tell that VmPrefetchInformation is 0x00, while ntdll!RtlpGuardGrantSuppressedCallAccess calls ntdll!NtSetInformationVirtualMemory with VmInformationClass=0x02.
+Obviously, VmCfgCallTargetInformation is 0x02, which makes a lot of sense.
+Now if we take a closer look, the first parameter passed to ntdll!NtSetInformationVirtualMemory is ProcessHandle=0xFFFFFFFF (which is the pseudo-handle of the current process).
+So if we could call ntdll!NtSetInformationVirtualMemory with the handle of our target process, we should be able to add an exception to the target process’s CFG.
+However, in order to do this we need to understand exactly what’s being passed to ntdll!NtSetInformationVirtualMemory.
+Let’s start by defining some structs, constants, and prototypes:
+Most of ntdll!NtSetInformationVirtualMemory’s parameters are fairly easy to understand:
+The only tricky parameter is VmInformation (and since we don’t really know what that is, we also have trouble with its size – VmInformationLength).
+I took the liberty of reversing the syscall and have reconstructed VM_INFORMATION (this VM_INFORMATION structure is relevant only if you pass VmInformationClass=0x02 – you have been warned).
+For demonstration purposes we will add an exception to one address even though the syscall does support adding multiple exceptions with one call.
+Let’s just leave that as an exercise for our readers – it shouldn’t be very difficult.
+We’ll set:
+dwNumberOfOffsets to 0x01
+dwMustBeZero to 0x00
+pdwOutput to point to a DWORD on the stack.
+The syscall will set that DWORD to 0x00
+ptOffsets to point to CFG_CALL_TARGET_INFO tCfgCallTargetInfo
+tCfgCallTargetInfo.Offset to (AddressToAddCfgExceptionTo – AllocationBase) which is the same as (AddressToAddCfgExceptionTo – tMemoryPageEntry.VirtualAddress)
+tCfgCallTargetInfo.Flags to CFG_CALL_TARGET_VALID (0x1)
+Once all of our parameters have been set correctly we will make the following call:
+This call will add an exception to the target process’s CFG for the target address.
+To sum up, we were able to document the undocumented part of the new syscall ntdll!NtSetInformationVirtualMemory and demonstrate how one would go about using this syscall to add an exception to CFG.
+You can also use the documented “KernelBase!SetProcessValidCallTargets” in order to add exceptions, but where’s the fun in that?
+I’ve uploaded an example VS solution to GitHub that will add a CFG exception to “mspaint.exe”.
+The complete project can be found here: https://github.com/BreakingMalwareResearch/CFGExceptions
+As you’ll see, the example code implements two functions:
+AddCfgExceptionUndocumentedApi– will add an exception by calling ntdll!NtSetInformationVirtualMemory
+AddCfgExceptionDocumentedApi – will add an exception by calling KernelBase!SetProcessValidCallTargets
+This solution has been tested against the WOW version of mspaint.exe (C:WindowsSysWOW64mspaint.exe) on Windows 10 Pro (Version 1511 Build 10586.420).
+Learn more about FortiGuard Labs threat research and the FortiGuard Security Subscriptions and Services portfolio.
+Sign up for the weekly Threat Brief from FortiGuard Labs.
+Learn more about Fortinet’s free cybersecurity training initiative or about the Fortinet Network Security Expert program, Network Security Academy program, and FortiVet program.

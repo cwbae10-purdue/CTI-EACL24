@@ -1,0 +1,62 @@
+We introduce Stadeo – a set of scripts that can help fellow threat researchers and reverse engineers to deobfuscate the code of Stantinko and other malware
+Stadeo is a set of tools primarily developed to facilitate analysis of Stantinko, which is a botnet performing click fraud, ad injection, social network fraud, password stealing attacks and cryptomining.
+Stadeo was demonstrated for the first time at Black Hat USA 2020 and subsequently published for free use.
+The scripts, written entirely in Python, deal with Stantinko’s unique control-flow-flattening (CFF) and string obfuscation techniques described in our March 2020 blogpost.
+Additionally, they can be utilized for other purposes: for example, we’ve already extended our approach to support deobfuscating the CFF featured in Emotet – a trojan that steals banking credentials and that downloads additional payloads such as ransomware.
+Our deobfuscation methods use IDA, which is a standard tool in the industry, and Miasm – an open source framework providing us with various data-flow analyses, a symbolic execution engine, a dynamic symbolic execution engine and the means to reassemble modified functions.
+You can find Stadeo at https://github.com/eset/stadeo.
+To work with Stadeo, we first need to set up a RPyC (Remote Python Call) server inside IDA, which allows us to access the IDA API from an arbitrary Python interpreter.
+You can use this script to open an RPyC server in IDA.
+In all the examples below, we set up an RPyC server listening on 10.1.40.164:4455 (4455 being the default port), and then communicate with the server from a Python console.
+We will use two Stadeo classes:
+CFFStrategies for CFF deobfuscation
+StringRevealer for string deobfuscation
+Both classes can be initialized for both 32- and 64-bit architecture.
+SHA-1 of the sample: 791ad58d9bb66ea08465aad4ea968656c81d0b8e
+The code below deobfuscates the function at 0x1800158B0 with the parameter in the R9 register set to 0x567C and writes its deobfuscated version to the 0x18008D000 address.
+The R9 parameter is a control variable for function-merging the CFF loop (merging variable) and it has to be specified using Miasm expressions, which are documented here; note that one has to use RSP_init/ESP_init instead of RSP/ESP to refer to the stack parameters.
+For example, we would use ExprMem(ExprId(“ESP_init”, 32) + ExprInt(4, 32), 32) to target the first stack parameter on 32-bit architecture.
+Figure 1.
+Call to the obfuscated function
+Figure 1.
+Call to the obfuscated function
+Figure 2.
+Obfuscated (left) and deobfuscated (right) CFG
+SHA-1 of the sample: e0087a763929dee998deebbcfa707273380f05ca
+The following code recognizes only obfuscated functions reachable from 0x1002DC50 and searches for candidates for merging variables.
+Successfully recognized and deobfuscated functions are starting at 0x10098000.
+Partial output:
+skipping 0x1002dc50 with val None: 0xbadf00d mapping: 0x1001ffc0 -> 0x10098000 with val @32[ESP_init + 0x8]: 0x6cef skipping 0x100010f0 with val None: 0xbadf00d mapping: 0x1000f0c0 -> 0x100982b7 with val @32[ESP_init + 0x8]: 0x2012 mapping: 0x1003f410 -> 0x10098c8a with val @32[ESP_init + 0x4]: 0x21a4 mapping: 0x1003f410 -> 0x10098f3d with val @32[ESP_init + 0x4]: 0x772a skipping 0x1004ee79 (library func) …
+Mapped functions were deobfuscated properly and skipped ones weren’t considered to be obfuscated.
+The format of the mapping lines in the output is:
+mapping: %obfuscated_function_address% -> %deobfuscated_function_address% with val %merging_variable%: % merging_variable_value%
+The default value for merging_variable_value is 0x0BADF00D.
+The skipping lines follow the same pattern, but there’s no deobfuscated_function_address.
+Library functions recognized by IDA are just skipped without further processing.
+SHA-1 of the sample: e575f01d3df0b38fc9dc7549e6e762936b9cc3c3
+We use the following code only to deal with CFF featured in Emotet, whose CFF implementation fits into the description of common control-flow flattening here.
+We prefer this approach because the method CFFStrategies.process_all() does not attempt to recognize merging variables that are not present in Emotet and searches only for one CFF loop per function; hence it is more efficient.
+Successfully recognized and deobfuscated functions are sequentially written from 0x0040B000.
+Format of the output is the same as in the process_merging method used in the Processing reachable functions example, but naturally there won’t be any merging variables.
+Partial output:
+mapping: 0x00401020 -> 0x0040b000 with val None: 0xbadf00d skipping 0x00401670 with val None: 0xbadf00d mapping: 0x00401730 -> 0x0040b656 with val None: 0xbadf00d …
+Figure 3.
+Example of obfuscated (left) and deobfuscated (right) function in Emotet
+Stadeo doesn’t automatically update references to functions after their deobfuscation.
+In the example below, we demonstrate how to patch a function call in Figure 1 from the Deobfuscating a single function example.
+The patched reference is shown in Figure 4.
+We use the following code to patch calls, whose fourth parameter is 0x567C, to the obfuscated function at 0x1800158B0 with the deobfuscated one at 0x18008D000.
+Note that one has to make sure that IDA has recognized parameters of the function correctly and possibly fix them.
+Figure 4.
+Patched reference
+Figure 4.
+Patched reference
+The function StringRevealer.process_funcs() reveals obfuscated strings in the specified function and returns a map of deobfuscated strings and their addresses.
+Note that control flow of the target function has to have been deobfuscated already.
+In the example below, we deobfuscate the strings of the function at 0x100982B7, shown in Figure 5.
+The function itself was deobfuscated in the previous Processing reachable functions example.
+Figure 5.
+Part of the function at 0x100982B7 which clearly assembles a string
+Figure 5.
+Part of the function at 0x100982B7 which clearly assembles a string
+Content of the strings variable after the execution is:

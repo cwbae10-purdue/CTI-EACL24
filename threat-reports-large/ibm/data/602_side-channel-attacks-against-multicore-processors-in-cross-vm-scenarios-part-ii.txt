@@ -1,0 +1,74 @@
+In Part I, we introduced the notion of a side-channel attack and discussed its uses in infrastructure-as-a-service (IaaS) clouds.
+In this second part, I will discuss two side-channel attacks meant to retrieve sensitive information from a target virtual machine (VM) on the same physical processor package.
+The first attack, FLUSH+RELOAD, is described as a multicore side channel with the last-level cache (LLC).
+The FLUSH+RELOAD attack relies on a feature that has been discouraged by virtual machine manager (VMM) creators such as VMware but still may be used in private clouds: page sharing across VMs.
+This means that the VMM deduplicates memory pages, usually those shared by executables such as libc in a Unix environment or kernel32.dll in a Windows environment.
+This results in the same physical memory pages being mapped into the virtual address space of multiple VMs.
+When this happens, the FLUSH+RELOAD attack becomes possible.
+Note that this is exactly the same attack used against platform-as-a-service (PaaS) clouds.
+The difference here is that PaaS clouds typically share the same binaries and the same OS kernel, as well as shared memory pages.
+These are exactly the conditions required for the FLUSH+RELOAD attack to work.
+Plus, the attack can be much more precise because there is quite a bit known about the internal state of the target tenant’s platform environment.
+This attack consists of three steps:
+In the first step, the attacker measures the length of time it takes to read a memory address.
+Then, a cache line is evicted from the LLC.
+A cache line is a small chunk of memory belonging to the cache that is used to allocate and transfer requests from a lower-level cache to upper-level caches, eventually resulting in requests to the LLC if no hits have been found on the core’s private caches.
+The eviction is done using the cflush instruction, which is an unprivileged instruction on the X86 architecture.
+Note that it is a privileged instruction on other processors such as the ARM.
+The code to do this requires the serialization of instructions with the mfence and lfence instructions to prevent parallel and out-of-order execution common on modern cores.
+The cpuid instruction will largely do this, but this instruction is usually emulated by the hypervisor.
+Next, the attacker allows the target time to access that flushed cache line.
+Note that this interval must be carefully chosen — too long an interval will result in a loss of resolution, but too short of a wait period will result in overlapping access of the cache by the attacker VM and the target VM, potentially resulting in false negatives.
+In the third step, the attacker VM accesses that flushed cache line.
+If the target has utilized the cache line, the load will be quicker than if the target has not and the cache line must be loaded from memory.
+The attacker uses empirical measurements on the particular compute node to set a threshold, under which the target is assumed to have accessed the cache line and above which it has not.
+The attacker uses the RDTSC instruction to get an accurate timing.
+Xen, a hypervisor, emulates this instruction by default with a hybrid algorithm but can be forced to emulate it in all cases.
+This emulation makes this attack far more difficult, if not impossible.
+Using the temporal technique, an attacker can derive whether or not certain instructions have been executed.
+If the attacker has a copy of the binary under test on the target and has introspection into that binary, he or she can trigger the execution of an algorithm and know whether the instructions have been executed.
+Depending on the algorithm, this may leak bits of the values being processed by the algorithm.
+The attacker simply loads and maps the executable into the attacker VM’s virtual address space, and if the hypervisor deduplicates, the attacker has access to the shared physical memory pages.
+As mentioned above, hypervisor creators have strongly discouraged deduplication across VMs, so the FLUSH+RELOAD attack is usually not practical.
+A new attack was created, the multicore Prime+Probe attack, which only requires the LLC on a CPU and the ability to map large memory pages into a VM, which is nearly always allowed for performance reasons.
+“Last-Level Cache Side-Channel Attacks Are Practical” demonstrates attacks against the El Gamal encryption scheme as implemented in GNU PG/libcrypt, both with the square-multiply-reduce algorithm and the new sliding-window modular exponentiation algorithm.
+This makes the multicore Prime+Probe attack extremely powerful.
+This attack is based on the Prime+Probe method discussed in “Cache Attacks and Countermeasures: the Case of AES.”
+The attacker fills one or more cache sets with chosen data or instructions.
+The attacker then waits for a period of time to allow the target to execute and access the cache.
+Similar to the FLUSH+RELOAD attack, if the target has utilized the cache, it will have removed some of the attacker’s data or code.
+When the attacker reads the cache sets that have been primed, the probe determines whether or not the target has used the cache sets by comparing the probe’s access time with a threshold designed to determine if the information came from the cache or from main memory.
+The probe acts as the prime phase for the next execution of the algorithm.
+As mentioned above, Xen emulates the RDTSC instruction by default in a hybrid algorithm but can be forced to emulate it in all situations.
+This makes this attack extremely difficult and lowers its resolution perhaps to the point of impracticality.
+There are several challenges to the success of this technique, outlined in section 2D of “Last-Level Cache Side-Channel Attacks Are Practical.” To meet these challenges, the attack relies upon several features that are ubiquitous in modern compute nodes.
+For example, modern caches are inclusive, meaning that it is possible to replace the target’s data at all levels of the cache hierarchy.
+In order to avoid having to prime and probe the entire LLC, the attack identifies certain cache sets that are relevant to security accesses by the target.
+To do this, the attacker scans the entire LLC, looking for temporal patterns that match the security algorithm in question — that is, the attacker must know the target’s algorithm in order to discover the security-relevant cache sets.
+This is clearly suboptimal, and a solution to this problem would be extremely valuable.
+Another challenge is constructing an eviction set that only flushes one cache set known to the attacker so that it can be probed.
+This is difficult because the VMM indirectly maps emulated physical memory to actual physical memory, and the attacker has no way of accessing this mapping.
+Furthermore, the new slice concept of the LLC in which each core has a fragment of the LLC connected by a ring bus to the other cores makes it necessary to know the slice ID, which is the output of a secret hashing function created by Intel.
+The solution is to use large memory pages.
+With 2 MB pages, all the index bits of the LLC fall within the page offset, and this attack becomes practical — that is, the page value is split into two sections, an offset and a page number.
+This is done to preserve precious entries in the translation lookaside buffer of the CPU.
+The higher bits assigned as the page number are part of the virtual address space of the process, which is doubly obfuscated both by the processor mapping to emulated physical memory and then by the VMM, which maps it to real physical memory.
+The lower bits of the virtual address are mapped to a value known as the offset.
+The offset is not mapped by the memory management unit (MMU) of the CPU and is therefore the same value in physical and virtual memory.
+This means that bits of the physical address are leaked to the attacker since the offset is not changed.
+When the attacker uses large pages, more bits are leaked in the offset value that map to physical addresses.
+The MMU only maps the page number, so with large pages, the number of bits mapped by the MMU grows reasonably small.
+Because the large page is backed up in physical memory by a large page, this allows access to the LLC.
+Note that there is still the difficulty of slices.
+The authors created an algorithm to combat this, the details of which can be found in “Last-Level Cache Side-Channel Attacks Are Practical,” figure 2B.
+To overcome the limited probing resolution of this technique, the attack can be run asynchronously without the need to preempt the target.
+This limits the resolution to the speed at which the attacker can execute the probe step.
+The LLC is much slower than the higher-level caches for several reasons, including more required memory accesses and the physical speed difference of the caches.
+As I discussed above, cache lines are the lines connecting caches with each other and with the main memory.
+We must create an eviction set from these cache lines and do so in a manner that is not predictable by the processor’s prefetch unit.
+The lines of the eviction sets are organized in a random linked list.
+This avoids processor optimizations such as fetching of contiguous memory lines.
+Listing 1 of “Last-Level Cache Side-Channel Attacks Are Practical” shows how to probe a cache set.
+With these tools, the Prime+Probe attack proceeds.
+See section 4C of the paper for a discussion of optimizations of the attack.
+In Part III of this series, I will discuss a third side-channel attack.

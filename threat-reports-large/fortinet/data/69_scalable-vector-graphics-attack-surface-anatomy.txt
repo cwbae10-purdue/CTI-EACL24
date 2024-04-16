@@ -1,0 +1,92 @@
+A FortiGuard Labs Threat Research Report
+Over the past few weeks, Fortinet's FortiGuard Labs has been assessing web applications with embedded SVG images.
+As a result, we found a number of common issues in the web applications that we have examined.
+In this blog post, we will briefly talk about the nature of SVG and the common attack surfaces for SVG images that we have seen so far.
+The following list is a summary of the common SVG attack vectors that we have observed over time:
+Cross-Site Scripting
+HTML Injection
+XML Entity Processing – Billion Laughs Attack
+Denial of Service – The New SVG Billion Laughs Attack
+SVG, which stands for Scalable Vector Graphics[1], is an XML-based vector image format for two-dimensional graphics with support for interactivity and animation.
+SVG images and their behaviors are defined in XML text files.
+They can be created and edited with any text editor, as well as with drawing software.
+All major modern web browsers have SVG rendering support.
+Let’s look at an example to get a better understanding of SVG images.
+Below, we have written some code to render an SVG image:
+We then saved this image as simple.svg that can then be opened directly or included in an img/image/object/embed HTML tag:
+Figure 2 shows the image generated via the code shown in Figure 1.
+It is a rect element that tells the browser to render a red rectangle in position x, y (100, 100) – i.e.
+width and height.
+Though SVG provides flexibility that enables the creation of more dynamic web content, it also introduces additional security risks.
+In this next section we will discuss the common attack vectors that we observed in a number of major websites we encountered online.
+All aspects of an SVG document can be accessed and manipulated using scripts in a way similar to HTML.
+The default scripting language is ECMAScript (closely related to JavaScript) and there are defined Document Object Model (DOM) objects for every SVG element and attribute.
+Scripts are enclosed in <script> elements.
+This means that if a web server allows a user to upload an arbitrary SVG image, it is then vulnerable to a Cross-Site Scripting[2] attack.
+Here we have put the script inside the image:
+Here is the compromised image that we saved as xss.svg and then opened directly:
+Here is what happens when it is linked to an html page:
+The Javascript code is executed within browser context, which means an attacker can use this compromised file to perform malicious activities, such as stealing your information.
+In some contexts, the XSS payload is sanitized.
+However, an SVG image still has a feature that allows us to inject HTML code.
+As mentioned before, the SVG is an XML-based vector image so we cannot simply put HTML into it as the syntax of the XML will be broken.
+To avoid this, SVG has an element known as foreignObject that allows the inclusion of elements from a different XML namespace.
+In the context of a browser, this would most likely be (X)HTML.
+Let’s take a look at the html.svg image:
+When we add the body tag along with an XHTML namespace inside a foreignObject, the namespace declaration is provided by the xmlns attribute.
+As a result, the body tag and all its child tags are interpreted by the user agent as belonging to XHTML.
+Therefore, we are able to render any XHTML code from the SVG to the page:
+This ability to run any HTML code means we can simply perform an attack like phishing, bypass same-origin, CSRF, etc.
+from inside the compromised SVG image.
+Since SVG is an XML-based vector image, it therefore allows the Entity to be included function.
+Entities are used to define shortcuts to special characters and can be declared to be internal or external.
+An Internal Entity can be declared via the following syntax:
+<!ENTITY entity-name "entity-value">
+An External Entity can be declared via the following syntax:
+<!ENTITY entity-name SYSTEM "URI/URL">
+This External Entity function can be abused to leak internal data in the case of a file being parsed by a defective XML parser.
+Since we mostly work with modern browsers, we assumed that any available parser has already been well tested by fuzzers and should therefore be less vulnerable.
+Because of this, we will only talk about the abuse of an Internal Entity instead.
+Inside entity.svg:
+As seen above, we defined the Entity lab at line 2 and then we call it inside the SVG element.
+Figure 9 shows the result:
+It works!
+Let try another example – entity_2.svg:
+Here is the result:
+As can be seen, the text is being duplicated, which indicates that we can perform The Billion Laughs attack using an Entity tag!
+The Billion Laughs Attack[3] is a type of denial-of-service (DoS) attack which is aimed at parsers of XML documents.
+It is also referred to as an XML bomb or exponential entity expansion attack.
+Our browser took 4-5 seconds to response when parsing this billion_laughs.svg.
+That’s because most modern browsers are already aware of this attack and can address it during rendering so it does not pose a security risk.
+As seen in the previous section, the Billion Laughs Attack slows down the browser for around 4-5 secs to address the attack.
+Unfortunately, there is another way to perform the Billion Laughs via SVG image that can bypass those defenses
+This time, we will use xlink:href instead of XML Entity.
+Let’s look at the payload for xlink_laughs.svg:
+The xlink:href attribute defines a reference to a resource as a reference IRI.
+The exact meaning of that link depends on the context of each element using it.
+The <use> element takes nodes from within the SVG document and duplicates them somewhere else.
+By defining the circle element in a0, we call the <use> element with the attribute xlink:href in a1, a2, a3… to clone the circle again, again, and again.
+Here is the result:
+Note that in a worst case scenario, most modern browsers can be crashed, or at least become unresponsive when trying to render this SVG image as an avatar, image, chat, etc.
+on a website.
+Interestingly, the SVG image shown in Figure 13 is also not caught by some open source SVG/XML sanitizers when we tested them.
+As a result, this is lesser known malformed SVG is likely to be able to trigger a denial-of-service.
+In conclusion, SVGs are more like HTML than simply being an image.
+As a result, we recommend that web developers not load any SVG as an object or iframe if possible.
+The web administrator should also limit the file types that can be uploaded.
+Otherwise, any untrusted SVG should be sanitized before being uploaded onto the server:
+Restrict dangerous tags, such as script, foreignObject, etc.
+Restrict loading resources from an external link inside an SVG image
+Limit expansion inside an SVG image
+The following table compares browser vulnerabilities to malicious SVG files when those files are opened directly.
+The SVG samples used in this report can be found at our Github site: https://github.com/fortiguard-lion/svg_test/
+FortiGuard Labs has released the following IPS signatures that cover the vulnerabilities mentioned:
+TYPO3.CMS.Upload.XSS
+WordPress.Plugin.SafeSVG.DoS
+Drupal.Module.SVGSanitizer.DoS
+ImageMagick.Convert.LibXML.DoS
+-== FortiGuard Lion Team ==-
+Learn more about FortiGuard Labs and the FortiGuard Security Services portfolio.
+Sign up for our weekly FortiGuard Threat Brief.
+Read about the FortiGuard Security Rating Service, which provides security audits and best practices.
+[1] W3C, “Scalable Vector Graphics” https://www.w3.org/TR/SVG2/ (02 September, 2019) [2] OWASP, “The Image that called me” https://www.owasp.org/images/0/03/Mario_Heiderich_OWASP_Sweden_The_image_that_called_me.pdf (02 September, 2019) [3] Blackhat, “Exploiting Browsers without Image Parsing Bugs” https://www.blackhat.com/docs/us-14/materials/us-14-DeGraaf-SVG-Exploiting-Browsers-Without-Image-Parsing-Bugs.pdf (02 September, 2019)

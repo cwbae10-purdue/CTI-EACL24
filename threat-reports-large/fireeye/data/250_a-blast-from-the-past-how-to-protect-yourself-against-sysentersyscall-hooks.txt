@@ -1,0 +1,112 @@
+In my last two blogs I discussed PDF exploits and shell code in general, so this time around I’ll make it a little different.
+Experienced Windows programmers (well, Linux can be included as well if you think about it) know that for a few years now Microsoft has been taking advantage of the evolution of microprocessors like Intel and AMD.
+A long time ago, when a function was called from user mode, the call would trickle down a system DLL and end up calling a system API.
+The problem was that the context switch between user mode and kernel mode was too expensive and they needed something more efficient.
+Enter fast system calls.
+For a while now, Intel and AMD have provided a few new op-codes:
+Windows XP introduced support for the SYSENTER instruction as a fast way to ring 0 and SYSEXIT as a fast way back to ring 3.
+As we know, this was a pretty big change from the previous versions of Windows since they used INT 2EH as a way to make the switch between modes.
+Let’s look at an example to illustrate this:
+Figure 1.
+Call to ZwCreateEvent
+What ntdll does is store an API index into EAX and call KiFastSystemCall.
+Figure 2.
+KiFastSystemCall
+In Figure 2, we can see that KiFastSystemCall basically just sets EDX with the current stack pointer and calls SYSENTER.
+According to the Intel manual, here’s what SYSENTER does:
+The SYSENTER instruction is part of the "Fast System Call" facility introduced on the Pentium II processor.
+The SYSENTER instruction is optimized to provide the maximum performance for transitions to protection ring 0 (CPL = 0).
+The SYSENTER instruction sets the following registers according to values specified by the operating system in certain model-specific registers.
+CS register set to the value of (SYSENTER_CS_MSR)
+EIP register set to the value of (SYSENTER_EIP_MSR)
+SS register set to the sum of (8 plus the value in SYSENTER_CS_MSR)
+ESP register set to the value of (SYSENTER_ESP_MSR)
+Figure 3.
+MSR reference
+In Figure 3, I highlighted the result of RDMSR (From WinDBG).
+174h is the CS Register.
+175h is the ESP Register.
+176h is the EIP Register.
+In essence, SYSENTER will read those registers, change the ESP register, and jump to CS:EIP, which ends up in KiFastCallEntry.
+Before SYSTENTER/SYSCALL was implemented, operating systems had to use a different method to switch context.
+One way of doing this would be to use a call gate or an interrupt (this article from Computer Science from the Bottom Up documents call gates quite well).
+Microsoft (and Linux) opted for the INT call.
+Windows uses INT 2EH and Linux uses INT 80H.
+It basically works in a very similar way to SYSCALL in the sense that NTDLL does the following:
+Set EAX with the API index
+Set EDX with the parameters address (the ESP in user mode).
+The internal function used to handle the interrupt is a little different as we can see in the following figure:
+Figure 4.
+KiSystemService
+KiSystemService is still used internally by kernel mode drivers since it shares code with KiFastCallEntry (the part where it gets the address of an API from the SSDT).
+The thing is, nowadays, KiSystemService is no longer used by user mode programs.
+In the real world and more specifically on Windows 32bit, a lot of security products rely on hooking the SSDT in order to sandwich themselves between user mode software and the OS kernel.
+Instead of hooking the whole SSDT or even a good chunk of it, it would actually make sense to create a MSR hook since it is easy to create one (which you can do without the need of a driver at all).
+Also, this would prevent issues when your own SSDT hooks get overwritten.
+Of course malware uses this to reach their goals as well.
+For example, this particular malware will do just that.
+Here is an excerpt from an analysis by my colleague Michael Vincent (who co-wrote that excellent article on bypassing process monitoring); his analysis examines this malware.
+So what can you do to protect yourself?
+Well, if we assume that SYSENTER is compromised, your user mode app can simply revert to the old, slow way of doing things.
+You may need a kernel driver for this since we will need to create an ISR for an interrupt of our liking.
+We know that some interrupts are reserved for the OS, but since there are some 255 possibilities, we can pick some number that is out of that reserved range.
+We could also just pick 2EH since it was used prior to the SYSENTER command.
+The beauty of this is that you may pick any interrupt you want, really.
+Let’s take 2EH for now.
+First, you will need to modify the IDT (hopefully you run on a single processor machine) and have the INT 2EH vector point onto your ISR.
+Here is what your ISR may look like:
+Mov edx, DWORD PTR[esp+0x0C]
+Mov esi, KiSystemService
+Pretty simple stuff, really.
+We need to skip the first 3 DWORD on the stack since they are pushed automatically (Return EIP, CS, EFLAGS, User ESP, User SS).
+As we’ve seen before, prior to calling KiSystemService, we must set EAX with the function index and set EDX with the location of the parameters.
+Those parameters are located as [user SS:User ESP].
+Here’s what the stack looks like when you are at the very beginning of your ISR:
+Since the user SS is kept in the TSS and in the stack, KiSystemService doesn’t need that information.
+Here’s a small piece of code that will show how to use our SYSTENTER short circuit:
+typedef DWORD (WINAPI*
+pfnZwClose)( HANDLE Handle);
+#define K_NANOSECOND 1000000000 // Kernel Nanosecond = 10^9 of a second
+#define K_SECOND 10000000 // Kernel Wait Unit = 100 Nanoseconds
+#define K_MILLISECOND 10000 // Millisecond = Second / 1000
+#define K_RELATIVE_WAIT_S(a) -((LONGLONG) a * K_SECOND)
+#define K_RELATIVE_WAIT_MS(a) -((LONGLONG) a * K_MILLISECOND)
+typedef struct _UNICODE_STRING {
+[size_is(MaximumLength / 2), length_is((Length) / 2) ] USHORT * Buffer;
+#else // MIDL_PASS
+#endif // MIDL_PASS
+typedef UNICODE_STRING *PUNICODE_STRING;
+typedef struct _OBJECT_ATTRIBUTES {
+} OBJECT_ATTRIBUTES, *POBJECT_ATTRIBUTES;
+#define InitializeObjectAttributes( p, n, a, r, s ) { \
+(p)->Length = sizeof( OBJECT_ATTRIBUTES ); \
+(p)->RootDirectory = r; \
+(p)->Attributes = a; \
+(p)->ObjectName = n; \
+(p)->SecurityDescriptor = s; \
+(p)->SecurityQualityOfService = NULL; \
+int _tmain(int argc, _TCHAR* argv[])
+__asm int 3;
+DWORD high = 0;
+HANDLE x = 0;
+OBJECT_ATTRIBUTES obj = {0};
+UNICODE_STRING name = {0, 2, L""};
+InitializeObjectAttributes(&obj, &name, 0x00000040L | 0x00000002L, NULL, NULL);
+lea eax, obj
+lea eax, x
+mov eax, 23h
+int 2eh // ZwCreateEvent
+LARGE_INTEGER to = {0};
+to.QuadPart = K_RELATIVE_WAIT_S(50);
+mov eax, 10Fh
+lea ebx, to
+int 0x2e // ZwWaitForSingleObject
+mov eax, 19h
+int 0x2e; // ZwClose
+Well, quite honestly there isn’t much of a point in doing this aside from protecting your own executable against SYSENTER hooks.
+It is quite fascinating to see that Microsoft left all that code intact, but then again, it makes sense because if you were to install your version of Windows onto some old machine, it would revert to using the INT 2EH to make system calls.
+All in all, this was a fun exercise that demonstrates that we can use older/slower technology to bypass potential hooks.
+You should be aware that INT 2EH isn’t the safest option either, and it has been documented that there is some potential BSOD that could happen if you manage to give the KiSystemService a bad ESP pointer.
+Note: The code was written on Windows XP SP2 and the address of KiSystemService cannot be retrieved directly from an MSR.
+What can be done, though, is to read the MSR 176H (Fast Call EIP) and scan the memory back to the KiSystemService.
+I will admit that it is a bit of a hairball technique, but it works (not recommended, of course).

@@ -1,0 +1,110 @@
+Today (Feb 10, 2015) Microsoft released their latest Patch Tuesday.
+This Patch includes a fix for vulnerability CVE-2015-0057, an IMPORTANT-rated Windows exploitable vulnerability which we responsibly disclosed to Microsoft a few months ago.
+(enSilo researchers - now a part of FortiGuard Labs - often discover new vulnerabilities in our continuing work towards maintaining a complete endpoint security).
+As part of our research, we revealed this privilege escalation vulnerability that, if exploited, enables a threat actor to gain complete control of a Windows machine.
+In other words, a threat actor that gains access to a Windows machine (say, through a phishing campaign) can exploit this vulnerability to bypass all Windows security measures, defeating mitigation measures such as sandboxing, kernel segregation, and memory randomization.
+Interestingly, the exploit requires modifying only a single bit in the Windows operating system.
+We have verified this exploit against all supported Windows desktop versions, including Windows 10 Technical Preview.
+This entry starts by detailing the vulnerability.
+At first, it seemed to us impossible to exploit.
+After some hard word, however, we managed to produce a fully working exploit, which we’ll describe.
+As part of this analysis, we also present a video which demonstrates the exploit.
+Finally, we conclude this entry with a buggy dead-code anecdote which we thought interesting to share.
+Responsible disclosure: although this blog entry is technical, we won’t reveal any code, or the complete details, to prevent any tech master from being able to reproduce an exploit.
+Over the last several years, privilege escalation vulnerabilities became all the more crucial for exploitation because they enable malicious code to run on the kernel.
+As such, a threat actor exploiting a privileged escalation vulnerability can bypass protective security mechanisms such as application sandboxes.
+Step by step with the attackers’ progress, Microsoft has made extensive efforts to protect the kernel.
+The reasoning is that even if a vulnerability exists, exploiting it would be difficult, if not impossible.
+For example, here are just a few of the kernel protection mechanisms that are present in Windows 8.1:Kernel DEP – Ensuring that most kernel data regions cannot be executed
+Kernel DEP – Ensures that most kernel data regions cannot be executed
+KASLR – Randomizes the kernel address-space to avoid figuring out where kernel modules exist
+Integrity Level – Limits the ability of an unprivileged application to leak kernel-related information
+Mitigation Of Common Attack Vectors – Hardens commonly abused structures (such as the Win32k wnd proc field)
+SMEP – Prevents execution control transfers between kernel mode to user-mode
+NULL Dereference Protection – Prohibits mapping of the first 64k of data in user-mode
+In spite of these hardening mechanisms, over the past year we have seen some notable presentations that demonstrated techniques to bypass these protections.
+The vulnerability that we describe in this entry is a newly disclosed privilege escalation exploitable vulnerability that also bypasses these protections.
+This particular vulnerability appears in the GUI component of the Microsoft Windows Kernel – namely, the Win32k.sys module.
+This entry assumes a strong technical understanding of the Win32k.sys module.
+For detailed information on this module, please refer to Tajei Mandt, Gilad Bakas, and Gil Dabah.
+The Win32k module also manages the actual window’s scrollbars.
+These scrollbars – whether horizontal or vertical – are set for each window.
+Let’s zoom into these scrollbars:
+As can be seen in Figure 1, above, each SBDATA structure defines the information regarding one of the scrollbars.
+WSBflags is a bitmask that determines the state of the scrollbars.
+In order to enable and disable a window scrollbar, the function xxxEnableWndSBArrows is used.
+Through a single call, this function can alter the state of both scrollbars.
+It is precisely within this function wherein the vulnerability lies.
+The prototype of xxxEnableWndSBArrows is:
+Wnd – A pointer to the relevant window
+wSBflags – The scrollbar type (e.g.
+horizontal or vertical)
+wArrows – Specifies whether the scrollbar’s arrows are enabled or disabled and indicates which arrows are enabled or disabled.
+In order to describe the vulnerability, we’ll take a look at the first part of the xxxEnableWndSBArrows function, which can be broken down into 3 logical parts:
+This function starts by checking whether there is already scrollbar information for that window, and allocates a new scrollbar information struct, if needed.
+Technically speaking, the function reads the pSBInfo field (if you recall, this field points to the tagSBINFO struct) and tests if the pointer is NULL.
+If the field is null and the wArrows parameter is not NULL, then a tagSBINFO struct is allocated for the window and the old flags of the scrollbars are set to 0.
+Otherwise, the old flags are copied from the existing window’s scrollbars information.
+The code can be found in Figure 2.
+The flow continues by testing whether the state of the horizontal scrollbar should be changed.
+According to what was set in the wArrows argument, this function enables or disables the arrows (figure 3).
+The flow continues by checking whether the state of the arrows has changed.
+Technically speaking, this is done by checking the arrow’s flags (Note: there are a few more flag checks – but those are not interesting for our purposes).
+If the flags have changed and the window is visible, then xxxDrawScrollbar is called.
+This is precisely the place where things get interesting.
+When digging into the code, it seems possible that the xxxDrawScrollBar will lead to a user–mode callback (Figure 4).
+The pivotal function in this call chain is the ClientLoadLibrary.
+This function performs the callback to the user-mode function __ClientLoadLibrary.
+Let’s return now to the code of xxxEnableWndSBArrows.
+Our examination showed that the tagSBINFO pointer is used without any verification after the callback.
+Ultimately, this could lead to a Use-After-Free (UAF) vulnerability, since the function may continue to work with the freed scrollbar information (Figure 5).
+After the callback, the function xxxEnableWndSBArrows continues and changes the state of the vertical scrollbar.
+At this stage, the function tries to enable or disable the flags.
+However, since the struct is already freed, we can use this to either Bitwise OR the first DWORD of the freed buffer with 0xC (if we disable the arrows), or to clear bits 3 and 4 (if we enable the arrows).
+See figure 6.
+For simplicity sake, we show how to manipulate 2 bits in order to “rule them all”.
+However, manipulating only one of them would be enough.
+The bit manipulation at first didn’t seem enough to result in anything significant, but we decided to keep trying.
+The most obvious things to try were to either increase the size of some buffer (using the bitwise OR) or decrease some reference counter (using the bitwise AND).
+After a short search, we found an object that met the first requirement.
+This object is the properties list of a window.
+Each window has a properties list.
+Generally, these properties can be used by the GUI application to store arbitrary values, although Win32K uses this properties list to store internal data.
+The data structures used to hold the window’s properties can be seen in Figure 7.
+The first field, cEntries, is the number of entries in the properties array; iFirstFree is the index to the first free cell in the properties array; and props is the array itself.
+An application can set the window’s properties using the SetProp API.
+The prototype of the function is as follows:
+hWnd – The handle to the window.
+lpString – The of the property or an ATOM.
+hData – The data to store.
+Adding properties to a window is performed through the CreateProp function, appearing in the win32k module.
+As can be seen in figure 8, its allocation algorithm is quite simple.
+If there is no room for a new property in the list, the function allocates a new properties list with one more entry.
+The function then proceeds to copy the buffer of the old properties to the new one, freeing the old buffer and increasing the entries count.
+There are several important things to note in this code: First, the properties are allocated from the Desktop heap (Uses DesktopAlloc).
+Also, tagSBINFO is allocated from this heap.
+This is crucial if we want to use the UAF vulnerability to alter the properties structure.
+Second, each new entry triggers the reallocation of the buffer.
+This means that we can easily trigger the reallocation of the buffer when it’s about to reach the size of the tagSBINFO structure.
+Doing this increases the chances that the buffer will be allocated over the freed tagSBINFO struct.
+Third, and most importantly, the cEntries field is located in the first DWORD of the struct.
+This means that we can increase its size (using the bitwise Or).
+After increasing the size of the properties array we have basically achieved a classic buffer-overflow.
+The above research led to privilege escalation exploitation.
+We will stop here, however, to avoid releasing any sensitive code.
+Our demo on a 64-bit Windows 10 Technical Preview provides the necessary proof-of-concept:
+After some work, we managed to create a reliable exploit for all versions of Windows – dating from Windows XP to the Windows 10 preview (with SMEP and protections turned on).
+We have shown that even a minor bug can be used to gain complete control over any Windows Operating System.
+Nevertheless, we think that Microsoft’s efforts to make its operating system more secure has raised the bar significantly, and made writing reliable exploits far harder than before.
+Unfortunately, these measures are not going to keep attackers at bay.
+We predict that attackers will continue incorporating exploits into their crime kits, making compromise inevitable.
+Examining the code of the xxxEnableWndSBArrows function showed that there are calls to the xxxWindowEvent function.
+At first glance, it seemed that these two functions would be far easier to use as an exploitation stepping stone than the xxxDrawScrollbar function, as detailed above.
+However, after diving into the code it quickly became clear that the calls to xxxWindowEvent in the Horizontal scrollbar part of the code are actually dead-code (Figure 9).
+Looking at the code, there are two conditional calls to the function, xxxWindowEvent.
+These calls are executed only if the old flags of the scrollbar information differ from those of the new flags.
+However, by the time these conditions appear, the values of the old flags and the new flags are always equal.
+Hence, the condition for calling xxxWindowEvent is never met.
+This practically means that this dead-code has been there for about 15-years doing absolutely nothing.
+The FortiEDR platform is capable of blocking the threat.
+Find out about the FortiGuard Security Services portfolio and sign up for our weekly FortiGuard Threat Brief.

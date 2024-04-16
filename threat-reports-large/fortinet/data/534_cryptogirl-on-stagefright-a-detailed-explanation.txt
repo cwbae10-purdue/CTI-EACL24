@@ -1,0 +1,90 @@
+Update Aug 28, 2015: Typos in the final table: CVE-2015-3864 does not concern covr but tx3g.
+CVE-2015-3828 does not occur for yrrc.
+Detecting the PoCs published by Zimperium is not difficult: you can fingerprint the PoCs, for example.
+Detecting variants of the PoCs, i.e., MP4s that use one of the discovered vulnerabilities, is far more difficult.
+I'll explain why in a moment.
+First, apart from here (in Chinese), there hasn't been so much in the way of technical details.
+Getting into the guts of StageFright really had me sweating.
+I'm not even sure I understand everything yet.
+An MPEG-4 is made of several units called 'atoms' or 'boxes'.
+Those boxes begin with a header, as detailed below: a size, and a box type.
+The box types consist of a four character code (FourCC) such as 'covr', 'esds', etc.
+It's while reading those boxes that Android's mediaserver sometimes encounters vulnerabilities.
+The first error I made was to assume all PoCs would make the Android mediaserver crash.
+Several PoCs (number 1, 5, 7 and 8) do not crash a number of emulators/devices running Android 4.4.2 or 5.1.1.
+This does not mean, however, that the issue is not there.
+It's not because it crashes (in StageFright) that it's a "StageFright" vulnerability.
+During our investigations, we were surprised to see libstagefright crash in unexpected situations with a modified sf-003.mp4.
+sf-003.mp4 demonstrates an integer overflow while reading a stts box.
+Let's first explain when we expect the overflow to occur by analyzing the corresponding patch:
+- uint64_t allocSize = numEntries * 2 * sizeof(uint32_t); + uint64_t allocSize = numEntries * 2 * (uint64_t)sizeof(uint32_t);
+As sizeof(uint32_t) is 4, an integer overflow would occur if
+allocSize = numEntries * 2 * 4 >= 0xFFFFFFFF + 1
+i.e numEntries >= (0xFFFFFFFF + 1) / 8 = 0x20000000
+So, in other terms, any MP4 file with a 'stts' box containing numEntries >= 0x20000000 will trigger the issue.
+An 'stts' box is a box that "defines time-to-sample mapping for a sample table".
+It is structured as below:
+numEntries in Android's code corresponds to the Count field.
+So, this means that if bytes 5,6,7,8 after 'stts' are greater than or equal to 20 00 00 00, the overflow occurs.
+F/libc ( 1482): Fatal signal 11 (SIGSEGV) at 0x10958a14 (code=1), thread 1490 (Binder_2) ... I/DEBUG ( 1011): backtrace: I/DEBUG ( 1011): #00 pc 0007df3a /system/lib/libstagefright.so (android::SampleTable::setTimeToSampleParams(long long, unsigned int)+133) I/DEBUG ( 1011): #01 pc 000630fb /system/lib/libstagefright.so (android::MPEG4Extractor::parseChunk(long long*, int)+3262)
+Yet, as I said, we were surprised to see libstagefright crash with lesser values such as 0x1f ff ff ff!
+Have a look at the crash log though.
+F/libc ( 1791): Fatal signal 6 (SIGABRT) at 0x000006ff (code=-6), thread 1799 (Binder_3) /DEBUG ( 55): backtrace: I/DEBUG ( 55): #00 pc 00021e20 /system/lib/libc.so (tgkill+12) I/DEBUG ( 55): #01 pc 00012ea9 /system/lib/libc.so (pthread_kill+48) I/DEBUG ( 55): #02 pc 000130bd /system/lib/libc.so (raise+10) I/DEBUG ( 55): #03 pc 00011df3 /system/lib/libc.so I/DEBUG ( 55): #04 pc 000216d4 /system/lib/libc.so (abort+4) I/DEBUG ( 55): #05 pc 00000911 /system/lib/libstdc++.so (operator new(unsigned int)+8) I/DEBUG ( 55): #06 pc 0007df0f /system/lib/libstagefright.so (android::SampleTable::setTimeToSampleParams(long long, unsigned int)+90) I/DEBUG ( 55): #07 pc 000630fb /system/lib/libstagefright.so (android::MPEG4Extractor::parseChunk(long long*, int)+3262)
+It is different: This is a Fatal signal 6 (SIGABRT), not a SIGSEGV The crash occurs when allocating a buffer.
+Specifically, it crashes on line number 337 in the file SampleTable.cpp:
+mTimeToSample = new uint32_t[mTimeToSampleCount * 2];
+So what's that?
+It's a bug.
+From an end user point of view, it can be seen as a denial of service, as the mediaserver crashes.
+But it's not an integer overflow you can use to write the memory with a custom exploit.
+010 Editor : This is the solution I like the best.
+There's an MP4 template too, although it has difficulties on several PoCs.
+mp4file (apt-get install mp4v2-utils) : Quite good, and helpful to understand the MP4 format, but will fail on several PoCs.
+$ mp4file --dump sf-007.mp4 "sf-007.mp4": Dumping meta-information... "sf-007.mp4": type ftyp (ftyp) "sf-007.mp4": majorBrand = mp42 "sf-007.mp4": minorVersion = 0 (0x00000000) "sf-007.mp4": <table entries suppressed> "sf-007.mp4": type mdat (mdat) ...
+mp4 parser : If you are using Windows (or want to use Wine).
+This article did not really explain when the issue occurs, so I will.
+This is an integer underflow when parsing 3GPP Metadata.
+3GPP Metadata correspond to boxes 'titl' (title), 'auth' (author), 'gnre' (genre), 'perf' (performers) and 'albm' (album).
+The patch shows that, in parse3GPPMetaData, an underflow occurred if size < 6
++ if (size < 6) + return ERROR_MALFORMED; +
+Beware: size here is not the box size, but the 3GPP Metadata size (chunk_data_size).
+status_t err = parse3GPPMetaData(data_offset, chunk_data_size, depth);
+Compared to the chunk data size, the box size is chunk_data_size + 4 (box size) + 4 (box type).
+So, the underflow occurs if the box size < 6 + 8 = 14 (0x0E).
+Indeed, the PoC sf-008.mp4 shows an 'albm' box with a size of 0x0D.
+Note that if the box uses an extended size form, the condition where the underflow occurs is slightly changed, because the box size is chunk_data_size + 4 (extended size indicator) + 4 (box type) + 8 (extended size).
+This is a vulnerability I investigated for quite a long time because I couldn't find proper documentation.
+In case it can help you, I think I worked out the format of the 'esds' box.
+The 'esds' atom refers to 'elementary stream descriptors'.
+Its format is detailed this book.
+So, we can work out the format of an esds box is:
+box size (4 bytes)
+box type (4 bytes): 'esds'
+ESDS version (1 byte): reserved to 0
+ESDS flags (3 bytes): reserved to 0
+ES_ID (2 bytes): elementary stream ID.
+ESD tag: (1 byte)
+ESD size: several bytes, last byte has high bit set
+streamDependanceFlag (1 bit): get it by doing & 0x80
+URL_Flag (1 bit): get it by doing & 0x40
+OCR_stream flag (1 bit): do & 0x20
+dependsOn_ES_ID (2 bytes): only if streamDependanceFlag
+URLLength (1 byte): only if URL_Flag
+URLString (1 byte): only if URL_Flag
+OCR_ES_ID (2 bytes): only if OCR_stream ...
+mNumSampleToChunkOffsets are in dark blue and cause the overflow
+numEntries are in dark blue and cause the overflow
+mTimeToSampleCount is in dark blue and causes the overflow
+mNumSyncSamples are in dark blue and causes the overflow
+Box type is in yellow, ESD size is in violet, ES_ID is in light green, flags are in red.
+The combination of the size and flags cause the underflow
+The box size is the 4 bytes before the 'covr' box type and causes the underflow
+The 3GPP string is in dark blue.
+The format for 3GPP metadata fields can be found here (page 31)
+The box size are the 4 bytes before the 'albm' box type .
+The box sizes are in red.
+Their sum causes an integer overflow in the code.
+The box size is set to 1 (orange) which means there is an extended box size (in red) - leading to an integer overflow in the code
+An integer overflow actually occurs whenever an extended box size is used with chunk_size > 0x1ffffffff
+Thanks to Neo Tan, Ruchna Nigam, Roland Dela Paz for their contribution to this work.
+-- the Crypto Girl

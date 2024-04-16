@@ -1,0 +1,72 @@
+Last year, I discovered and reported two Cross-Site Scripting (XSS) vulnerabilities in IBM’s Infosphere BigInsights.
+This week, IBM released a security bulletin which contains the fix for these vulnerabilities.
+CVE numbers CVE-2016-2924 and CVE-2016-2992 are assigned to them respectively.
+InfoSphere BigInsights is an analytics platform for analyzing massive volumes of unconventional data in its native format.
+The software enables advanced analysis and modeling of diverse data, and supports structured, semi-structured, and unstructured content to provide maximum flexibility.
+In this blog, I want to share the details of these vulnerabilities.
+To reproduce this vulnerability, you can follow the steps below:
+Sign in InfoSphere BigInsights with the user name ‘guest,’ then go to "Monitor"->"User-Defined Alerts" and click "Add Alert Type."
+In the "Name" field, input the PoC "" (note: don’t include the start and ending double quotes,) as shown in figure 1.
+Figure 1.
+Input XSS code with the user ‘guest’
+Sign out, as shown in figure 2.
+Figure 2.
+Sign out
+Sign into InfoSphere BigInsights with the user ‘biadmin,’ then go to "Monitor"->"User-Defined Alerts," choose the above alert created by the user ‘guest,’ and click "Test Script".
+Figure 3.
+Click “Test Script” with the user ‘biadmin’
+Select the database "BIGSQL" and click "OK" to run the script.
+Figure 4.
+Select the database "BIGSQL"
+Click the "Alerts" drop-down list on the top right corner.
+A dialog will then pop up with a value specified in the PoC because the injected code has been executed.
+Figure 5.
+Injected XSS code is executed
+By analyzing the code of Infosphere BigInsights we find that the root cause of the vulnerability is that the special characters in the data passed to an Alert Type (for example ‘1466070163401’) are sanitized.
+The value of its ‘label’ attribute is not checked and escaped correctly.
+Following is the code snippet:
+The data that the user ‘guest’ inputs into the ‘Name’ field is stored on the server.
+When the user ‘biadmin’ views the alert list, the value of the relevant Alert Type is retrieved from the stored data on the server.
+Its ‘label’ field value is not correctly checked and special characters are not escaped so that the generated web page contains the malicious code the user ‘guest’ provided.
+This results in the XSS vulnerability.
+See figure 6, below.
+Figure 6.
+The injected XSS code is contained in the generated web page
+This is a stored XSS vulnerability.
+That is, the injected code is permanently stored on the vulnerable server.
+When a victim navigates to the affected web page in a browser, the injected XSS code will be served as part of the web page.
+This means that victims will inadvertently end-up executing the malicious code once the web page is viewed in a browser.
+As you can see, the XSS vulnerability is caused by the improper validation of user-supplied input.
+A remote attacker could exploit this vulnerability using a specially crafted URL to execute the script in a victim's Web browser within the security context of the hosting Web site once the URL is clicked.
+An attacker could use this vulnerability to steal the victim's cookie-based authentication credentials.
+To reproduce this vulnerability, you can follow the steps below:
+Sign in Infosphere BigInsights with the user ‘guest,’ then go to "Develop"->"SQL Editor" and input the PoC "" (note: don’t include the start and ending double quotes) as shown in figure 7.
+Figure 7.
+Input XSS code with the user ‘guest’
+Click "Save" and save it as query "Script1," then choose the newly-created query "Script1" and click "Share.” The script status is then changed to "Public."
+Figure 8.
+Share the saved query
+Sign out ,as shown in figure 9.
+Figure 9.
+Sign out
+Sign into InfoSphere BigInsights with the username ‘biadmin,’ then go to "Develop"->"SQL Editor," choose the saved query "Script1," which was created in step 1), and click "Open."
+Figure 10.
+Open the query saved by the user ‘guest’
+Click "Explain" to trigger the XSS.
+A dialog pops up with a value specified in the PoC because the injected code has been executed.
+Figure 11.
+Injected XSS code is executed
+When the user ‘guest’ saves the supplied PoC as a query, BigInsight posts the parameters to the server and the malicious XSS code is embedded in the webUI.
+See the following packet:
+When the user ‘biadmin’ clicks the "Explain" button, the embedded malicious code in the webUI is fetched.
+See the following request packet:
+The response packet looks like this.
+BigInsight generates the above exception web page.
+When the browser interprets the above exception information in red as html, XSS occurs due to the injected code.
+Figure 12.
+Injected XSS code is executed
+This vulnerability allows users to embed arbitrary JavaScript code in the Web UI.
+Thus, they can alter the intended functionality, potentially leading to credentials disclosure within a trusted session.
+All users of IBM Infosphere BigInsights are encouraged to upgrade to the latest version of the software immediately.
+Additionally, organizations that have deployed Fortinet IPS solutions are already protected from these vulnerabilities with the signatures IBM.Infosphere.BigInsights.Customalerts.XSS (for CVE-2016-2924) and IBM.Infosphere.BigInsights.Editor.XSS (for CVE-2016-2992.)
+Sign up for weekly Fortinet FortiGuard Labs Threat Intelligence Briefs and stay on top of the newest emerging threats.

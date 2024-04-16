@@ -1,0 +1,125 @@
+A FortiGuard Labs How-To Guide for Cybersecurity Threat Researchers
+Here at FortiGuard Labs we have encountered a lot of packed Android malware recently.
+One interesting aspect to this malware is that even though the packer being used is consistently the same, the malware that it drops changes quite frequently.
+Analysing packers can be very intimidating.
+It is generally very hard to understand the flow of the program, and the sheer amount of garbage displayed can easily scare analysts away.
+Because of that, we want show how we handle some of the problems that arise when analysing this kind of malware.
+In fact, in this blogpost we will demonstrate how to unpack the malware deployed by today’s most common dropper using only open-source free tools.
+The reference sample is: 509aa4a846c6cb52e9756a282de67da3e8ec82769bceafa1265428b1289459b3
+Statis Analysis
+Sample Overview
+First things first: We began by taking a look at what kind of APK we are dealing with.
+As can be seen, there is clearly something fishy in this sample.
+What is that MawmjulbcbEndsqku^nd.cml file?
+It does not hurt to start by asking the bash command file what we are dealing with.
+Unfortunately, it did not detect any sort of file type.
+By looking at file with a hex editor (in this case, we actually used radare2, a great open-source reverse engineering framework), we still could not really tell what kind of file this is.
+These considerations, combined with the fact that the name looks like random characters, makes us consider that this may possibly be an encrypted file used by the main application.
+Maybe by taking a look at the Android Manifest we can gain a clearer idea of what is happening.
+Android Manifest
+AndroidManifest.xml is an Android binary XML file that contains a lot of information about the application.
+It contains:
+- The package name of the application, under which it will be accessible on the device
+- The complete list of activities, services, and receivers used by the app (if they are not declared here, they will not be usable by the app later)
+- A full list of permissions
+- A full list of intent action filters used during execution
+- Other usually less important stuff, like icons used, etc.
+The first thing we noticed was the use of completely random strings as the names for all of the components of the app.
+This can be an indicator of malicious intent, but it is also used by legitimate application developers to make it harder for the competition to reverse engineer their product.
+One of the things that first caught my attention was: with the sole exception of the Application class com.asgradc.troernrn.yeSACsSs, no declared Android component (activity, receiver, and service classes) were present in the decompiled classes.dex file.
+That’s odd: what’s the use of declaring non-existent classes and skipping the existing ones?
+It is now clear that additional external code is loaded by this APK.
+In addition, given the amount and nature of permissions requested—like asking to send SMS messages—we can be pretty confident that this code is up to no good.
+Reversing the Packer
+There are many free options available for decompiling APKs into readable code.
+These include:
+- Apktool : obtains the SMALI representation of the classes
+- dex2jar : converts the .dex file into a jar archive which can be analysed using jd-gui
+- jadx : decompiles in java all the code into a convenient GUI
+My personal favourite is jadx, but it is good to have options because in rare cases only some of them will be able to decompile the code.
+So we next started to analyse the APK on jadx.
+Unfortunately, things were not pretty...
+In true packer fashion, we were welcomed by a lot of useless garbage: meaningless strings, meaningless computations, meaningless functions.
+We tried for a while to make sense out of the execution flow: if the encrypted file was to be decrypted, it would either need to call some crypto-library or have its own decrypting routine.
+Once the decrypting is done, it would then need to load the new file with a ClassLoader Object of some kind.
+Unfortunately, none of these libraries were included in the APK imports.
+What was included were the Reflection methods that allow the file to indirectly call any loaded library.
+Once again, however, these reflection methods arguments were also dynamically created using a myriad of unintelligible functions.
+It was becoming clear that static analysis was not going to cut it.
+To quote George Bernard Shaw:
+I learned long ago, never to wrestle with a pig.
+You get dirty, and besides, the pig likes it.
+We were not going to wrestle with this pig any longer.
+There had to be a faster way.
+Dynamic Analysis
+Google provides the ability to download the SDKs used in all of its versions of Android to create emulators through Android Studio.
+It is perfect way to test malware like this without the risk of being infected.
+So we started by using the Marshmallow 6.0 emulator for this sample and installed the APK through adb (Android Debug Bridge).
+If the APK is to load a new executable file, the built-in logger of the device (or emulator in our case) should be able to pick it up.
+We ran the adb command that connects to the system logger and only selected those lines containing the package name of our dropper:
+$ adb logcat | grep "com.jgnxmcj.knreroaxvi"
+Then we launched the application.
+Among a lot of uninteresting output, we finally found what we had been looking for:
+10-25 17:12:11.001 24358 24358 W dex2oat : /system/bin/dex2oat --runtime-arg -classpath --runtime-arg --instruction-set=x86 --instruction-set-features=smp,ssse3,-sse4.1,-sse4.2,-avx,-avx2 --runtime-arg -Xrelocate --boot-image=/system/framework/boot.art --runtime-arg -Xms64m --runtime-arg -Xmx512m --instruction-set-variant=x86 --instruction-set-features=default --dex-file=/data/user/0/com.jgnxmcj.knreroaxvi/app_files/rzwohkt.jar --oat-file=/data/user/0/com.jgnxmcj.knreroaxvi/app_files/rzwohkt.dex
+The APK is indeed creating a new .dex file.
+Nice.
+We only need to get this file and we will not need to reverse the dropper.
+Unfortunately, when we tried to grab that file we could not find it in /data/user/0/com.jgnxmcj.knreroaxvi/app_files.
+Apparently (and unusually, for many malware coders), these authors like to clean up after themselves by deleting the file after its use.
+So our next problem was, how do we stop the dropper from deleting the file?
+Let me introduce you to the tool of your dreams: FRIDA
+FRIDA is a fantastic instrumentation kit that allows the hooking of Javascript code during the execution of the application.
+It is also able to modify functions, fields and much more.
+What we wanted to do in this case was to stop the application from deleting the rzwohkt.jar file so that we can pull it onto our machine for analysis.
+Traditionally with FRIDA, our MO would be to first find the class responsible for the deletion, then hook the method and skip it.
+However, we do not want to start the pig wresting match again, so we started by using dynamic analysis to exactly skip this part.
+We were only going to be able to bypass this if we could find out which system call is executed to finalize the deletion process.
+No matter where in the obfuscated code the call is made, if we hook the right native function in the system we should be able to retrieve our desired payload.
+Using Strace
+The big question next was, how could we possibly find the right function?
+Fortunately, there is one easy way to get a full list of all of the function calls happening during execution.
+Strace is a great Linux utility tool that allows a user to get a full report of all the interactions between the processes and the Linux kernel.
+Because Android supports it, it provides us with the perfect tool for finding the function we need to hook.
+From the screenshot above, it is clear that the function we are looking for is unlink().
+What we needed to do next was to hook our alternative code to it in order to avoid the deletion of the file.
+FRIDA Code
+Finally, we had all of the information required.
+It was now time to create our FRIDA hook.
+First of all, we needed to run the correct frida-server on our mobile emulator, according to the architecture used.
+Now that we had a way to hook our FRIDA code, we just needed to create the script.
+All that was left to do was to hook the unlink() function and skip it.
+To do so, we used the Interceptor.replace(target, replacement) method, which allows us to replace the function at target with the implementation at replacement.
+We used
+Module.findExportByName(module, exp) to get the pointer to our function; null can be passed as the module in case the module name is unknown (but it will affect speed).
+console.log("[*] FRIDA started");
+console.log("[*] skip native unlink function");
+// create a pointer to the function in the module
+var unlinkPtr = Module.findExportByName(null, 'unlink');
+Interceptor.replace(unlinkPtr, new NativeCallback(function (){
+console.log("[*] unlink() encountered, skipping it.
+");
+}, 'int', []));
+Now, whenever the unlink() function is called, FRIDA will intercept the call and run our code instead.
+In this case, it will simply output a logger string, notifying us that the call has been skipped.
+Finally, we only needed to attach the script to the app process.
+We ran dropper_startup.py, a quick python script that launches the application, and then attached the FRIDA script to the frida-server.
+The fact that we obtained multiple hits has to do with the facts that unlink() is used to also delete also files during execution.
+Finally, after the second unlink we were able to run:
+$ adb pull /data/user/0/com.jgnxmcj.knreroaxvi/app_files/rzwohkt.jar
+and successfully obtain our file, a jar archive containing the classes.dex payload
+Conclusion
+Android malware is becoming more and more sophisticated, and is evolving every day, much like the more mature Windows malware.
+Droppers are just one way to deploy payloads, but they are an effective one indeed.
+The random strings and pointless functions they use can easily trick AV engines.
+Fortinet clients, however, are protected from these samples using the following signatures:
+- Dropper: Android/Agent.CHG!tr
+- Payload: Android/Agent.ARL!tr
+FortiGuard Labs will continue to monitor these malware campaigns as they evolve.
+All the scripts used in this blog can be found on the FortiGuard Lion github page.
+IOC:
+Packer: 509aa4a846c6cb52e9756a282de67da3e8ec82769bceafa1265428b1289459b3
+Payload: 4fa71942784c9f1d0d285dc44371d00da1f70f4da910da0ab2c41862b9e03c89
+-= FortiGuard Lion Team =-
+Sign up for our weekly FortiGuard Threat Brief.
+Know your vulnerabilities – get the facts about your network security.
+A Fortinet Cyber Threat Assessment can help you better understand: Security and Threat Prevention, User Productivity, and Network Utilization and Performance.

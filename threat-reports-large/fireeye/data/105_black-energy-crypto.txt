@@ -1,0 +1,308 @@
+Black Energy has been in the news again recently (well, it was recent back when I wrote the first draft of this).
+I'm not here to talk about Citigroup, I'm here to talk about cryptography, and how to fail at it.
+That being said, allegedly Citibank was "hacked" using Black Energy, according to the Wall Street Journal.
+Citigroup flat out denies it, and aside from this assertion from the WSJ, there's no other information.
+But it doesn't make sense that "Black Energy" itself, or what is commonly referred to by that name, was used for some kind of banking attack; It's a DDoS bot.
+Now, it could actually be Black Energy that's responsible, or something different which just looks like Black Energy.
+But lately, a very Black Energy-like DDoS "module" tends to get installed along with other malware such as Zeus, via the "Yes Exploit System", or via Oficla/Sasfis, and like every bot, it can download and execute arbitrary files upon command.
+I have no idea what, if anything, happened at Citibank, but I speculate that a Black Energy bot was just along for the ride.
+An infection of one bot, quickly leads to an infestation of many.
+[cute metaphor about infestations goes here] It's kinda like a big ball of malware goo.
+Ok, so you remember how the five robot lions in the show "Voltron" would form a giant robot to battle space monsters?
+Each lion had its own distinct identity, like one was green, and another one was pink, etc.
+but they could combine to form a single robot, with a distinct identity apart from each individual lion.
+Ok, well malware also combines together to form a giant robot.
+[I was going to make the same analogy using the Constructicons as examples, they're evil bots you see… but that's just a little too obscure.]
+Anyway, so for something less ambiguous… onto the technical part!
+I'm never certain about how much information I should publicly reveal about how much is known about a particular malware.
+It's very ego gratifying to say: Hey, the way you did this thing sucks.
+I'm certain that word will get back to the original malware author(s), and they'll fix the bug(s).
+So, in the case of Black Energy, or the bot formerly known as Black Energy, someone [Cr4sh?]
+already got a clue that they were doing it wrong, and fixed it.
+So this crypto trick I'm about to reveal below doesn't work anymore.
+The 1.x versions of Black Energy just encoded their communications with Base64.
+Jose Nazario wrote a good paper on it: BlackEnergy DDoS Bot Analysis.pdf [PDF]
+And I'm sure that Joe Stewart has probably said something about it somewhere, sometime.
+Cr4sh — author of the original Black Energy 1.x bot(s) — released a public statement, for those who can't read Russian (or read it less well than even I do), I'll summarize the relivant parts:
+Black Energy was created as a simple DDoS bot without any rootkits, infectors, spyware, etc.
+Cr4sh doesn't how how this relates to stealing banking information.
+The source code was available to many private parties, so someone must have modified it.
+Only an idiot would put their name on a criminal bot.
+Cr4sh says he's not linked to any botnet networks, programs, or organizations.
+Someone sent me a .pcap of some recent encrypted Black Energy communications; And had an urgent need to know what was being transmitted.
+But they didn't have a copy of the bot which spewed forth this data, and the associated C&C was down.
+Well, maybe it was this sample:
+45f3085144f6875b27ae173f22856198 [Anubus] [Another Anubus] [ThreatExpert]
+Or this one:
+[Another Anubus] [ThreatExpert]
+Or this one:
+In any case, sometimes it's usually a bit faster to just attack the crypto head-on, rather than reverse engineering a whole program looking for the decryption routine.
+This is because most malware authors (and sadly, many commercial software authors too) implement the crypto routine(s) incorrectly, making them fairly trivial to crack.
+So, rather than track down a sample and reversing it, I just did some math on the cyphertexts, looking for common mistakes.
+There was nothing known [to me or Google] about the encryption being used.
+But I noticed some very strong patterns in the data.
+It was obviously some kind of stream cipher, but not RC4 from what I can tell.
+I ran all the usual tests (add, subtract, or xor with repeating or incrementing patterns), it wasn't one of those.
+This version of Black energy is reusing the same keystream for multiple plaintexts.
+This is an absolutely fatal flaw for any stream cypher; Take a look at this example to see why.
+I say it's obviously a stream cypher with a constant key, because if you XOR two cyphertexts together, the keysteam cancels out, and at every location there was a byte in one plaintext, which is the same as the byte at the same location in the other, you get a NULL.
+And transpositionally, if there was a NULL byte in either plaintext, the plaintext byte from the opposite plaintext will emerge.
+Remember this identity: (Message1 ⊕ Keystream) ⊕ (Message2 ⊕ Keystream) = Message1 ⊕ Message2
+Wow, that sure does look like two EXE's XOR'd together, doesn't it?
+Since this Anubus report is public, I'll use it for my example:
+Grab the .pcap file
+And extract all of the TCP streams from this .pcap into individual files, with your favorite program for doing that kind of thing.
+(I think Wireshark will do it; I just always use my own Perl scripts cause it's fast and automated.)
+Stripped of HTTP headers, theses are the files I got:
+So, since EXE files are mostly NULLs at the beginning… And the "syn" one seems to have the most NULLs at the beginning… It's the one that yields the most amount of printable text.
+Well, that certainly looks like XML doesn't it?
+You can also approach this from the EXE side of things, but most of you are probably better at reading XML than EXE.
+XML also provides for a lot of redundant plaintext.
+Since it's XML, you know every tag must match up, so one can fix the broken tags easily.
+Merge the all of the known plaintext you can find from the config files together and make the obvious fixes.
+XOR this back against the original cyphertext, and you get a big chunk of the keystream.
+Then XOR this partial keystream against the EXEs.
+Fix up the EXE headers, so that most of the fields make sense, try to use the RICH header if present, and make sure ".text", ".data", ".reloc" are spelled correctly, etc.
+If you have a large malware zoo, you can look for EXE files from September, that are 11264, 6657, or 16896 bytes long, and match up mostly within the first few hundred bytes to this.
+(The quick way is to just XOR the plaintext you've got so far, against the other plaintext samples in your zoo, and see which one(s) have the lowest entropy.
+It's probably one of those.
+Otherwise you can just try them all if it's not too many (and in this case it's not too many).)
+If you have a large malware zoo, you can look for EXE files from September, that are 11264, 6657, or 16896 bytes long, and match up mostly within the first few hundred bytes to this.
+(The quick way is to just XOR the plaintext you've got so far, against the other plaintext samples in your zoo, and see which one(s) have the lowest entropy.
+It's probably one of those.
+Otherwise you can just try them all if it's not too many (and in this case it's not too many).)
+If you don't have a sample of one of the EXEs, then just re-XOR again the EXE plaintext you've recovered so far with the original cyphertext.
+And then XOR that partial keystream back against the config file.
+Do the same sort of fix-ups you did before (you've got some more bytes now, the ones you just fixed in the EXE).
+Then re-XOR this back the other way, lather rinse repeat, until you're down to just the bits you don't know between all four of the plaintexts.
+At this point, you'll have recovered most of the plaintext/keystream, without knowing the password or even the cypher used!
+This trick works for any cypher that is basically $randomness ^ $plaintext, where $randomness gets used more than once.
+There's a reason the one-time-pad is one-time-only.
+If you don't have a hex editor, you can use any 8-bit clean text editor to make the changes, be careful not to add or remove any characters, otherwise everything after that point will be shifted.
+(I use Joe as my editor, believe it or not.)
+[By the way, if you think this part looks like it took me a long time to write.
+This was actually the least time-intensive part.
+The introductory paragraphs up at the beginning took the longest to write.]
+We know the first two bytes of the EXE are "MZ", so XOR "qe" with "MZ" to get "<?"
+But really, that whole first line can't be anything other than "<?xml version="1.0"?>"
+There is a "</bkernel>" tag at the end, so that must be a "<bkernel>" tag at the beginning.
+It's safe to assume that "ddo\x9B" is really "ddos".
+The closing tag "</nor\xDF0" must be "</name>"
+And further down, "6\x0Bname>" can be either "<name>" or "</name>".
+We'll figure it out later.
+" \x9A/plugins>" is "</plugins>".
+"djNx?
+;[email protected]>1000\x90?tcpOsizE>" looks like a pair of tags named "tcp_size", so that becomes:"djNx?<tcp_size>1000</tcp_size>"
+Between "<tspOfres>54</tcp_fveq>" looks like a pair of tags named "tcp_freq", so this becomes:"<tcp_freq>54</tcp_freq>"
+"<tic\x00_thveads>5>/tgp_dhruads>" looks like it says "tcp_threads", so this becomes:"<tcp_threads>5</tcp_threads>", and
+the end of line should be "\x0D\x0A" rather than "\x1D\x0A"
+"<edp_sizu>10 \x16</\x17dp_{Kze\x8A" looks like it says "udp_size" (This follows a naming pattern established by "tcp_size" above) So, fixing those tags: "<udp_size>10 \x16</udp_size>", and if it's following the same pattern as "tcp_size" above, then the number within the tags is probably "1000" "<udp_size>1000</udp_size>"
+"<udp_freq>50</udp_freq>" That looks just right… it also implies that the "<tcp_freq>54</tcp_freq>" from above should really be: "<tcp_freq>50</tcp_freq>"
+"<\x15dp\xE3threads>5</udp_threads>" should obviously be: "<udp_threads>5</udp_threads>", and the number matches with "tcp_threads" above.
+"<icmp_size>1000</icmp_size>-" just needs the "-" changed back to a "\x0D" end of line character.
+"<\xDDcmp_freq>50</icmp_freq>" is obviously "<icmp_freq>50</icmp_freq>"
+Based on everything so far, we can say that "<iM\x19\x15'\x00hreais>5,/iccp_tlreads>" is really: "<icmp_threads>5</icmp_threads>"
+"<http_Fre\x11\x10CTQHNht\x06v_frEq>\x0D\x02" is clearly: "<http_freq>CTQ</http_freq>\x0D\x0A" well, not quite so clearly, it looks like there's a three digit number that goes there, not 1000 as above
+"<htfp_threads>5</h4tp\x1FZ\x0C\x13\x11\x00ds>Lx01ddoC>" Well, this first part is obvious: "<http_threads>5</http_threads>L\x01ddoC>"
+And then that's probably the closing tag to "<ddos>", so we get: "<http_threads>5</http_threads></ddos>"
+So, this looks like there's a pair of tags like "<http>" stuff "</http>" and more "http_freq" and "http_threads" stuff…"<Nttp$<http_freq>30<oht\xB4^-\x03\x1E\x0A\x12\x3E\x0D" "F=htt\x10_thpead3>2</http_threa$s>~/http>x\0A"
+So that mostly becomes:"<http><http_freq>30</http_freq>\x0DF<http_threads>2</http_threads></http>"
+All the rest of the file looks fine... so near the beginning where it says:
+"<cmds>Zy/c!ew>s~\xC3$g_data>\x0A" based upon the rest of the file, that should probably be: "<cmds>Z</cmds>s<plg_data>" the EOL character used after the closing tag(s) of the larger structures is "\x0A" rather than a "\x0D\x0A" after each config option.
+"<cmds>Zy/c!ew>s~\xC3$g_data>\x0A" based upon the rest of the file, that should probably be:
+"<cmds>Z</cmds>s<plg_data>" the EOL character used after the closing tag(s) of the larger structures is "\x0A" rather than a "\x0D\x0A" after each config option.
+So, the "s" is probably a "\x0A"
+If this is also true of all opening tags, then the "Z" in commands should be a "\x0A" also.
+So, do all of the tags balance?
+There's a closing "</ddos>" tag without an opening tag.
+If this XML document is well formed, the opening tag should go here:"<plg_data>\x0A\xDCdjNx?<tcp_size>" between the opening "<plg_data>" and "<tcp_size>" tags.
+"<plg_data>\x0A\xDCdjNx?<tcp_size>" between the opening "<plg_data>" and "<tcp_size>" tags.
+"<plg_data>\x0A<ddos><tcp_size>" It fits just right.
+(If you were paying close attention, you may have noticed that many of the corrected bytes, differ from the original by only a single bit.)
+So let's see what we have so far:
+There's still a chunk of noise near the beginning.
+From what we can see, there must be a "</plugin>" tag, and an opening or closing "name" tag, somewhere in the noise.
+Is there anything in the other combinations of files?
+So… the answer is no, not really, all three combinations of these files have
+identical noise between offsets 0x40 and 0x70, and unique noise from 0x80 to 0xd0.
+So whatever is between 0x40 and 0x70 is common to all these EXEs.
+So, let's extract as much of the keystream as we have now, and take a look at the syn.exe file...
+Well this is encouraging…
+The section header names all look pretty standard, so
+".\x00\x00\x00ta" is probably ".rdata" or ".idata" (maybe even pdata)
+This corresponds with the mystery argument to "http_freq" in the config file.
+XOR "CTQ" by "ida" and you get "*00"
+XOR "CTQ" by "rda" and you get "100"
+XOR "CTQ" by "pda" and you get "300"
+But, just like with the config file above; We can XOR it against the other EXEs
+The answer is 'rdata'.
+You can also edit this EXE in your favorite 8-bit clean text editor, or your favorite hex editor if you're not a massochist.
+The "PE\x00\x00" header is at offset 0xE8 and so the DWORD at 0x3C is correct.
+For review, this is the structure of a DOS EXE header:
+http://www.csn.ul.ie/~caolan/publink/winresdump/winresdump/doc/pefile.html (or www.skynet.ie)
+The usual stuff http://msdn.microsoft.com/en-us/magazine/cc301805.aspx
+Since everything is a WORD, let's alter our hexdump slightly:
+And make it a bit easier to read just for this blog post:
+So let's assume for the moment, that offsets 0x00 thru 0x3F are correct, as they look correct in the recovered XML file.
+Everything from 0xD7 to the end looks mostly correct too, since this is mostly a PE header, it should be possible to sanity check this later.
+The PE headers between the http.exe and syn.exe are shifted by (0x10) 16 bytes, so...
+syn.exe is the one 0x10 bytes ahead.
+(The top lines of each pair.)
+Bytes between 0x40 and 0x7F are the same in all files, however,
+If our XML was right, the first four bytes are 0e 1f ba 0e 00000040 0e 1f ba 0e 00 00 00 00 00 00 00 00 00 00 00 00 |................|
+If our XML was right, the first four bytes are 0e 1f ba 0e 00000040 0e 1f ba 0e 00 00 00 00 00 00 00 00 00 00 00 00 |................|
+These are fairly standard EXE headers, and these 0x40 bytes come right after the DOS EXE header… The entry point of this DOS executable is located at offset 0x40 too.
+So what usually follows the DOS EXE header, and is 0x40 bytes long?
+http://www.google.com/search?q=dos+exe+stub
+These are fairly standard EXE headers, and these 0x40 bytes come right after the DOS EXE header… The entry point of this DOS executable is located at offset 0x40 too.
+So what usually follows the DOS EXE header, and is 0x40 bytes long?
+There are several variations on the DOS stub.
+This is one of the more likely ones, as it's the default Microsoft one.
+Also note where the Nulls match up with the config file:
+So, let's XOR the stub (from 0x45 to 0x78) with the config file:
+There are those missing XML tags.
+It would not be unreasonable to guess that in that noise is also a "<name>ddos</name>" and "<name>syn</name>"
+Almost there, now there's just the bytes between 0x80 and 0xD7 left to go.
+So, what about the bytes between 0x80 and 0xD7?
+In recent versions of Visual C++ (2003 and onwards I think), the linker has been
+putting an extra chunk into the EXE headers between the DOS stub, and the PE headers.
+The "Rich" in the http.exe⊕syn.exe dump above rather gives it away.
+Using a time machine to skip to the end of this blog post, these are the decrypted headers from the "syn.exe" file.
+I'll be using it for the examples below.
+Note how the NULLs lined up:
+A hash is calculated by adding together each byte of the EXE file up to the beginning of the Rich header, with each byte being shifted left by the number of bits that is its file offset.
+Take a look at the code below if that doesn't make sense.
+For the "syn.exe" file, the 0x80 bytes of the DOS header and stub come out to 0x884f3421.
+This partial total, then has each DWORD of the list inside the (unencrypted) Rich header, shifted left by the other DWORD written after it (though it always seems to be under a byte in length.
+Values over 32 don't make sense.)
+This number — the final total — is the hash.
+The first 16 bytes of the header are this hash XOR'd with this string:
+Using the "syn.exe" file again as an example, the hash total has was 0xa6a20e23 When XOR'd by this value, those 16 bytes become:
+Then the version number of each library used in compiling and linking this EXE are written as DWORDs followed by the shift used for the earlier hash calculation.
+This section will always be a multiple of eight bytes in length.
+For example:
+Then, at the end of the list, there is the constant value "Rich" (0x68636952), followed by the hash, and then there is either 8, 16, or 24 bytes of NULLs after, depending on what the value of the hash was.
+None of this is XOR'd.
+So it looks like this:
+Something to take note of is the large number of NULLs in this structure, if you're going to be using this structure to perform known plaintext attacks.
+In the EXE, each of these will be a byte of the hash value.
+Also, there are only a small number of possible version numbers.
+Nobody (publicly) knows exactly what is in the @comp.id.
+The low 16 bits is quite clearly the build number in the version string of the COFF object that was linked in.
+And some people think that the high 16 bits are the major and minor version numbers of the same.
+But that's doesn't seem to work.
+I've collected a short list of some @coff.id symbols that I could find.
+The same compiler will output two different @coff.id's depending on things like whether it's compiling C or C++.
+And mathematically, I can't figure out the exact transform to turn the top 16 bits into the correct major and minor version.
+For example, in "syn.dll", the first @comp.id in the Rich header is 0x005d0c05.
+From the PE Optional header, we can confirm that this dll was compiled with Visual C++ "7.10".
+The 0x0c05 part is clearly "3077", but the 0x005d part doesn't quite turn into "7.10".
+The "0xD" is 13, and "0x5" is 5.
+So, that would make "13.5.3077".
+That version of Visual Studio is "13" I think, so that could be right.
+And we could multiply 5 by 2 to get 10.
+But then this doesn't work for other example @comp.id's.
+I put together a short table of all the @comp.id's that I could find in an hour or two.
+Please add to it.
+It's in Appendix E. (I'm going to ask some people at Microsoft about this soon.)
+Let's pretend that you didn't know the hash.
+It apparently ends with 0xA6 [the most significant byte], from what's already known of the keystream, vis:
+And we can XOR the "Syn" EXE with the "Http" EXE.
+The RICH headers of one are 8 bytes longer than the other.
+We also know what the first sixteen bytes of both, is the XOR of the string "DanS" with both hashes.
+Both "DanS"'s would have canceled out, so the XOR of the two hashes is 0x610BD18A repeated four times.
+We can also see a visible "Rich" header above — from the "Http" EXE.
+If the "Syn" EXE didn't have anything at that same offset, the hash of the "Http" EXE is 0xC7A9DFA9
+So, 0x610BD18A XOR 0xC7A9DFA9 = 0xA6A20E23, which is ultimately the correct hash for the "Syn" EXE.
+Since this is how I actually did it the first time, without knowing as much as I do now about the Rich header, and I want to show the work off…
+I XOR'd the two hashes which come right after the "Rich".
+That's 8b d1 0b 61 XOR a9 df a9 c7 = 22 0e a2 a6 (0xA6A20E22), which is off by one — the one bit being an occurrence count of "0x00000001" for whichever @comp.id that was.
+(But pretend that we don't know that yet.)
+So, I XOR'd 0xA6A20E22 with the XML data between offsets 0x80 and 0xd7, and look!
+Almost done!
+Although not used here, don't forget you can XOR out the "Rich" and "DanS" DWORDS where appropriate.
+So pull this back up in a text editor and make another correction pass over it.
+Since half the DWORDS are less than 0x00000010, expect to see a run of three good characters, followed by a bad one.
+And every @comp.id is 0x00 for the high byte, expect three garbled characters followed by one good one.
+(And all these offsets DWORD aligned.)
+[And I know I basically said the same thing above.
+I wrote post in small chunks over two months, and I don't want to do more editing than I need to.]
+I'm doing these example with the XOR hash that's slightly off.
+Since I already wrote up all the hexdumps and correction prose.
+"<3\x04\x1c hon>0</vdrsikbc\x0A" I believe looks like: "<version>0</version>\x0A"
+The the next byte is garbled, but "/pl" should be correct, and the next three garbled, but "n" and then "\x0A<pl" are correct.
+This is probably the closing "plugin" tag.
+"?/pl\xB7h4n=\x0A<p" becomes "</plugin>\x0A<p"
+"<p~}:im>\x0A<" the "~}:" is wrong, the "i" should be correct, and the "m" wrong, while ">\x0A<" is correct.
+I'm going to guess this also says "plugin" "<plugin>\x0A<"
+"<\xECi0e4syn" the "\xECi0" part is garbled, the "e" is correct, the "4" isn't, and the "syn" is correct.
+Considering that this is immediately followed by "=/oaJe>\x0A", and looking at the XML tags above.
+These are probably enclosing "name" tags.
+"<name>syn</name>\x0A"
+"8z\x05ruion:=`/versmc4>\x0A" Well, "8z\x05" and "r" are wrong, "r" and "ion" are correct.
+":=`" should be wrong, "/" correct, "v" wrong, and "ers" correct, "mc4" wrong, ">" correct, "\x0a" wrong and "</p" correct.
+It's probably version, considering the XML pattern from above.
+So, corrected: "<version>=</version>" (Probably not "Version =" but rather a number, I'll deal with it later.)
+"</p\x1c\x12\xa6\xa7o>\x0AZ/plugins>" This is obviously the closing "plugin" tag.
+"</plugin>\x0A</plugins>"
+So, this looks almost totally correct, except for those version numbers.
+We can XOR this back against the original ciphertext, and encrypted syn.dll and
+verify correctness of the EXE.
+Ok, so we now know the correct value of the mask, since we're confident that the corresponding XML is correct here.
+The correct mask to use is "23 0e a2 a6" not "22 0e a2 A6" as was our [my] first guess, but they were very close
+only differ by "01 00 00 00" so, the correction bitmask I used was something like:
+(You could also redo everything from "Fixing the last chunk of XML" above, if you want to do all that XML correction over again.)
+So, the version number tag was still off by one, correcting to "1".
+For the other version number however, it's an actual unknown byte value,
+dependent upon whatever was going through Visual Studio's Linker's tiny little mind at compile time.
+This is the last unknown byte in the file(s).
+And the only time until now there is not enough information…
+You could say, Well fuck it!
+It's probably also "1" like the other two version strings.
+(There's only a 1 in 16 chance of being wrong.)
+You could also try against it, all known @comp.id's matching the pattern "26 ??
+fe a6".
+Or, if every other byte up to the PE header is correct at this point, you can calculate the value of this byte by calculating backwards from the (known correct) hash value.
+(Left as an exercise for the reader.)
+So, after doing all this, the finished config file that I came up with hashes to 2eddd3fa59f2bbec61415fc599e1aee8
+And so we can recover the keystream, and decrypt the first 785 bytes of the other three EXE (really DLL) files.
+This is what I got if you want to check your work against mine.
+You have been following along in your notebook this whole time, right?
+Anyway, if you have a large malware zoo, you can search for DLL files, which are 11264, 6657, and 16896 bytes long.
+And which begin with one of the three 785 byte sequences recovered above.
+(There's a correspondence between file length, and which 785 byte chunk to use, which should be obvious, so I won't explain.)
+And if you do this, the files that you find are:
+All of which I've tossed up on OC for your enjoyment education.
+None of them are packed, all of the imports to "main.dll" are referring to the original sample.
+Pay particular attention to how the "http.dll" looks remarkably similar to "Black Energy v1.x" .
+Each of these three, when XOR's with its encrypted counterpart, all produce the exact same keystream.
+So these are the correctly decrypted files.
+Are you tired of reading this yet, because I'm certainly tired of writing this.
+Anyway, All you need to know about PE headers:
+You can sanity check them if you would like, I'm not going to bother.
+See Appendix F.
+The hash of the first umpteen bytes should calculate out correctly.
+I wrote a program to do some of these checks.
+See Appendix C below.
+Absolutely everything that I could find about the "Rich" header.
+And then I saw, http://docs.google.com/Doc?id=dcn764fg_2j54gzfc .
+Newer versions of "Black Energy" — or what everyone calls "Black Energy v2" — do something completely different with their crypto, so, as I said, this trick no longer works.
+Examine these two cyphertexts.
+These are the ones I used as examples.
+Notice how all but a single byte between offsets 0 and 0x80 are the same.
+Now look at these three newer cyphertexts, generated by newer versions of the bot.
+There is nothing in common.
+Yay!
+I'm done.
+When I say file ^ file = file, that means XOR each pair of bytes, from the same offset in both files, together, and write the result to the same offset in the third.
+Formally, think of it as something like
+You could also say the same thing about summing all the bits over GF(2).
+But pretend that I didn't just say all that.
+So, File "x" is a stream of bytes, File "y" is a stream of bytes, n = min(len(x),len(y))
+Vaguely almost like this:
+This is how I XOR files together.
+You might find it useful.
+If you need to un-HTML-ize this, the only encoding I did on it was:
+sed 's/&/\&amp;/g' hash.pl | sed 's/</\&lt;/g' | sed 's/>/\&gt;/g'
+Look for the value of the @comp.id symbol, in the output from either of these:
+dumpbin /SYMBOLS coff.obj

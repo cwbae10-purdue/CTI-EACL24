@@ -1,0 +1,78 @@
+A FortiGuard Labs Threat Analysis Report: This blog originally appeared on the enSilo website on September 05, 2017, and is republished here for threat research purposes.
+enSilo was acquired by Fortinet in October 2019.
+A programming error in the Windows kernel could prevent you from identifying which modules have been loaded at runtime.
+During research into the Windows kernel, enSilo’s Threat Intelligence team (now part of FortiGuard Labs) came across an interesting issue with PsSetLoadImageNotifyRoutine, which as its name implies, provides notifications of module loading.
+The thing is, after registering a notification routine for loaded PE images with the kernel, the callback may receive invalid image names.
+After digging into the matter, what started as a seemingly random issue proved to originate from a coding error in the Windows kernel itself.
+This flaw exists in the most recent Windows 10 release, as well as past versions of the OS dating back to Windows 2000.
+Say you are developing a driver, you would like to be aware of every module the system loads.
+Hooking?
+Maybe… but there are many security and implementation deficiencies.
+It’s why Microsoft introduced PsSetLoadImageNotifyRoutine, in Windows 2000.
+This mechanism notifies registered drivers, from various parts in the kernel, when a PE image file has been loaded to virtual memory (kernel\user space).
+There are several cases that will cause this notification routine to be invoked:
+Loading drivers
+Starting new processes Process executable image System DLL: ntdll.dll (2 different binaries for WoW64 processes)
+Process executable image
+System DLL: ntdll.dll (2 different binaries for WoW64 processes)
+Runtime loaded PE images – import table, LoadLibrary, LoadLibraryEx[1], NtMapViewOfSection[2]
+When invoking the registered notification routines, the kernel provides them with a number of parameters in order to properly identify the PE image that is being loaded.
+These parameters can be seen in the prototype definition of the callback function:
+VOID (*PLOAD_IMAGE_NOTIFY_ROUTINE)(
+_In_opt_ PUNICODE_STRING FullImageName, // The image name
+_In_ HANDLE ProcessId, // A handle to the process the PE has been loaded to
+_In_ PIMAGE_INFO ImageInfo // Information describing the loaded image (base address, size, kernel/user-mode image, etc)
+);
+In essence, this is the only documented method in the WDK to actually monitor PEs that are loaded to memory as executable code.
+A different method, recommended by Microsoft, is to use a file-system mini-filter callback (IRP_MJ_ACQUIRE_FOR_SECTION_SYNCHRONIZATION).
+In order to tell that a section object is part of a loaded executable image, one must check for the existence of the SEC_IMAGE flag passed to NtCreateSection.
+However, the file-system mini-filter callback does not receive this flag, and it is therefore impossible to determine whether the section object is being created for the loading of a PE image or not.
+The only parameter that can effectively identify the loaded PE file is the FullImageName parameter.
+However, in each of the scenarios described earlier, the kernel uses a different format for FullImageName.
+At first glance, we noticed that while we do get the full path of the process executable file and constant values for system DLLs (that are missing the volume name), for the rest of the dynamically loaded user-mode PEs the paths provided are missing the volume name.
+What’s more alarming is that not only does that path come without the volume name, sometimes the path is completely malformed and could point to a different or non-existing file.
+So as every researcher\developer does, the first thing we did was to go back to the documentation and make sure we understood it properly.
+According to MSDN, the description of FullImageName implies it is the path of the file on disk, since it “identifies the executable image file”.
+There is no mention of invalid or non-existing paths.
+The documentation does state that it may be NULL: “(The FullImageName parameter can be NULL in cases in which the operating system is unable to obtain the full name of the image at process creation time.)”.
+But clearly, if the parameter is not NULL if the kernel was able to successfully retrieve the correct image name.
+Another thing that caught our attention while perusing the documentation was that the function prototype as shown on MSDN is wrong.
+The Create parameter, which according to its description doesn’t even seem to be related to this mechanism, doesn’t exist in the function prototype from the WDK.
+Ironically, using the prototype specified on MSDN causes a crash due to stack corruption.
+nt!PsCallImageNotifyRoutines is in charge of invoking the registered callbacks.
+It merely passes along the UNICODE_STRING pointer it receives from its own caller to the callbacks as the FullImageName parameter.
+When nt!MiMapViewOfImageSection maps a section as an image, this UNICODE_STRING is the FileName field of the FILE_OBJECT represented by that section.
+The FILE_OBJECT is obtained by going through the SECTION -> SEGMENT -> CONTROL_AREA.
+These are internal and undocumented kernel structures.
+The Memory Manager creates these structures when mapping a file into memory, and uses these structures internally as long as the file is mapped.
+There’s a single SEGMENT structure per mapped image.
+This means that multiple sections of the same image that exist simultaneously, within the same process or across processes, use the same SEGMENT and CONTROL_AREA.
+This explains why the argument FullImageName was identical when the same PE file was loaded into different processes at the same time.
+In order to understand how the FileName field is set and managed, we went back to the documentation, and according to MSDN, using it is forbidden!
+“[The value] in this string is valid only during the initial processing of an IRP_MJ_CREATE request.
+This file name should not be considered valid after the file system starts to process the IRP_MJ_CREATE request”.
+At this point, the FILE_OBJECT is clearly used after the file-system has completed the IRP_MJ_CREATE request.
+Now, it’s obvious that the NTFS driver takes ownership of this UNICODE_STRING (FILE_OBJECT.FileName).
+So, using a kernel debugger, we found that ntfs!NtfsUpdateCcbsForLcbMove is the function responsible for the renaming operation.
+While looking at this function, we inferred that during the IRP_MJ_CREATE request the file-system driver simply creates a shallow copy of FILE_OBJECT.FileName and maintains it separately.
+This means that only the address of the buffer is copied, and not the buffer itself.
+As long as the new path length doesn’t exceed the MaximumLength, the shared buffer will be overwritten without updating the Length field of FILE_OBJECT.FileName, which is where the kernel gets the string for the notification routine.
+If the new path length exceeds the MaximumLength, however, a new buffer will be allocated and the notification routine will get a completely outdated value.
+Even though we finally figured out the cause for this bug, something still didn’t add up.
+Why is it that even after all the handles to the image (from SECTIONs and FILE_OBJECTs) were closed, we were still seeing these malformed paths?
+If all handles to the file were indeed closed, the next time the PE image is opened and loaded a new FILE_OBJECT should be created without references and with the most up-to-date path.
+Instead, the FullImageName still pointed to the old UNICODE_STRING.
+This proved that the FILE_OBJECT wasn’t closed, although its handle count was 0 – which means the reference count must have been higher than 0.
+We were also able to confirm this using a debugger.
+As a ref count leak in the kernel isn’t very likely, we are left with one immediate suspect: The Cache Manager.
+It turns out, what seems to be caching behavior, along with the way the file-system driver maintains the file name, combined a severe coding error, is what ultimately causes the invalid name issue.
+At this point we were sure we figured out what causes the problem, though what eluded us was how can it be that this bug still exists?
+And why is there no obvious solution for it?
+In our next post, we’ll cover our endeavors to find good answers for these questions.
+Update 9/9 4:50 PM ET: Given the recent attention to this post, we’ve released a second part, detailing a workaround for this bug (again, not a vulnerability).
+Depending on the dwFlags parameter
+Depending on the dwAllocationAttributes of NtCreateSection
+Note: The majority of this analysis was done on a Windows 7 SP1 x86 fully patched and updated machine.
+The findings were also verified to be present on Windows XP SP3, Windows 7 SP1 x64, Windows 10 Anniversary Update (Redstone) both x86 and x64 all fully patched and updated as well.
+Learn more about FortiGuard Labs threat research and the FortiGuard Security Subscriptions and Services portfolio.
+Sign up for the weekly Threat Brief from FortiGuard Labs.

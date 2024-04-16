@@ -1,0 +1,133 @@
+Threat Analysis Report from FortiGuard Labs
+Just a few days ago, FortiGuard Labs published a research blog about a fresh variant of Emotet.
+When I wrote that blog, I had not yet detected any further malicious actions from its C&C server.
+However, I have continued to monitor its connections, and I finally received three new modules from its C&C server.
+I have now analyzed all of them, and I will now show you how they work on a victim’s system.
+The C&C server replies with a response packet when an infected system sends it information about the victim’s machine and its list of running processes.
+As expected, the response data is encrypted.
+After decrypting it twice, we eventually uncovered three modules.
+To classify them, I simply name them in this analysis as Module1, Module2, and Module3.
+Figure 1 shows the data snippet of the three modules after decryption.
+Figure 1.
+Data snippet of the three modules
+The data with a red rectangle is a flag or sub-flag.
+The data with a blue underscore is the module data size in utf8 format, which is then followed by the module data.
+Through my analysis, I learned that module 1 and module 2 are dll files, which will be executed in newly created threads for each.
+Module 3 is an .exe file that will be executed on its own in a new process.
+In the rest of the sections of this paper, I will focus on explaining how they work on a victim’s machine.
+This module is not new.
+Because it is involved in this campaign, I will only provide a brief description of its main purpose here.
+This module is responsible for spreading itself to other computers on the same LAN.
+When it is executed in a thread, it then enumerates all network resources on the victim’s machine to find other computer names with shared objects that the victim uses.
+It tries to login to those computers one-by-one by using “Administrator” as the user name (because it needs the Administrator permission of the computer to create a service later) and repeatedly trying 1000 different password possibilities (previously decrypted).
+Figure 2 shows a snippet of the ASM code and passwords.
+Figure 2.
+Brute force attack against computers on the same LAN
+Once the malware is able to successfully login to the computer, it copies the Emotet file (it’s the file “%LocalAppData%\culturesource\culturesource.exe” in the analysis blog) onto the computer with a random file name and creates a service to start it on the computer.
+Figure 3 below shows it creating a service to run Emotet on that computer.
+Figure 3.
+Starting Emotet on the hacked computer
+To perform the task of spreading itself across the victim’s network environment, it uses several APIs including "WNetOpenEnumW", "WNetEnumResourceW", "WNetAddConnection2W", "NetUserEnum", "CopyFileW", "OpenSCManagerW", "CreateServiceW", and "StartServiceW".
+The first argument of the API “OpenSCManagerW” is MachineName, where you can pass a computer name like “\\RemoteComputerName” to establish a connection to the service control manager on that computer.
+Therefore, Emotet is able to remotely create and then start the service to finish spreading and replicating itself across the LAN.
+This is a dll file, which was generated on Tuesday, January 29, 2019.
+It’s also executed in a thread, just as Module 1 is.
+When it runs in a thread, it soon creates a new process with the same name as Emotet (culturesource.exe) with the CREATE_SUSPENDED creation flag.
+It then copies the main code onto this newly-created process.
+Later on, it modifies its thread context data and resumes running from a suspended status to execute the copied code within this process.
+It also passes the path of a temporary file that is in random file name (for example “%tmp%\50CB.tmp”) to this process in the command-line parameter.
+This is used to receive the data collected from the victim’s computer.
+Meanwhile, in the thread function, it waits for the process to finish its work and exit.
+After that, the temporary file is processed in the thread function.
+Through my analysis, this module’s purpose is to collect email address information from the victim’s Outlook account.
+Finally, it encrypts the collected email address information and sends it to its C&C server.
+Let’s go on to see how it does this in the newly-created process.
+Outlook has a dll “OLMAPI32.dll” that provides a group of APIs with the obtain information from Outlook account profile and email content from the Outlook folders like Inbox, Sent Items, and so on.
+Module 2 reads “OLMAPI32.dll” full path from system registry.
+It then loads this dll file and obtains any APIs needed from it.
+By the way, all strings in this module are encrypted.
+You can see that the application decrypts them before using them.
+Figure 4 is a code snippet of obtaining the dll “OLMAPI32.dll” full path from system registry.
+Figure 4.
+Reading the Dll full path from system registry
+Figure 5.
+Checking to see if the needed APIs have loaded successfully
+Once the dll “OLMAPI32.dll” is loaded, it then loads a group of APIs which are handled in a function called sub_4010F0.
+From Figure 5, you can see that it loads APIs through API hash information and then checks if they have been loaded successfully.
+Through calling these APIs, Module 2 could read out the account profile and email addresses from victim’s Outlook.
+It finally saves all collected email addresses into that temporary file (“%tmp%\50CB.tmp” for this time) for further processing when it goes back to the thread function.
+Figure 6 shows an example that it collects an email address from Inbox, which also can be found in the temporary file.
+Figure 6. email addresses from the Inbox are collected into the temporary file
+Interestingly, Module 2 has a bug that causes an exception and the collected email addresses are not really saved into the temporary file.
+I found the bug location and manually modified its code to jump over the exception so the thread function can get the data from the “50CB.tmp” file and continue.
+After that, the main work of the newly-created process is done and the process soon exits.
+The thread function can capture the process terminal signal, and it then reads the collected data from “50CB.tmp” into memory and puts it into a data structure, which later will be encrypted and sent to the C&C server.
+Figure 7 shows that the collected outlook email address information from “50CB.tmp” is just read into the memory in the thread function and is ready for encryption.
+Figure 7.
+Collected email address information in a data structure
+The C&C server IPs are hardcoded in its memory.
+Module 2 has nine IPs and Ports in total.
+Below is the IP and Port list:
+All data is encrypted twice and encoded in Base64.
+It then disguises the base64 code as the value of an HTTP Cookie and sends the HTTP packet to one of the C&C servers listed above.
+Figure 8 shows the packet being sent to C&C server “198.199.96.164 : 443”.
+The value of the Cookie is the encrypted, Base64 encoded email address information that was stolen from my test Outlook account.
+Figure 8.
+Sending collected email address information to a C&C server
+Per my analysis, module 3 is an .exe file, which is a new variant of the malware TrickBot.
+Let’s take another look at Figure 1.
+You can see there is one byte in front of sub-flag “1A” in all three modules.
+“03” means this module could be a dll file and will execute in a thread like Module 1 and Module 2; “01” means this module could be an .exe file and will execute alone.
+Module 3 has an “01” flag, so Emotet extracts it to a local folder in “%ProgramData%” with a random file name and calls the API “CreateProcessW” to run it.
+This variant of TrickBot uses sophisticated techniques to protect itself from debug and analysis routines during runtime.
+I will describe how it uses them in the following sections.
+Decrypting a PE file from its memory
+Once it starts, the malware first decrypts a PE file from its memory, which is then loaded into a newly allocated memory with executable properties and executed from its entry point.
+Figure 9 shows the situation when calling the entry point.
+The base address of this PE file is 0x1670000 and the entry point is at 0x1671000.
+TrickBot then transfers to this PE file at 0x1670000, and according to my analysis, it uses a special process for protecting its functions and strings just as the runtime pack program does.
+Figure 9.
+TrickBot calls Entry Point of a decrypted PE file
+Key function being used to protect its code
+Many important functions are encrypted, which are only decrypted just before calling, and then re-encrypted immediately after calling.
+It uses a key function to do this, and following is the ASM code of that function, sub_1672F6C.
+When it needs to call one destination function, it calls this key function Sub_1672F6C and it then passes the destination function index and the arguments for the destination function to it.
+Function Sub_1672F6C (at call dword ptr [ebp+8] ; call 1671EEC) decrypts the function according to the passed function index.
+It then decrypts another function Sub_1672E34 (function index is 1Ch), which is used to correct relocations for the destination function, if applicable.
+After that, the destination function will be called with its arguments (at call dword ptr [ebp+14h] ; call the destination function).
+As you might have noticed, “call dword ptr [ebp+8]” performs both encryption and decryption function.
+It’s called to re-encrypt the function Sub_1672E34 and destination function after use.
+That means you cannot set software breakpoints on the destination function because the debugger modifies the code as 0xCC for software breakpoints, which could make exceptions when re-encrypting it.
+This key function sub_1672F6C is called from time to time throughout its running time.
+Anti-analysis techniques
+It checks to see if some of the dlls listed below are loaded in the current process.
+They all belong to some analysis tools and Anti-virus software, such as VMware, SunBelt Sandbox, Sandboxie, Virtual PC, WPE Pro, Avast, Comodo, and iDefense, etc.
+pstorec.dll, vmcheck.dll, dbghelp.dll, wpespy.dll, api_log.dll, SbieDll.dll, SxIn.dll, dir_watch.dll, Sf2.dll, cmdvrt32.dll, snxhk.dll.
+If one of these dlls is detected as having been loaded, it exits the process immediately.
+TrickBot continues to check to determine whether the services Microsoft "WinDefend", Malwarebytes "MBAMService", Sophos "SAVService" are running, which are all Anti-virus services.
+If detected, it executes a command to stop and kill them, along with killing their relevant processes.
+It executes "cmd.exe /c sc stop WinDefend" and "cmd.exe /c sc delete WinDefend" to stop Microsoft “WinDefend” and kill this service.
+It also kills the relevant processes "MsMpEng.exe", "MSASCuiL.exe" (for win10) and "MSASCui.exe" (for Win10).
+It also executes "cmd.exe /c sc stop SAVService" and "cmd.exe /c sc delete SAVService" to stop and kill this service if found, as well as also killing relevant processes "SavService.exe", "ALMon.exe", etc.
+Finally, it calls the API “ControlService” to stop the service "MBAMService" if running.
+Figure 10 is the ASM snippet of its stopping "MBAMService".
+Figure 10.
+Stop the service "MBAMService"
+Relocate the exe file to disguise it
+TrickBot compares processes to see if a current process is from the folder “%AppData%\winnet”.
+If it doesn’t match, it copies itself into that folder and runs it while exiting the current process.
+It repeats doing all work that I have detailed above after running it from “%AppData%\winnet\”.
+You can see it’s copying the file into “%AppData%\winnet\” in Figure 11.
+Figure 11.
+Copying itself into the folder “%AppData%\winnet”
+Decrypting embedded PE file and executing
+After passing the above detections, it starts to decrypt an embedded PE file—whose size is 16E00h in bytes—from memory.
+According to my analysis, it embeds three PE files.
+One is for 32 bit Windows platforms (size is 16E00H), one is for 64 bit Windows platforms (size is 1C000h), and the last one’s size is 342EH.
+For now, I have only just started analyzing the first one and I hope to find something new from it.
+The IPS signature “Emotet.Botnet” can detect the traffic resulting from when Module 2 reports the decrypted email address information stolen from victim’s Outlook to the C&C server.
+TrickBot Executable (Module 3):
+91982DC2DECBD5270EC7AD94EB1FD4F1C0169591A9BC2A9537EADEF708EB4025
+Learn more about FortiGuard Labs and the FortiGuard Security Services portfolio.
+Sign up for our weekly FortiGuard Threat Brief.
+Learn more about the FortiGuard Security Rating Service, which provides security audits and best practices.

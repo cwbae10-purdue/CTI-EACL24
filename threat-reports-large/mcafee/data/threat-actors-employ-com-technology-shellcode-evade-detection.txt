@@ -1,0 +1,45 @@
+COM (Component Object Model) is a technology in Microsoft Windows that enables software components to communicate with each other; it is one of the fundamental architectures in Windows.
+From the security point of view, several “features” built into COM have lead to many security vulnerabilities.
+These features include ActiveX (an Internet Explorer plug-in technology), the brokers on Internet Explorer Protected Mode and Enhanced Protected Mode, and OLE (Object Linking and Embedding), which we analyzed and presented at last year’s Black Hat USA conference.
+For a local system, there are two types of COM objects.
+One we call in-process COM, for this type the server and the client run in the same process.
+The other is cross-process COM, for this type the server and the client run in different processes.
+In this post we will focus on cross-process COM.
+The following is an illustration from the Microsoft Developer Network showing one process talking with another process via COM (called COM marshaling).
+From the security defense perspective, we have seen COM-related tricks in malware samples that abuse COM technology to hide from detection and remain persistent.
+However, for exploits, as far as we know, there have been no reports.
+At McAfee we have recently analyzed a number of interesting samples.
+The exploited vulnerabilities and the dropped malware are not new.
+However, from an exploit detection perspective, we now see shellcode employing COM technology to perform post-exploitation operations after successfully exploiting the vulnerability.
+Specifically, Windows Management Instrumentation (WMI) objects—which can be accessed through COM—are used to execute the dropped malware.
+We have reverse-engineered the shellcode.
+The following pseudocode does the trick:
+//Instantiate the COM object CoCreateInstance(CLSID_WbemLocator,0, CLSCTX_INPROC_SERVER, IID_IWbemLocator, (LPVOID *) &pLoc);
+//Connect the WMI namespace pLoc->ConnectServer(_bstr_t(L”ROOT\\CIMV2″),NULL,NULL,0,NULL,0,0,&pSvc);
+//Set the authentication information CoSetProxyBlanket( pSvc, RPC_C_AUTHN_WINNT, RPC_C_AUTHZ_NONE, NULL, RPC_C_AUTHN_LEVEL_CALL, RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_NONE );
+//Get the WMI class pSvc->GetObject(L”Win32_Process”, 0, NULL, &pClass, NULL);
+//Get the method on this classs pClass->GetMethod(L”Create”, 0, &pInParamsDefinition, NULL);
+//Create a new instance of the class pInParamsDefinition->SpawnInstance(0, &pClassInstance);
+//Put the parameter (the path of the dropped malware) VARIANT varCommand; varCommand.vt = VT_BSTR; varCommand.bstrVal = _bstr_t(L”C:\\Users\\USER1\\AppData\\Local\\Temp\\..\\Mozilla\\ffupd.exe“); pClassInstance->Put(L”CommandLine”, 0, &varCommand, 0);
+//Finally, execute the dropped malware hres = pSvc->ExecMethod(L”Win32_Process”, L”Create”, 0,NULL, pClassInstance, &pOutParams, NULL);
+Why would the threat actors do this?
+We conclude the purpose is to evade behavior-based detection.
+Most behavior-based detection products today, regardless whether on a user’s system or in a sandbox, are able to catch a suspicious process launched directly by the “monitored” process (the monitored process is the vulnerable process such as a Word or Internet Explorer process).
+This can be done many ways, such as hooking some sensitive Windows APIs such as CreateProcess().
+However, the preceding WMI (COM) object is not implemented in the same vulnerable process; instead, it is implemented in a separate process: C:\Windows\system32\wbem\wmiprvse.exe.
+When the attacker tries to instantiate the WMI object, a new process, wmiprvse.exe (called the COM server), will be launched from the system service process svchost.exe.
+Later, wmiprvse.exe will be used to execute the dropped malware (ffupd.exe).
+The following illustrates the process.
+The point is that the main process that runs the dropped malware is not the vulnerable process (winword.exe, in this example), but the new, legitimate process wmiprvse.exe, which does not have a direct relationship with the vulnerable process.
+You won’t find anything wrong if you just monitor the vulnerable process or look at the “parent-child process relationship” on the system.
+Is this a new attacking technique?
+COM technology is not new; in fact, it is a “common technology” on Windows.
+One Black Hat paper (page 15) dates the specific attacking technique to 2011.
+However, the samples show us that the bad guys are now implementing this technique in real-world attacking operations.
+Their goal, of course, is to bypass various behavior-based detections on endpoints or in sandboxing systems.
+Although the WMI object in this example is not new, we must point out that this WMI object is only one of many potential “cross-process” COM objects in Windows that can be abused.
+The exploited vulnerabilities in the samples we analyzed are not new, but it is easy for attackers to copy such techniques when exploiting other new or zero-day vulnerabilities.
+Overall, we need a specific detection to defend against this style of attack.
+We hope this post will help our fellow security defenders to understand the attacking technique, recognize the challenge, and take action to prepare for it.
+The MD5 hash of the analyzed sample is 72A7B4369E820DEB9D526C1F0E6294FB.
+Thanks to my colleagues Bing Sun and Stanley Zhu for their help with the research and the post.

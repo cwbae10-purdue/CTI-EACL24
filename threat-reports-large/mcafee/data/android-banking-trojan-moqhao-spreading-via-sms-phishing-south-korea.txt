@@ -1,0 +1,124 @@
+Last month, a number of users started posting on South Korean sites screenshots of suspicious SMS messages phishing texts (also known as smishing) to lure them into clicking on shortened URLs.
+For example, the following message asks the user to click on the link to check if a private picture has been leaked:
+Figure 1: Text in Korean: “Why is your picture here?
+Click to find out.” Source: Naver.
+Another example of this ongoing phishing campaign is the following text message:
+Figure 2: “You are in the news!
+Please check.” Source: Naver.
+When the victim clicks on the shortened URL using an Android device, a JavaScript script on the web server checks the user agent of the browser and shows an alert message asking to update Chrome to a new version, which is in fact a malicious fake Chrome Android app:
+Figure 3: Fake alert message: “A new version of Chrome has been released with enhanced features.
+Please use it after updating.”
+If the URL is accessed by any other device (such as an iPad), the web server redirects the user to a security page of Naver, a popular search engine and portal site in South Korea.
+This malware, which McAfee Labs has named Android/MoqHao, has many capabilities:
+Sends phishing SMS messages to contacts listed in the infected device.
+Leaks sensitive information, such as received SMS messages, to a remote server.
+Installs Android apps provided by the control server.
+Executes remote commands from the control server and returns results.
+Attempts to gather sensitive information via a local Google phishing website.
+Technical analysis
+When the downloaded APK is installed by the victim—who must ignore suspicious permissions requested by the app such as “directly call phone numbers,” “read your contacts,” or “read your text messages”—Android/MoqHao attempts to achieve persistence by asking every second for device administrator privileges.
+Once on board, a fake icon briefly appears on the home screen before is hidden by the malware:
+Figure 4: Legitimate and fake (a little bigger) Chrome icons on the home screen.
+After hiding the malicious app, Android/MoqHao Base64 decodes bin file in the asset folder of the APK and dynamically loads the decoded DEX.
+Inside the loaded classes are malicious behaviors that compromise the victim’s device.
+First, Android/MoqHao dynamically registers a broadcast receiver for various system events such as new package install, screen state, SMS messages, and so on.
+This broadcast receiver spies on the device and sends device status information to the control server.
+Next, Android/MoqHao connects to the first-stage remote server.
+The IP for second-stage control server communication is dynamically retrieved from the user profile page of Chinese search engine Baidu:
+Figure 5: Control (C&C) server IP address and port retrieval process.
+The following Baidu user profiles are known to have control server IP and port numbers hidden in the profile description:
+haoxingfu88: Haoxingfu (“so happy” in Chinese, 好幸福)
+ceshi9875: Ceshi (“test,” 测试)
+womenhao183527: Hao (“good,” 好)
+dajiahao188384: Dajiahao (“hello everyone,” 大家好)
+Figure 6: Baidu profile pages known to store control server IP and port information.
+When connected to the second-stage server, Android/MoqHao sends a “hello” message containing the following device information:
+UUID
+Device ID (IMEI)
+Android version
+Device product name, build ID string
+Whether the device is rooted
+SIM status
+Phone number
+Registered accounts
+The following information is periodically sent to the server with message type “state” after phone state changes and related events:
+Network operator name
+Network type (LTE, GPRS)
+MAC address
+Current battery level
+Wi-Fi signal level
+Is device admin?
+Is current package ignoring battery optimization?
+Is screen off?
+Ringer mode
+When the device receives a new SMS message, the contents and sender address are sent to the control server.
+If a specially formatted SMS message is received, Android/MoqHao parses it and uses the contents for special purposes such as setting the SMS forwarding address “fs” field or the “account” field, which are used to access the Baidu profile page and dynamically extract the control server IP address and port number.
+After Android/MoqHao is successfully installed and has connected to the control server, the malware waits for additional commands.
+Fake updates to Korean banking apps
+Android/MoqHao checks whether major Korean bank apps are installed and downloads relevant fake or Trojanized versions from the control server.
+We saw similar functionality in an Android banking Trojan distributed via smishing that targeted customers of Korean banks in June 2013 but, unlike Android/MoqHao, the malware from 2013 carried the phishing apps inside the APK file instead of downloading them.
+After the fake or Trojanized banking apps are downloaded, an alert dialog tells the victim that the new version is available and that the app needs to be updated:
+Figure 7: Alert dialog: “A new version has been released.
+Please use after reinstallation.”
+Once the malicious app is installed, it deletes the legitimate app.
+The malware checks for the following apps:
+wooribank.pib.smart
+kbstar.kbbank
+ibk.neobanking
+sc.danb.scbankapp
+shinhan.sbanking
+hanabank.ebk.channel.android.hananbank
+smart
+epost.psf.sdsi
+kftc.kjbsmb
+smg.spbs
+During our analysis of this threat, when Android/MoqHao requests the download of a specific fake or Trojanized banking app, the control server responds with an error.
+Affected users in South Korea have not reported downloads or attempted installation of additional APK files.
+This suggest that the fake update functionality is probably not implemented or is at least not currently used by the malware authors.
+Local HTTP server serving phishing website
+Unlike Android banking Trojans that use WebViews to load phishing URLs or display overlay screens to obtain banking credentials, Android/MoqHao includes java-httpserver to host a phishing page that opens in the default browser once the user clicks on the fake alert message:
+Figure 8: Alert message: “Your Google identity is at risk.
+Please use it after you certify yourself.”
+The phishing page asks the victim to submit name and birthday of the Google account.
+This is sent to the local HTTP server by POST.
+Then the local server sends the stolen information to the control server.
+Control server communication
+Android/MoqHao communicates with the control server by opening a WebSocket and sending JSON-RPC calls back and forth.
+Both the malware and control server implement RPC functions of their own.
+Commands implemented in Android/MoqHao:
+Figure 9: Client commands.
+The control server appears to implement the following RPC functions:
+Figure 10: Server commands.
+Evolution
+The first version of Android/MoqHao that we have seen appeared in January.
+It seems to be a test version of the payload (encoded DEX in assets folder) because:
+The APK file has no resources (such as the Chrome icon or specific strings).
+The package name is v3.example.com.loader.
+The label of the app is “Test.”
+In February an updated version included the dropper and persistence functionality.
+However, this also seems to be a test version of the dropper component of the malware because:
+The main package of the app is com.example.
+The file activity_main.xml inside the APK is the default with the string “Hello World!”
+In March another test version used the app name 바이러스 테스트 (Virus Test) and some functionality (for example, startService) was implemented in a native library.
+The first variant of the current version, described in our analysis, appeared in May and was actively distributed during the past two months.
+Figure 11: Android/MoqHao evolution.
+Connection with DNS tampering campaign in May 2015
+In May 2015 users in South Korea reported a phishing message appearing in the default web browser when they attempted to access the Internet.
+Blogger nopsled confirmed that users saw the notification because the routers of the victims were hacked (via DNS redirection) due to poor configuration (such as a default user ID and password).
+The phishing message is very similar to those used to spread Android/MoqHao, pretending to be a new Chrome version and asking the user to update it:
+Figure 12: Phishing message from 2015: “The latest version of chrome has been released.
+Please use it after update.” Source: nopsled.
+The Android malware from May 2015 and Android/MoqHao have completely different code bases but they share some similar behaviors and functionality:
+Extracting the control server’s IP from Chinese websites (qzone and Baidu) by parsing a specific field in the HTML code.
+Using the same phishing message to trick users into installing a fake banking app.
+Using similar hidden folders in the SD card to store the downloaded fake banking apps.
+The same log messages.
+The similarities between the 2015 and 2017 phishing campaigns suggests the same cybercriminals, who have shifted from DNS redirection attacks to a smishing campaign.
+The attackers are still targeting Chrome and getting the control server from a dynamic webpage while changing the code base of the initial dropper component as well as the dynamically loaded payload.
+Conclusion
+The smishing campaign currently targeting South Korean users shows that phishing SMS messages are still a popular vector for Android malware.
+This fake Chrome APK distributed via SMS messages shows that Android/MoqHao is a threat that has been in development since early this year.
+Similar campaigns from 2015 suggest that they are the work of an organized cybercriminal group.
+To protect yourselves from this threat, employ security software on your mobile device and do not trust applications downloaded from unknown sources.
+McAfee Mobile Security detects this threat as Android/MoqHao and alerts mobile users if it is present, while protecting them from any data loss.
+For more information about McAfee Mobile Security, visit http://www.mcafeemobilesecurity.com.

@@ -1,0 +1,104 @@
+Every year the number of smart devices grows.
+Coffee machines, bracelets, fridges, cars and loads of other useful gadgets have now gone smart.
+We are now seeing the emergence of smart streets, roads and even cities.
+Devices such as smart cameras have long been part of everyday life for many, as communication devices, components in security and video surveillance systems, to keep an eye on pets, etc.
+The latest smart cameras can connect to the cloud.
+This is done so that a user can watch what’s happening at a remote location using a variety of devices.
+The researchers at Kaspersky Lab ICS CERT decided to check the popular smart camera to see how well protected it is against cyber abuses.
+This model has a rich feature list, compares favorably to regular webcams and can be used as a baby monitor, a component in a home security system or as part of a monitoring system.
+An initial analysis using publicly available sources showed that there are almost 2,000 of these cameras on the Internet with public IP addresses.
+This device is capable of capturing video with resolutions of 1920×1080, 1280×720 or 640×360, it has night vision capability and a motion sensor, and supports two-way communication, i.e.
+apart from capturing video and sound it can also produce sound using an in-built speaker.
+The camera works via a cloud-based service; in other words, it doesn’t connect directly to a device such as a computer.
+It is configured by creating a wireless hotspot on the camera and connecting it to the main router via Wi-Fi.
+Users can control the camera from their smartphones, tablets or computers.
+It should be noted that the camera’s data can only be uploaded to the cloud; there is no other way of communicating between the user and the camera.
+The camera is based on the Ambarella S2L system (ARM architecture).
+Amboot is used as its initial loader.
+After a standard boot, Amboot loads the Linux core with a specific command as a parameter:
+console=ttyS0 ubi.mtd=lnx root=ubi0:rootfs rw rootfstype=ubifs init=/linuxrc model=SNH-V6410PN ethaddr=************ sn=ZC7D6V2H********* s=c
+After that, systemd launches.
+The system then boots as normal.
+Different partitions are mounted, and commands from rc.local are executed.
+When executing rc.local, the file mainServer is launched in daemon mode, which is the core of the camera’s operation logic.
+mainServer executes the commands that are sent to it via UNIX socket /tmp/ipc_path via binary protocol.
+Scripts written in PHP as well as CGI are used to process user files.
+While launching, mainServer opens UNIX socket /ipc_path.
+Analysis of the PHP scripts has shown that the main function responsible for communication with mainServer is in the file /work/www/htdocs_weboff/utils/ipc_manager.php.
+Interaction with the cameras is via the cloud only
+When a command arrives from the user (e.g., to rotate the camera, select a tracking area, switch to night vision mode, etc.
+), it is analyzed.
+Each command or parameter has its own flag assigned to it, which is a constant.
+The main flags are documented in the file /work/www/htdocs_weboff/utils/constant.php.
+Later on, the packet header and payload is created, and a request is sent via UNIX socket /tmp/ipc_path to mainServer.
+An analysis of the file ipc_manager.php shows that no authentication is used at this stage.
+The request is sent on behalf of the user ‘admin’.
+function makeHeader($cmd, $act, $type, $len){ $header = array(); $header = array_fill(0, 77, 0x00); $header[HEADER_OFF_MAGIC_NUMBER] = 0xFE; $header[HEADER_OFF_MAGIC_NUMBER+1] = 0xFF; $header[HEADER_OFF_MAGIC_NUMBER+2] = 0xFE; $header[HEADER_OFF_MAGIC_NUMBER+3] = 0xFF; $header[HEADER_OFF_MAJOR_VERSION] = MAJOR_VERSION; //Major Version $header[HEADER_OFF_MINOR_VERSION] = MINOR_VERSION; //Minor Version int2byte($header, $cmd, HEADER_OFF_COMMAND); //Command $header[HEADER_OFF_ACTION] = $act; //Action $header[HEADER_OFF_MSG_TYPE] = $type; //Type $header[HEADER_OFF_ERROR_CODE] = 0xFF; //Error Code int2byte($header, $len, HEADER_OFF_MSG_LENGTH); //Length str2byte($header, “127.0.0.1“, HEADER_OFF_PEER_IP, 40); //Peer IP[40] int2byte($header, 80, HEADER_OFF_PEER_PORT); //Peer Port str2byte($header, “admin“, HEADER_OFF_PEER_ACCOUNT, 16); //Peer Account[16] – Current user name $header = array_merge($header, array_fill(0, 8, 0xFF)); //Reserved[8] return $header; }
+Example of a request sent on behalf of admin
+This method of communicating commands is used when camera communication is done both via HTTP API and via SmartCam applications.
+In the latter case, the packet is generated in the application itself and sent to the camera in a message body using the XMPP protocol.
+When accessing this file from the outside via HTTP API and SmartCam application, it can be accessed only through web server digest authentication.
+The following vulnerabilities were identified during the research:
+Use of insecure HTTP protocol during firmware update
+Use of insecure HTTP protocol during camera interaction via HTTP API
+An undocumented (hidden) capability for switching the web interface using the file ‘dnpqtjqltm’
+Buffer overflow in file ‘dnpqtjqltm’ for switching the web interface
+A feature for the remote execution of commands with root privileges
+A capability to remotely change the administrator password
+Denial of service for SmartCam
+No protection from brute force attacks for the camera’s admin account password
+A weak password policy when registering the camera on the server xmpp.samsungsmartcam.com.
+Attacks against users of SmartCam applications are possible
+Communication with other cameras is possible via the cloud server
+Blocking of new camera registration on the cloud server
+Authentication bypass on SmartCam.
+Change of administrator password and remote execution of commands.
+Restoration of camera password for the SmartCam cloud account
+After some additional research we established that these problems exist not only in the camera being researched but all manufacturer’s smart cameras manufactured by Hanwha Techwin.
+The latter also makes firmware for Samsung cameras.
+Below we give a more detailed account of some of our findings.
+As mentioned above, we detected, among others, an undocumented capability that allows manipulations with the camera’s web interface.
+Code with undocumented functionality capability in Hanwha SmartCam
+Interestingly, in addition a buffer overflow-type vulnerability was detected inside of it.
+We reported the issue with undocumented feature to the manufacturer, and it has already fixed it.
+Another example of a dangerous vulnerability in this smart camera can be found in the cloud server architecture.
+Because of a fault in the architecture, an intruder could gain access via the cloud to all cameras and control them.
+One of the main problems associated with the cloud architecture is that it is based on the XMPP protocol.
+Essentially, the entire Hanwha smart camera cloud is a Jabber server.
+It has so-called rooms, with cameras of one type in each room.
+An attacker could register an arbitrary account on the Jabber server and gain access to all rooms on that server.
+Message sent over XMPP using a test account created for research purposes
+Decoded body of the above message
+In the process of communicating with the cloud, the camera sends the user’s credentials and a certain set of constants.
+After analyzing the data sent, a remote attacker is able to register existing cameras in the cloud that have not been registered there yet.
+As a result of this, the cameras could subsequently not able to register in the cloud and, as a consequence, are not able to operate.
+In addition, an attacker can communicate with the cloud on behalf of an arbitrary camera or control arbitrary cameras via the cloud.
+An interesting attack vector is the spoofing of DNS server addresses specified in the camera’s settings.
+This is possible because the update server is specified as a URL address in the camera’s configuration file.
+This type of attack can be implemented even if a camera doesn’t have a global IP address and is located within a NAT subnet.
+This sort of attack can be implemented by taking advantage of the peculiarities and vulnerabilities that exist in the Hanwha SmartСam cloud architecture.
+An attack like this could result in the distribution of modified firmware to cameras with the undocumented functionality loophole preinstalled, which will give privileged rights on those cameras.
+If an intruder gains privileged rights (root) on a camera, they gain access to the full Linux functionality.
+This means the camera can be used as a foothold from which to attack devices located on local (within a NAT subnet) or global networks.
+In one attack scenario, an arbitrary camera can be cloned and its image signal spoofed for the end user without much difficulty.
+To do so, an intruder will have to use cloud interactions to find out the target camera’s model, serial number and MAC address.
+The attacker then resets the password using a vulnerability in the password generation algorithm and modifies the firmware of the cloned camera (which is an identical camera located on the attacker’s side).
+The victim’s camera is then remotely disabled.
+As a result, the victim will receive a video signal from the attacker’s cloned camera.
+Other possible scenarios involve attacks on camera users.
+The camera’s capabilities imply that the user will specify their credentials to different social media and online services, such as Twitter, Gmail, YouTube, etc.
+This is required for notifications about various events captured by the camera to be sent to the user.
+An attacker would then be able to exploit this capability to send phishing and spam messages.
+What can a potential attacker do with the camera?
+Our research has demonstrated that they have a number of options.
+For one, the attacker can remotely change the administrator’s password, execute arbitrary code on the camera, gain access to an entire cloud of cameras and take control of it, or build a botnet of vulnerable cameras.
+An attacker can gain access to an arbitrary SmartCam as well as to any Hanwha smart cameras.
+What are the implications for a regular user?
+A remote attacker can gain access to any camera and watch what’s happening, send voice messages to the camera’s on-board speaker, use the camera’s resources for cryptocurrency mining, etc.
+A remote attacker can also put a camera out of service so it can no longer be restored.
+We were able to prove this hypothesis three times 🙂
+We immediately reported the detected vulnerabilities to the manufacturer.
+Some vulnerabilities have already been fixed.
+The remaining vulnerabilities are set to be completely fixed soon, according to the manufacturer.
+Fixed vulnerabilities were assigned the following CVEs:
+CVE-2018-6294 CVE-2018-6295 CVE-2018-6296 CVE-2018-6297 CVE-2018-6298 CVE-2018-6299 CVE-2018-6300 CVE-2018-6301 CVE-2018-6302 CVE-2018-6303

@@ -1,0 +1,127 @@
+Unit 42 has continued researching the Shamoon 3 attacks that impacted an oil and gas organization earlier this month.
+During our continued research, we identified another wiper Trojan potentially related to the incident that involved the infamous Disttrack Trojan.
+The potentially related wiper is a modified variant of the open-source SuperDelete tool whose source code is readily available on Github.
+We have evidence that this wiper was on the same system that was running the Disttrack executables and had a kernel driver saved to “C:\Windows\hdv_725x.sys”, which was the location where the Disttrack wiper saved the ElDos RawDisk driver in order to wipe files on the system.
+The developer of this wiper used SuperDelete’s source code and modified it to create a new variant.
+The resulting variant is a wiper Trojan written in C# that contains no additional functionality outside of deleting files on the system, so unlike prior Disttrack samples, it is unable to spread to other systems on the network.
+Unlike the Disttrack wiper, the SuperDelete variant does not rely on a kernel driver to wipe files on the system.
+Instead, the SuperDelete wiper overwrites user files with random data before deleting them, which makes recovery of the files difficult without available backups.
+The most interesting part of the SuperDelete variant is that the developer intentionally added a religiously-charged message from a verse in the Quran, which it does not display prior to wiping the system and would only be discovered by individuals performing a thorough analysis of the tool.
+Through continued analysis of the wiper based on the SuperDelete source code, we discovered two executables that we believe the actors used to execute the wiper on multiple systems by propagating the wiper from a single system on the compromised network to other hosts.
+We refer to the two supporting executables as a Loader Trojan and the Spreader Trojan, which would likely be loaded on one compromised system on the network and used as a centralized point to distribute the wiper to remote systems.
+A similar centralized distribution approach was also used in the Shamoon 2 attacks and discussed in our analysis on how actors distributed Disttrack.
+The Loader Trojan (SHA256:d9e5266371…) is a very simple tool that loads a list of text files containing hostnames that the actor wants to propagate to.
+These text files contain a list of hostnames and their respective Windows version that the actor must have created based on prior reconnaissance activities.
+The Loader Trojan will execute an associated Spreader Trojan for each text file.
+The loader Trojan sample creates a list of text files from two different folders named “shutter” and “light” by searching for “*.txt” within these two folders.
+Based on the code, the Loader Trojan will load a maximum of 6 text files from both of these folders for a total of 12 files.
+It then enters a loop creating a new spreader process using each text file as an argument, as seen in the code in Figure 1.
+The loop creates these new processes using the Start function in the Process class using the command line cmd.exe /c spreader.exe [text file from shutter and light folders].
+Figure 1 Loop within Loader Trojan that creates a Spreader for each text file
+By analyzing how the spreader.exe executable uses the text file provided as an argument, we believe each text file that the Loader Trojan supplies to each created spreader process would be a new-line delimited file in which each line is structured as follows:
+[hostname],[windows version]
+The spreader.exe executable (SHA256:35ceb84403…) is the Spreader Trojan that reads each line of the provided text file and splits the string on the comma (“,”) and uses this as a list of other systems on the network it will attempt to spread to.
+The spreader does not contain any usernames and password combinations that it would use to gain access to the remote systems, instead it relies on the privileges of the account that ran the Spreader Trojan.
+This suggests the actor ran the Loader Trojan, and therefore the Spreader Trojan with an account with elevated privileges high enough to copy and execute files to other systems on the network.
+When attempting to spread to other hosts listed in the text file, the spreader acts differently based on the contents of the string to the right of the comma that denotes the Windows version of the remote system.
+First, the spreader checks to see if the Windows version string contains the following:
+7
+2008
+XP
+2003
+2000
+VISTA
+If any of these strings are present, the spreader gets a list of executable files (*.exe) within a local folder named net2, which will contain only one executable that the spreader will attempts to copy to the remote host.
+To carry out this file copy, the spreader first creates a folder on the remote system with a path of C:\Program Files\Internet Explorer\signin by creating a process using the mkdir command, as seen in Figure 2.
+Figure 2 Function in Spreader Trojan that creates folder on remote host
+It then copies the executable from the net2 folder to the host by creating a process with the following command line:
+cmd.exe /c copy net2\[executable from ‘net2’ folder] \\[hostname]\”C$\Program Files\Internet Explorer\signin\[filename of executable from ‘net2’ folder]”
+After copying the executable over to the remote system, the spreader creates a file on the remote system by opening a file using the following path:
+\\[hostname]\admin$\process.bat
+The spreader will write the following to the process.bat file:
+“C:\Program Files\Internet Explorer\signin\”[filename of executable from ‘net2’ folder]
+The spreader then uses WMI to connect to the remote system and will use the Win32_Process class to run the process.bat script on the remote system, which effectively executes the application from the net2 folder that the spreader copied over to the system.
+If the operating system version in the text file is blank for the hostname, the spreader carries out its activities in a slightly different manner.
+The spreader will create the directory Program Files\Internet Explorer\signin on the remote system as mentioned before, obtain all of the file names in a folder named all and copies the first and second file in the folder to the remote host.
+We believe the first file copied is a batch script and the second file as an executable, which are copied over by running the following command line:
+cmd.exe /c copy all\[first file (possible batch file) from ‘all’ folder] \\[hostname]\”C$\Program Files\Internet Explorer\signin\[filename of first file from ‘all’ folder]”
+cmd.exe /c copy all\[second file (executable) from ‘all’ folder] \\[hostname]\”C$\Program Files\Internet Explorer\signin\[filename of second file from ‘all’ folder]”
+The spreader would then run the copied executable using WMI in the same way as previously mentioned.
+We are unsure of the purpose of the first file copied over to the remote host, as it does not appear to be executed by the spreader on the remote host.
+If the hostname doesn’t have an empty version name and it does not match the Windows versions listed above, the spreader behaves slightly differently.
+In this case, the spreader would also create the Program Files\Internet Explorer\signin folder on the remote host, obtain an executable from a folder named net4 and copy this executable over to the remote host via the following command line:
+cmd.exe /c copy net4\[executable from ‘net4’ folder] \\[hostname]\”C$\Program Files\Internet Explorer\signin\[filename of executable from ‘net4’ folder]”
+The spreader will use the same technique as mentioned before using WMI to execute the copied executable on the remote system.
+Unfortunately, we do not have access to any forensic images of systems that executed the Loader and Spreader Trojans, or a system in which these Trojans spread to.
+Fortunately, we have evidence of a previously unknown wiper Trojan with a file name of ‘SlHost.exe’ that was installed on a system that was also infected with Disttrack (SHA256:c3ab58b315…).
+This unknown wiper was saved to be executed from the following location, which is the same folder location that the Spreader Trojan would create on remote systems and copy files to:
+C:\Program Files\Internet Explorer\signin\SlHost.exe
+The SlHost.exe file is a wiper Trojan written in C# whose developer used the freely available SuperDelete source code as a base and modified it.
+The resulting wiper Trojan has many lines of code that it never uses, as they are merely unused artifacts of the SuperDelete tool’s code base.
+For example, the wiper contains code to parse the following command-line arguments that was in the SuperDelete source code, but the wiper never actually uses these arguments:
+-s
+–silentMode
+–bypassAcl
+–printStackTrace
+The developer’s most interesting modification to the SuperDelete source code is the inclusion of ASCII art that it attempts to write to the console via the standard output.
+The wiper compares each line of the ASCII art seen in Figure 3 to the string “text”, and if it matches it would print the line to standard output.
+However, none of the lines in the ASCII art are equal to the string “text”, therefore, the ASCII art would never be displayed.
+Figure 3 ASCII art in SlHost wiper Trojan
+The ASCII art seen in Figure 3 is very interesting as it contains an Arabic phrase that is from the Quran, specifically the Surat Al Masad that translates to:
+Perish the two hands of Abu Lahab “father of flames” (an uncle of prophet peace be upon him) and Perish he!
+The developer of this wiper intentionally added this ASCII art to the wiper Trojan as a message.
+The actors involved in past Shamoon attacks have used politically charged images to overwrite the MBR, partition tables and files on the disk.
+As mentioned in our previous publication, the Disttrack wiper used in Shamoon 3 overwrote files using randomly generated data and not a politically charged image, as mentioned in our publications describing the Shamoon 2 attacks.
+The fact that the ASCII art is never written to the standard output suggests that the developer only intended this message to be discovered by individuals performing code analysis on the Trojan.
+After building the ASCII art, the wiper enumerates all the fixed storage devices attached to the system.
+Figure 4 shows the wiper obtaining all fixed hard drives and creating a list of drive names that it will use to enumerate the files and folders stored on each device.
+Figure 4 getallDrives function used to enumerate attached hard drives
+After enumerating the storage devices, the wiper will then attempt to delete all files and folders on each storage volume.
+Once it deletes all the files, it then attempts to delete the root path for the storage volume (for instance the “C:\”) specifically, as seen in Figure 4.
+Figure 5 Code in the main function that deletes each folder on the system before deleting the %SYSTEM% folder
+To delete the files and folders on the system, the wiper first attempts to obtain certain privileges, specifically:
+SeBackupPrivilege
+SeRestorePrivilege
+SeTakeOwnershipPrivilege
+SeSecurityPrivilege
+To carry out the wiping process, the wiper will call a function to recursively delete a folder and its contents.
+When enumerating the contents of each folder, the wiper will create an array of folder names that it will iterate through and call the same folder delete function, hence the recursive nature of the function.
+The wiper will also attempt to delete all the files in each folder, specifically deleting user and system files in different ways.
+To delete system files, the wiper uses the NtSetInformationFile API function to set the FILE_DISPOSITION_DELETE field within the FILE_DISPOSITION_INFORMATION structure to true, which marks the file for deletion.
+To delete user files, the wiper will first check to see if the file is set to read-only and if it is attempts to remove the read-only attribute by calling the SetFileAttributesW API function so the wiper can successfully delete it.
+The wiper then checks the file to see if the file exists in the “Users” folder and will timestamp the creation, last write and last access timestamps to:
+1/1/3000 12:01:01
+After timestamping each file, the wiper attempts to securely delete the file by entering two loops that writes random data to the file on byte at a time.
+These two loops effectively overwrite the data in the file twice, which makes recovering the data very difficult.
+The wiper then moves the overwritten file to a temporary filename in the same folder and deletes it.
+The wiper will write detailed logs to the console via the standard output as it deletes files and folders on the system.
+Each of the log entry has a format of \rDeleting {0}\t\t\t\t, with the ‘{0}’ replaced with the deleted file or folder name whose path is shortened to 60 characters with “\…\” added in the middle.
+For example, we observed the following log entry written to the console during execution of the wiper:
+Deleting C:\Program Files\Com\…\ware\Drivers\vss\VCBSnapshotProvider.dll
+When the wiper finishes deleting all the files and folders on the system, it creates one final log entry that it writes to the console via the standard output.
+The log entry contains statistics on the wiper’s activities, which is formatted as follows with the number of files deleted replacing ‘{0}’, the number of folders deleted replacing ‘{1}’ and the amount of time elapsed during the wiping activities replacing ‘{2}’:
+\rDone.
+Deleted {0} files and {1} folders in {2}.\t\t\t\t
+While the recent Shamoon attacks have mostly discussed the reemergence of the infamous Disttrack tool used in previous Shamoon attacks, it appears that the threat actors have also used a second wiper Trojan to destroy data on systems on targeted networks.
+It also appears that the threat actors have used a similar approach to distribute the wiper Trojan from a centralized location on the compromised network using a list of hostnames to copy the wiper Trojan to other systems on the network.
+The wiper related to the Shamoon 3 attacks is based on the SuperDelete source code.
+The wiper is only capable of overwriting the contents and deleting files and folders, as the wiper relies on the Loader and Spreader Trojans for execution.
+The religiously charged message within the wiper Trojan is interesting, as it acts as a message that may point to the adversary’s motivations.
+We have potentially tied the use of this wiper to the Shamoon 3 incident involving the Disttrack wiper, which in the past has used politically charged images to overwrite files in Shamoon and Shamoon 2 attacks.
+This also suggests that the adversaries involved in the Shamoon attacks have additional wipers in their toolset to complement the Disttrack Trojan.
+Palo Alto Networks customers are protected from the SuperDelete wiper variant:
+WildFire detects all known wipers using the SuperDelete source code with malicious verdicts
+AutoFocus customers can track wipers using the SuperDelete source code via the ShamoonSecureDelete tag
+Loader Trojan Hash
+d9e52663715902e9ec51a7dd2fea5241c9714976e9541c02df66d1a42a3a7d2a
+Spreader Trojan Hash
+35ceb84403efa728950d2cc8acb571c61d3a90decaf8b1f2979eaf13811c146b
+Known SuperDelete-based Wiper Hashes
+5203628a89e0a7d9f27757b347118250f5aa6d0685d156e375b6945c8c05eb8a
+0266be9130bdf20976fc5490f9191edaafdae09ebe45e74cd97792412454bf0d
+e5bf756d5530ec38ff649b901b3c7506f8556821d979bdcb392237f2ff40daf8
+5257f623270b4c5cc471ff35b1bfeec80ab37c7e012da76b50ebd2c4911a43d0
+Related Disttrack Hashes
+c3ab58b3154e5f5101ba74fccfd27a9ab445e41262cdf47e8cc3be7416a5904f
+0694bdf9f08e4f4a09d13b7b5a68c0148ceb3fcc79442f4db2aa19dd23681afe
+391e7b90bf3f0bfeb2c2602cc65aa6be4dd1c01374b89c4a48425f2d22fe231c

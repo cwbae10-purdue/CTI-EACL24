@@ -1,0 +1,41 @@
+We recently investigated the FinFisher bootkit malware published by WikiLeaks.
+Most components of the Windows version of FinFisher are basic, so let’s skip directly to the kernel mode driver and the Bootstrap code.
+The kernel mode driver directly reads and writes raw data from/onto a hard drive.
+The approximation of the technique used by the driver can be found in this article.
+The malware makes a copy of the original master boot record (MBR) and stores it elsewhere on the hard drive.
+Additionally, the malware writes 0x2A00 bytes of data onto the infected hard drive.
+This data is later copied by the malicious Bootstrap code.
+The address of the first sector containing this data is hard-coded into the bootstrap code.
+The malware uses Logical Block Addressing (LBA) to find a physical location of the malicious data on the hard drive.
+On the test machine, the MBR was overwritten with the following data:
+By quickly glancing over the data, we can make our first observation that the Bootstrap code is changed by the malware, but the partition table information is preserved.
+Let’s review in more detail the most interesting parts of the Bootstrap code.
+First, it performs an Extended Disk Drive (EDD) installation check:
+The malware sets a flag that indicates whether EDD is installed.
+This flag controls the method used by the malware to read data from a hard drive into the physical memory:
+Next, the malware gets drive parameters:
+At this moment, the malware has gathered enough information to copy the malicious blob of 0x2A00 bytes from a hard drive into the physical memory.
+The blob of data is copied one sector at a time.
+The code below is the loop that is used by the malware to copy the blob:
+Below is code for the function that is used to copy the data if EDD is installed:
+For this example, the arguments before the call to INT 13h to copy the first sector of malicious data into the physical memory on the test machine are the following:
+After the malware finishes copying the data, it jumps to the copied code and continues execution there:
+The code at 0x1000 is the most interesting part of the malware.
+But before we continue the analysis, it might be a helpful reminder that the FinFisher bootkit runs in real mode.
+This is different from protected mode.
+One of the differences is that we would have to calculate physical addresses using combinations of es:di and ds:si registers.
+The formula to calculate the physical addresses is (segment * 0x10) + offset.
+For example, if we are looking on the es:di pair, then es is our segment and di is our offset.
+All the addresses below are calculated using the formula above.
+Now, let’s take a closer look at the most interesting parts of the code.
+First, the malware calculates the address of the segment where it will copy the data (this is going to be the second time the blob of data is going to be copied):
+Next, the malware installs hooks for the INT 13h and INT 15h handlers.
+As can be seen from the code below, the malware offers no new ideas on how to hook the low-level interrupt handlers:
+At this point, hooks are installed for INT 13h and INT 15h, but the code for the functions that hooks INTs is yet to be copied to the calculated segment.
+The obvious next step for the malware is to copy the code for the hooked handlers:
+At this point, the malware is ready to return the control to the original MBR, but first, it needs to restore the original MBR to the 0x7C00 (the sector that holds the copy of the original MBR is stored elsewhere on the hard drive), and then it passes an execution to the original MBR:
+The given sample for the FinFisher bootkit does not provide any new techniques or improvements over other bootkits.
+The malware writers decided to install hooks for INT 13h and INT 15h handlers before the code for these handlers was copied into the memory; this can be a recipe for disaster.
+For example, if the code for hooked handler functions would fail to copy, this might cause the system to crash.
+I’d like to give special thanks to Doug Franklin, Mark Vincent Yason and Robert Freeman.
+Igor Aronov is a member of the IBM X-Force Advanced Research Team.

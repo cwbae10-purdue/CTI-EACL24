@@ -1,0 +1,214 @@
+FortiGuard Labs How-To Guide for Threat Researchers
+I have recently been engaged in deep security research on macOS for FortiGuard Labs focused on the discovery and analysis of IPC vulnerabilities.
+In this blog, I uncover the XPC internals data types to help researchers (myself included) not only quickly analyze the root causes of XPC vulnerabilities, but to also assist with deep analysis of exploits targeted at those vulnerabilities.
+XPC is the enhanced IPC framework used in macOS/iOS.
+Since its introduction in version 10.7/5.0, its use has exploded.
+XPC has a fairly large undocumented portion of its functionality, which includes its implementation (the main project libxpc, for example, is closed source).
+XPC provides public APIs on two levels: the low level and the Foundation wrappers.
+In this blog, we only focus on the low level APIs, which are direct exports of xpc_* functions from libxpc.dylib.
+The APIs themselves are divided into an object API and a transport API.
+XPC provides its own data types through libxpc.dylib.
+Those data types are listed below.
+From the C API perspective, all objects are simply “xpc_object_t”.
+The actual types can be dynamically determined by the function xpc_get_type(xpc_object_t).
+All data types can be created using the corresponding xpc_objectType_create functions, and all of these functions invoke the function _xpc_base_create(Class, Size).
+The Size parameter specifies the size of the object, and the Class parameter is one of the _OS_xpc_type_* metaclass.
+We can see several code references to the function _xpc_base_create in Hopper Disassembler v4.
+I wrote a python script in Hopper to automatically figure out the parameters of calling the function _xpc_base_create.
+The following is the python script demonstrating XPC object sizes in Hopper Disassembler.
+def get_last2instructions_addr(seg, x):
+last1ins_addr = seg.getInstructionStart(x - 1)
+last2ins_addr = seg.getInstructionStart(last1ins_addr - 1)
+last2ins = seg.getInstructionAtAddress(last2ins_addr)
+last1ins = seg.getInstructionAtAddress(last1ins_addr)
+print hex(last2ins_addr), last2ins.getInstructionString(), last2ins.getRawArgument(0), last2ins.getRawArgument(1)
+print hex(last1ins_addr), last1ins.getInstructionString(), last1ins.getRawArgument(0), last1ins.getRawArgument(1)
+return last2ins,last1ins
+def run():
+print '[*] Demonstrating XPC ojbect sizes using a hopper diassembler\'s python script'
+xpc_object_sizes_dict = dict()
+doc = Document.getCurrentDocument()
+_xpc_base_create_addr = doc.getAddressForName('__xpc_base_create')
+for i in range(doc.getSegmentCount()):
+seg = doc.getSegment(i)
+#print '[*]'+ seg.getName()
+if('__TEXT' == seg.getName()):
+eachxrefs = seg.getReferencesOfAddress(_xpc_base_create_addr)
+for x in eachxrefs:
+last2ins,last1ins = get_last2instructions_addr(seg,x)
+p = seg.getProcedureAtAddress(x)
+p_entry_addr = p.getEntryPoint()
+pname = seg.getNameAtAddress(p_entry_addr)
+x_symbol = pname + '+' + hex(x - p_entry_addr)
+print hex(x),'(' + x_symbol + ')'
+ins0 = seg.getInstructionAtAddress(x - 5)
+ins1 = seg.getInstructionAtAddress(x - 12)
+if last2ins.getInstructionString() == 'mov' and last1ins.getInstructionString() == 'lea':
+if last2ins.getRawArgument(0) == 'esi' and last1ins.getRawArgument(0) == 'rdi':
+indirect_addr = int(last1ins.getRawArgument(1)[7:-1],16)
+xpcObj_len = last2ins.getRawArgument(1)
+callerinfo = '__xpc_base_create('+ doc.getNameAtAddress(indirect_addr)+',' + xpcObj_len+ ');'
+if callerinfo not in xpc_object_sizes_dict.keys():
+xpc_object_sizes_dict[callerinfo] = '#from ' + x_symbol
+else:
+xpc_object_sizes_dict[callerinfo] = xpc_object_sizes_dict[callerinfo] + ',' + x_symbol
+print callerinfo
+#xpc_object_sizes_list.append(callerinfo)
+elif last2ins.getInstructionString() == 'lea' and last1ins.getInstructionString() == 'mov':
+if last2ins.getRawArgument(0) == 'rdi' and last1ins.getRawArgument(0) == 'esi':
+indirect_addr = int(last2ins.getRawArgument(1)[7:-1],16)
+xpcObj_len = last1ins.getRawArgument(1)
+callerinfo = '__xpc_base_create('+ doc.getNameAtAddress(indirect_addr)+',' + xpcObj_len+ ');'
+if callerinfo not in xpc_object_sizes_dict.keys():
+xpc_object_sizes_dict[callerinfo] = '#from ' + x_symbol
+else:
+xpc_object_sizes_dict[callerinfo] = xpc_object_sizes_dict[callerinfo] + ',' + x_symbol
+print callerinfo
+#xpc_object_sizes_list.append(callerinfo)
+elif last2ins.getInstructionString() == 'lea' and last1ins.getInstructionString() == 'lea':
+if last2ins.getRawArgument(0) == 'rsi' and last1ins.getRawArgument(0) == 'rdi':
+indirect_addr = int(last1ins.getRawArgument(1)[7:-1],16)
+xpcObj_len = last2ins.getRawArgument(1)[7:-1]
+callerinfo = '__xpc_base_create('+ doc.getNameAtAddress(indirect_addr)+',' + xpcObj_len+ ');'
+if callerinfo not in xpc_object_sizes_dict.keys():
+xpc_object_sizes_dict[callerinfo] = '#from ' + x_symbol
+else:
+xpc_object_sizes_dict[callerinfo] = xpc_object_sizes_dict[callerinfo] + ',' + x_symbol
+print callerinfo
+#xpc_object_sizes_list.append(callerinfo)
+elif last2ins.getRawArgument(0) == 'rdi' and last1ins.getRawArgument(0) == 'rsi':
+indirect_addr = int(last2ins.getRawArgument(1)[7:-1],16)
+xpcObj_len = last1ins.getRawArgument(1)[7:-1]
+callerinfo = '__xpc_base_create('+ doc.getNameAtAddress(indirect_addr)+',' + xpcObj_len+ ');'
+if callerinfo not in xpc_object_sizes_dict.keys():
+xpc_object_sizes_dict[callerinfo] = '#from ' + x_symbol
+else:
+xpc_object_sizes_dict[callerinfo] = xpc_object_sizes_dict[callerinfo] + ',' + x_symbol
+print callerinfo
+#xpc_object_sizes_list.append(callerinfo)
+print '____________________________________________________________'
+dict_len = len(xpc_object_sizes_dict)
+print '[*] Total of XPC object: %d' % dict_len
+for key in xpc_object_sizes_dict.keys():
+print key, xpc_object_sizes_dict[key]
+if __name__ == '__main__':
+run()
+After running it, you can get the size of all XPC objects as follows.
+__xpc_base_create(_OBJC_CLASS_$_OS_xpc_serializer,0x98);
+__xpc_base_create(_OBJC_CLASS_$_OS_xpc_mach_send,0x8);
+__xpc_base_create(_OBJC_CLASS_$_OS_xpc_activity,0x78);
+__xpc_base_create(_OBJC_CLASS_$_OS_xpc_data,0x28);
+__xpc_base_create(_OBJC_CLASS_$_OS_xpc_double,0x8);
+__xpc_base_create(_OBJC_CLASS_$_OS_xpc_file_transfer,0x48);
+__xpc_base_create(_OBJC_CLASS_$_OS_xpc_service_instance,0x78);
+__xpc_base_create(_OBJC_CLASS_$_OS_xpc_uint64,0x8);
+__xpc_base_create(_OBJC_CLASS_$_OS_xpc_bundle,0x238);
+__xpc_base_create(_OBJC_CLASS_$_OS_xpc_pointer,0x8);
+__xpc_base_create(_OBJC_CLASS_$_OS_xpc_string,0x10);
+__xpc_base_create(_OBJC_CLASS_$_OS_xpc_pipe,r12+0x20);
+__xpc_base_create(_OBJC_CLASS_$_OS_xpc_connection,r14+0xa8);
+__xpc_base_create(_OBJC_CLASS_$_OS_xpc_shmem,0x18);
+__xpc_base_create(_OBJC_CLASS_$_OS_xpc_dictionary,0xa8);
+__xpc_base_create(_OBJC_CLASS_$_OS_xpc_uuid,0x10);
+__xpc_base_create(_OBJC_CLASS_$_OS_xpc_connection,0xa8);
+__xpc_base_create(_OBJC_CLASS_$_OS_xpc_endpoint,0x8);
+__xpc_base_create(_OBJC_CLASS_$_OS_xpc_int64,0x8);
+__xpc_base_create(_OBJC_CLASS_$_OS_xpc_date,0x8);
+__xpc_base_create(_OBJC_CLASS_$_OS_xpc_fd,0x8);
+__xpc_base_create(_OBJC_CLASS_$_OS_xpc_mach_recv,0x10);
+__xpc_base_create(_OBJC_CLASS_$_OS_xpc_bool,0x8);
+__xpc_base_create(_OBJC_CLASS_$_OS_xpc_array,0x10);
+__xpc_base_create(_OBJC_CLASS_$_OS_xpc_service,0x5d);
+At this point in our analysis, we know the size of all XPC objects of different data types.
+Next, let’s take a look at the implementation of the function _xpc_base_create.
+We can see that the actual size of XPC object is equal to the Size parameter plus 0x18.
+We then need to do some reverse engineering to inspect the memory layout of all objects.
+In this blog, I’d like to discuss those primitive types.
+Other types can be elaborated in coming blogs.
+We use the function xpc_int64_create to create an xpc_int64_t object, as follows.
+The following is the memory layout of the object xpc_int64_t in LLDB.
+The structure of the object xpc_uint64_t is shown below.
+We use the function xpc_uint64_create to create an xpc_uint64_t object, as follows.
+We can then see that the return value is not a valid memory address.
+It should be generated by operating some arithmetic operations on the input parameter.
+In this case, it directly uses a 64-bits unsigned integer to represent the object xpc_uint64_t.
+Next, let’s look at another case of creating an xpc_uint64_t object.
+The following is the memory layout of the object xpc_uint64_t in LLDB.
+We can see that the memory buffer pointed to by the return value represents the object xpc_uint64_t and that the given input parameter is located at offset 0x18.
+Next, let’s dive into the implementation of the function xpc_uint64_create.
+The following is its implementation:
+In this function, it first makes a logical right shift of 52 bits for the argument.
+a) If the result is not equal to zero, it invokes the function _xpc_base_create to create an XPC object.
+It then writes 0x08 (4 bytes length) into the buffer at offset 0x14.
+Finally, it also writes the argument (8 bytes length) into the buffer at offset 0x18.
+b) If the result is equal to zero and the global variable objc_debug_taggedpointer_mask is not zero, it then takes an arithmetic operation by (value << 0xc | 0x4f) ^ objc_debug_taggedpointer_obfuscator.
+In the debugger LLDB we can see the variable objc_debug_taggedpointer_obfuscator is equal to 0x5de9b03e5c731aae.
+So the result of that arithmetic operation is equal to 0x5de9b42a48670ae1.
+This value is the return value of the function _xpc_uint64_create.
+If the result is zero, it’s the same with (a.)
+We can inspect the values of global variable objc_debug_taggedpointer_mask and objc_debug_taggedpointer_obfuscator as follows.
+Once we have the value of the variable objc_debug_taggedpointer_obfuscator, we can calculate the return value.
+The global variable objc_debug_taggedpointer_obfuscator is random for every new process instance.
+Let’s now trace how it’s generated and where it’s from.
+We can see the variable objc_debug_taggedpointer_obfuscator is actually a global variable in the library libobjc.A.dylib.
+The following code (located in objc4-750/runtime/objc-runtime-new.mm) is used to initialize objc_debug_taggedpointer_obfuscator with randomness.
+The initialization work can be done using the function void _read_images(header_info **hList, uint32_t hCount, int totalClasses, int unoptimizedTotalClasses).
+You can read the source code in objc-runtime-new.mm.
+We can also see in the initialization stage of the binary image that the global variable objc_debug_taggedpointer_obfuscator could be initialized with randomness.
+Finally, we sum up the structure of the object xpc_uint64_t as follows.
+We use the function xpc_uuid_create to create an xpc_uuid_t object (UUID: universally unique identifier), as follows.
+The following is the memory layout of the object xpc_uuid_t in LLDB.
+We can easily figure out the structure of the object xpc_uuid_t based on the memory layout.
+We use the function xpc_double_create to create an xpc_double_t object, as follows.
+The following is the memory layout of the object xpc_double_t in LLDB.
+The structure of the object xpc_double_t is shown below.
+We use the function xpc_date_create to create an xpc_date_t object, as follows.
+The following is the memory layout of the object xpc_date_t in LLDB.
+The structure of the object xpc_date_t is shown below.
+We use the function xpc_string_create to create an xpc_string_t object, as follows.
+The following is the memory layout of the object xpc_string_t in LLDB.
+The structure of the object xpc_string_t is shown below.
+We use the function xpc_array_create to create an xpc_array_t object, as follows.
+In this example, we first create an xpc_array_t object, and then append three values into the array.
+The following is the declaration of the xpc_array_create function.
+Next, let’s take a look at the implementation of the xpc_array_create function.
+We can see that the capacity of the array is equal to (count*2+0x08), which is stored at offset 0x1c(four bytes).
+The pointer to the allocated buffer is stored at offset 0x20.
+The size of the allocated buffer is equal to (count*2+0x8)*0x8.
+We can then inspect the memory layout of this object in LLDB, as follows.
+The length of the array is stored at offset 0x18(four bytes).
+The pointer at offset 0x20 points to the allocated xpc_object_t buffer, which stores all elements(xpc_object_t) in the array.
+The structure of the object xpc_array_t is shown below.
+We use the function xpc_data_create to create an xpc_data_t object, as follows.
+The following is the memory layout of the object xpc_data_t in LLDB.
+The structure of the object xpc_data_t is shown below.
+If the length of data buffer is less than or equal to 0x4000, the value at offset 0x14 is equal to (length+0x7)&0xfffffffc, otherwise it is 0x04.
+The type xpc_dictionary_t plays a significant role in XPC.
+All messages are passed between endpoints as dictionaries, which makes for easy serialization/deserialization.
+The internals of xpc_dictionary_t are more complicated than other primitive types.
+Let’s get started to unveil them.
+We use the function xpc_dictionary_create to create an xpc_dictionary_t object, as follows.
+The following is the memory layout of the xpc_dictionary_t object in LLDB.
+The field hash_buckets is an array of length 7.
+Each element in hash_buckets[7] stores XPC dictionary linked-list entries.
+Here we choose hash_buckets[3] as an example to inspect its memory layout.
+We can determine the structure of the XPC dictionary linked-list entry as follows.
+Finally, we sum up the structure of the xpc_dictionary_t object as follows.
+So far, we have discussed all the primitive data types of XPC objects as well as uncovered their internals and memory layout.
+Knowing the internals of these structures can not only help you quickly analyze vulnerabilities in XPC , but also be super-helpful for tracking and resolving the exploitation of XPC-related vulnerabilities.
+Additionally, XPC also provides the xpc_copy_description(xpc_object_t) API to be used to produce a human-read-able string description of any XPC object, which is especially useful for dumping messages.
+For example, when we call this API with an given xpc_dictionary_t object parameter, the following is the output which is a string description of this xpc_dictionary_t object.
+It’s easy to identify the value of internal elements for this object through it.
+In the implementation of the xpc_copy_description(xpc_object_t) it could invoke the description function(_xpc_TYPE_desc or _xpc_TYPE_debug_desc) to get the string description of this XPC object.
+The addresses of these two description functions are respectively located at offset 0x58 and 0x60 in the corresponding _OS_xpc_TYPE class like the following:
+macOS Mojave version 10.14.1
+Please note that these XPC objects structures may vary on other macOS versions.
+https://thecyberwire.com/events/docs/IanBeer_JSS_Slides.pdf
+*OS Internals, Volume I: User Mode by Jonathan Levin
+http://newosxbook.com/tools/XPoCe2.html
+Update: Thanks for the comments and suggestion from Jonathan Levin, I added some discussions about the xpc_copy_description(xpc_object_t) API into this blog.
+Learn more about FortiGuard Labs and the FortiGuard Security Services portfolio.
+Sign up for our weekly FortiGuard Threat Brief.
+Know your vulnerabilities – get the facts about your network security.
+A Fortinet Cyber Threat Assessment can help you better understand: Security and Threat Prevention, User Productivity, and Network Utilization and Performance.
+Read about the FortiGuard Security Rating Service, which provides security audits and best practices.

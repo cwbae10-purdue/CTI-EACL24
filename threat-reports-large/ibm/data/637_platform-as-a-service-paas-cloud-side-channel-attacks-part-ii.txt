@@ -1,0 +1,76 @@
+In part one of this blog post, we delved into some of the security concerns for organizations using platform-as-a-service (PaaS) cloud infrastructure.
+As part of that, we: defined side-channel attack; discussed nondeterministic finite automata (NFA) and how their specific attack NFA works; described the FLUSH+RELOAD side-channel attack based on the last level cache, shared by all cores of a physical CPU; and discussed the requirement of collocation on the physical CPU in order for the attacks to succeed.
+Now, we will cover the three attacks mounted by authors Y. Zhang, A. Juels, M.K.
+Reiter and T. Ristenpart as part of their research in “Cross-Tenant Side-Channel Attacks in PaaS Clouds” against the Linux Containers technology.
+The researchers begin by attacking a popular e-commerce product in order to infer sensitive data.
+In this case, they determined how many items were in a user’s shopping cart.
+Firstly, they document the assumptions.
+The attacker is striking a target user who has already authenticated to the server.
+However, it’s not possible to obtain the target user’s credentials.
+Finally, for the cross-site request to work, the adversary must lure the victim into coming to the attacker-controlled website.
+This is usually not practical because once users have authenticated to the e-commerce server, they typically follow links from that server.
+The attacker depends on cached credentials such as cookies.
+If these assumptions were to be true, however, the attacker can use a manually constructed NFA, the parameters of which are obtained through the use of the Valgrind tool suite, to monitor the target PHP process.
+The NFA monitors a particular handler function within the PHP software that is invoked each time an item is added to the cart.
+Therefore, for every detected invocation, the attacker can infer that an item has been added, allowing the attacker to determine how many items are in the cart.
+Section 5 of the report has details of the attack.
+The second attack relies upon the use of weak pseudorandom number generators (PRNGs) such as those found in many executables.
+The authors choose to attack their chosen PHP implementation’s PRNG.
+They once again attack the chosen e-commerce platform but also identify that a popular blogging platform contains the same weakness.
+Many attacks against PHP random number generators have been demonstrated, such as those in “I Forgot Your Password: Randomness Attacks Against PHP Applications.” This paper also presents a password reset attack but, as the authors of the paper indicate, over a much smaller search space.
+The authors also rely upon the seed values being the output of the gettimeofday() function and the getpid() function to seed the PRNG.
+Since this is the case in their chosen PHP implementation, the attack can proceed.
+It also relies upon the lack of a call to mt_srand(), forcing the seeding of the mt_rand call with a default value.
+The attacker first creates an account on the target website.
+He or she then saturates the server or PHP process with requests such that a new process is spawned to serve them.
+Then, the attacker requests a password reset itself.
+He or she monitors the gettimeofday() function using the NFA and, when the call is detected, calls the function immediately such that the values are only microseconds apart.
+Since the attacker knows that the process’s ID will not change, he or she can use the secret string that the server sends to brute-force the output of getpid(), which only has 216 possible values in a Unix-like operating system such as Linux.
+The attacker then monitors the calls to mt_rand() and php_combined_lcg() and can thereby guess the pseudorandom value at any given point.
+The particular e-commerce platform serves fast common gateway interface (CGI) processes with new processes, so the attacker must crash the PHP process.
+Once these conditions are met, cybercriminals send two password reset requests: one for their created account and one for the targeted user.
+When the attacker receives the reset secret at the controlled account, he or she uses the time information obtained from the side channel in order to brute-force the process ID (PID) of the process.
+This is only 216 trials.
+The authors discovered that there was at maximum a one-bit error in the different measurements of gettimeofday(), and in the victim application, this was called four times.
+This resulted in a 20-bit space to search.
+Note that the brute forcing is offline; that is, it requires no connection to the server because it can use the secret obtained from the password reset request.
+Then, because there are two more calls to gettimeofday() with potentially one bit of error, the attacker must connect to the website a maximum of four times in order to send the correct secret to reset the target user’s password and hijack the account.
+Because four is the maximum number of requests, there is no account lockout triggered.
+Section 6 of the paper provides a more detailed description.
+The third attack is against an open-source security assertion markup language (SAML) implementation.
+SAML is the language used by many single sign-on providers to clouds.
+The authors used the side channel to enable a so-called Bleichenbacher attack, described in D. Bleichenbacher’s “Chosen Ciphertext Attacks Against Protocols Based on the RSA Encryption Standard PKCS #1.”
+It relies upon a known ciphertext and can decrypt but not recover the key.
+The attack takes advantage of the fact that the chosen target can be forced to use the vulnerable PKCS #1 v1.5 standard.
+Implementations have simply created countermeasures for the known attack vectors, which allows for the new vector to exploit the weakness in the standard.
+The target is the XML encryption standard, which can now once again be broken.
+The attacker can decrypt based upon the PKCS #1 v1.5 padding scheme, which has a known format.
+This permits the verification of possible decryptions.
+First, the adversary monitors libcrypto.so, a component of OpenSSL, particularly the basic blocks responsible for calling the padding error function.
+This avoids the countermeasures mentioned above, which preclude a timing-based attack.
+The attacker gets an empirical measure of the time it takes to call the error function itself by sending first conformant and then nonconformant paddings.
+The authors use a 12 percent error rate for each invocation of k, where k is the number of requests to the padding oracle for each chosen padding.
+The attacker then measures to see if the error function is invoked.
+They observe that when k = 7, there were no false positives.
+When k = 7, the probability of a false negative is 1 percent.
+To break a 2048-bit RSA key, the authors estimate the number of queries at 2,345,455, which is clearly impractical.
+Thus, while the third attack is interesting academically, it is almost certainly not applicable to the real world.
+Refer to section 7 of the paper for details.
+To conclude, these blog posts explore side-channel attacks against a PaaS cloud popular among websites that share common executables.
+This sharing allows the use of a cache-based side channel to monitor the execution flow of the target running these executables.
+Practically, the second attack presented is clearly the most damaging — and the most realistic — while the first and third are a bit more difficult to reproduce in a real-world situation.
+The first attack requires that the adversary somehow lure a user to a website under his or her control.
+The typical way to do this is to inject cross-site scripting into the target’s website.
+Therefore, making sure your website is not vulnerable to cross-site scripting should limit this threat.
+This is a safety measure that should already be deployed on your website, as cross-site scripting can be very dangerous in all its forms.
+The third attack is very interesting from a researcher’s perspective, but requires so many queries to the XML padding oracle that it is not practical.
+However, note that the attackers did successfully perform this attack on a commercial cloud service, so it is possible.
+Make sure your website does not allow a large number of queries from a given IP or user without locking that user out.
+The lock may be temporary, but even this will slow down the cybercriminal and make the third type of attack even more impractical.
+The attacker will have to use a “slow-and-low” style, which should take an inordinate amount of time to complete.
+If you don’t like the idea of locking users or IPs out (for example, an IP lock may prevent multiple users on NATed networks from accessing your website), consider throttling the query speed after a certain number of queries from a user or IP.
+Create a password policy that forces the user to change passwords after a certain length of time.
+This will make the attack extremely unlikely since the ciphertext will change too fast.
+Finally, use a large RSA key, such as 4096 bits.
+In modern hardware, this key size is very practical and would require so many queries that the attacker will almost certainly give up and go after an easier target.
+If you are the specific target, the number of queries required to decrypt a specific ciphertext should exceed the lifetime of your website.

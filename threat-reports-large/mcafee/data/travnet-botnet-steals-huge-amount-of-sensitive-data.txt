@@ -1,0 +1,63 @@
+In a McAfee Labs blog by my colleague Vikas Taneja last month, he discussed high-level functioning in the malware Travnet.
+Since then we have continued to analyze different samples and now classify Travnet as a botnet rather than a Trojan because of the presence of control code, and the malware’s ability to wait for further commands from the malicious control server.
+The Travnet bot not only steals sensitive information from a victim’s machine; it also steals document files.
+Generally speaking, we store most of our sensitive information in Office files, PDFs, etc.
+Using data compression and data-encoding methods allows Travnet to steal huge amount of data including large files.
+The bot at first gathers sensitive information about victim’s machine.
+Then searches for document files (doc, docx, xls, xlsx, txt, rtf, pdf).
+Here is snippet of code:
+The preceding code includes computer name, IP address, username, operating system, list of running processes, IP config details, and information about different accounts present on the system.
+The malware creates the file system_t.dll to store this information in plain text.
+It also creates the file travelbackinfo-(SystemTime).dll, which will be used in an HTTP GET request.
+The data stored in the file can be huge, depending upon running processes and IP config details.
+The bot will use data compression and encoding methods to send the sensitive data to a remote server.
+The packet capture looks like this:
+The bot sends the stolen data with the parameter “&filetext,” which starts with “begin::.” But the compressed file can be too big to send over the HTTP, so the bot sends the compressed file in chunks of 1,024 bytes.
+To track this, it uses the parameter “&filestart.” The bot appends the string “::end” to signal the end of the file.
+Data compression and encoding techniques
+The bot processes the original data in two passes:
+In the first pass, it uses a data compression method similar to LZSS (Lempel–Ziv–Storer–Szymanski) to compress the original data
+In the second pass, it encodes the compressed data using custom Base64
+First pass data compression
+The bot’s data compression maintains a dictionary (a sliding window) of previously seen data that is similar to data compression with LZSS.
+The bot uses a similar method to maintain a large sliding window size (to achieve a high compression ratio) but outputs variable-length “Length- Offset” pairs (the number of bits required to represent the number).
+We have not seen yet any references or implementation that outputs variable lengths and variable offsets, so for now we will call this method a variant of the LZSS data compression algorithm.
+The bot starts compression by reading original data in chunks of 65,536 bytes (so it has to maintain sliding windows of this size).
+The final output of compression will be in chunks following this format:
+Original Length (2 bytes) + Compressed Length (2 bytes) + Compressed Data
+This method achieves a high compression ratio and reduces the size of the original data, allowing the bot to upload large files on the remote server.
+The decompression process is very easy to write because it does not need to search for the longest match but needs only to take care of variable-length values.
+Second pass custom Base64 encoding
+The Travnet bot uses custom Base64 encoding to encode the compressed binary data.
+The key and character set used in standard Base64 is “ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/” with “=” used for padding; the key used by the bot is “ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-/” with “*” used for padding.
+We wrote a small tool to decompress the data stolen by Travnet.
+As we look at the output, we see the size of the decompressed file (the original data) is much higher than that of the compressed file.
+Let’s now look the decompressed data:
+The preceding is the original data stolen from the victim’s machine.
+Interestingly, the unreadable characters in the decompressed file are in Chinese.
+While writing the sensitive information in a DLL file, the bot writes some hardcoded strings that are in Chinese.
+If we convert those strings to English, here is how the file looks:
+Stealing files
+The bot doesn’t stop; it steals more data.
+Next we see the functions called by the bot:
+The bot will send the following:
+A file containing lists of all filenames on the system drives
+All files that have doc, docx, xls, xlsx, txt, rtf, and pdf extensions
+All files from victim’s desktop
+Once it sends all the files to the remote server, the bot will go into sleep mode and wait for further commands.
+Server commands
+UNINSTALL
+UPDATE
+RESET
+UPLOAD
+Next we see a command from the server telling the bot to upload more data:
+Although the botnet uses a simple mechanism to infect and steal information, a few elements make a Travnet botnet unique:
+Using lossless data compression to steal large data files
+Stealing documents files with extensions doc, docx, xls, xlsx, txt, rtf, and pdf
+Stealing all files on the system drives
+These unique features and the presence of Chinese strings lead us to conclude that the Travnet botnet may be a targeted attack for stealing sensitive data.
+We suspect the attackers are using the initial data–computer information, IP’s–to steal sensitive data from a particular group or identity.
+We also believe that the data uploaded to malicious severs is actively monitored by the attackers.
+We have found new domains registered to carry out the attack.
+We believe that huge amounts of data have been stolen from victims whose machines were infected with Travnet.
+I would like to thank my colleagues Vikas Taneja, Anil Aphale, Arunpreet Singh, and Subrat Sarkar for their research and assistance.

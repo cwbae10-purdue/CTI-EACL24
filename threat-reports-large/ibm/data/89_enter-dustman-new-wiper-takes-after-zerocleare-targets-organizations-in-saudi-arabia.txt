@@ -1,0 +1,173 @@
+In December 2019, IBM X-Force Incident Response and Intelligence Services (IRIS) released a report on new malware from the Wiper class, used in a destructive attack in the Middle East.
+At the time, we dubbed this malware “ZeroCleare” per the program database (PDB) pathname of its binary file.
+About a month later, a ZeroCleare offshoot has been reported by the Saudi National Cybersecurity Authority (NCA) in destructive attacks targeting the same region.
+This variation of ZeroCleare was dubbed “Dustman,” also per the PDB pathname of its binary file.
+To understand the similarities between ZeroCleare and Dustman, X-Force researchers took a closer look at its code and the files being used in the attack.
+We have established that there is a strong correlation between the two and we conclude that Dustman is likely a variant within the ZeroCleare family.
+This post provides an analysis of Dustman as it compares to existing information we released on ZeroCleare.
+The Dustman malware’s components are similar to the ones used by ZeroCleare.
+This includes its code base and the use of the Turla driver, as well as an EldoS RawDisk driver to wipe the disk on infected machines and the same EldoS software license key.
+Differences between ZeroCleare and Dustman lie in the file names and a small change in the deployment flow.
+Let’s take a closer look at those aspects.
+Dustman’s two main components are:
+A Dustman.exe binary file that contains Turla Driver Loader (TDL) code and is responsible for loading the EldoS RawDisk driver.
+An agent.exe binary file, which is dropped by Dustman.exe and is identified as the wiper that uses the loaded EldoS RawDisk driver to wipe the specified disk volume.
+Alongside agent.exe, Dustman also drops two additional binaries.
+While those files are named differently, they are identical to those used by ZeroCleare:
+assistant.sys — A vulnerable VirtualBox driver used by the TDL
+elrawdsk.sys — The EldoS RawDisk driver
+These binaries are identical to the versions dropped by ZeroCleare’s assisting binary file which was named soy.exe in those attacks.
+Much of code within Dustman.exe was virtually identical to that seen within ZeroCleare’s soy.exe, and agent.exe showed strong similarities to the zeroclear.exe/ClientUpdate.exe wiper binary.
+Furthermore, the same EldoS RawDisk license key and driver was used by the Dustman wiper.
+Dustman.exe has the following PDB string:
+C:\Users\Admin\Desktop\Dustman\x64\Release\Dustman.pdb
+Figure 1: Dustman’s top-level infection flow (Source: IBM X-Force)
+While most of the components and code were pretty much the same, one notable difference we did see was that the execution order of the attack’s components has been shifted around.
+ClientUpdate.exe (zeroclear.exe) — Executes the TDL binary (via a file named Soy.exe).
+Soy.exe contains TDL code that uses a vulnerable, signed VirtualBox driver (saddrv.sys) to load the unsigned EldoS RawDisk driver (elrawdsk.sys), thereby bypassing Window’s Driver Signature Enforcement (DSE).
+Next, the file ClientUpdate.exe (zeroclear.exe) uses the loaded EldoS RawDisk driver to wipe the disk.
+Dustman.exe contains TDL code, it drops and exploits a vulnerable VirtualBox driver (assistant.sys) to load EldoS RawDisk driver (elrawdsk.sys).
+Dustman.exe drops the wiper binary, in this case named agent.exe.
+Dustman.exe identifies available drives, both fixed and removable, and executes agent.exe against each identified drive.
+The file agent.exe uses the loaded EldoS RawDisk driver to wipe the disk.
+Both Dustman.exe and ZeroCleare’s Soy.exe create mutexes, however in the ZeroCleare case, Soy.exe used the mutex name “Ptición de trabajo” and Dustman.exe uses the words, “Down With Bin Salman.”
+Repeating this political call, while the ZeroCleare wiper overwrites the target drive with the value 0x55, Dustman’s agent.exe uses the following string:
+************** Down With Saudi Kingdom, Down With Bin Salman **************.
+The following table lists the files we analyzed for this comparative report.
+The functions of the various files are mostly identical to the ones used in the ZeroCleare attacks.
+File Name
+File Category
+File Hash
+Parent
+1
+Dustman.exe
+Loader
+8afa8a59eebf43ef223be52e08fcdc67
+N/A
+2
+agent.exe
+Wiper
+f5f8160fe8468a77b6a495155c3dacea
+Dustman.exe
+3
+assistant.sys
+Tool
+eaea9ccb40c82af8f3867cd0f4dd5e9d
+Dustman.exe
+4
+elrawdsk.sys
+Tool
+993e9cb95301126debdea7dd66b9e121
+Dustman.exe
+5
+ClientUpdate.exe (x64)
+ZeroCleare Wiper
+1a69a02b0cd10b1764521fec4b7376c9
+N/A
+6
+soy.exe
+ZeroCleare Loader
+1ef610b1f9646063f96ad880aad9569d
+N/A
+7
+saddrv.sys
+ZeroCleare Tool
+eaea9ccb40c82af8f3867cd0f4dd5e9d
+soy.exe
+8
+elrawdsk.sys (x64)
+ZeroCleare Tool
+993e9cb95301126debdea7dd66b9e121
+soy.exe
+Table 1: Main file components used in Dustman and ZeroCleare attacks (Source: IBM X-Force)
+The following sections of this writing provide an analysis of Dustman’s major components, namely file 1 and 2 as listed in Table 1.
+The first file is named Dustman.exe, and it is a modified version of a major component in the ZeroCleare attacks which was named soy.exe.
+Both Dustman.exe and soy.exe contain a customized version of the TDL code base, which is a driver loader application designed for bypassing Windows x64 Driver Signature Enforcement (DSE).
+Driver Signature Enforcement is a feature that was introduced in 64-bit versions of Windows 8 and 10, which prevents the loading of drivers that have not been signed by Microsoft.
+The same does not apply to 32-bit machines.
+The TDL code found within these binaries appears to be a modified version of the source code that has been available on GitHub.
+The presence of the string “furutaka” within the PDB strings also corroborates this.
+TDL works by first loading a legitimate, Microsoft-signed, VirtualBox VBoxDrv driver.
+However, a vulnerable version of the driver is intentionally used, and TDL can then exploit this vulnerability to run kernel-level shellcode and ultimately load other unsigned drivers.
+Dustman.exe and ZeroCleare’s soy.exe both use the TDL code to ultimately load the unsigned EldoS RawDisk driver (elrawdsk.sys) which is what actually wipes the disk.
+Under the hood, Dustman.exe‘s code is highly similar to that of soy.exe, except that at the end of the code it now also drops and executes the agent.exe wiper binary.
+Dustman.exe has three resources, whereas soy.exe had just two resources:
+rcdata 1 68288 D74E624514F62B7EC204F53A4FBEE889
+rcdata 103 24576 8F8B80196B522B5EABC12AC934FD928A
+rcdata 106 116224 8985D18B39932EAB04442B986394D977
+All of the resources listed above within Dustman.exe are XOR-encrypted with the character “p”.
+Conversely, Soy.exe used “A” for XOR-encrypting its malware resources.
+Once we decrypted these resources we were able to observe the following:
+Resource 1 = EAEA9CCB40C82AF8F3867CD0F4DD5E9D
+This resource is the vulnerable VirtualBox VBoxDrv driver that was also used by ZeroCleare’s soy.exe file.
+It was also resource number 1 in the soy.exe file.
+Dustman.exe refers to this driver file as assistant.sys, whereas soy.exe used the file name saddrv.sys.
+Resource 103 = 993E9CB95301126DEBDEA7DD66B9E121
+This resource is the 64-bit elrawdsk.sys driver as also used by ZeroCleare’s soy.exe.
+It was also resource 103 in the soy.exe file.
+Resource 106 = F5F8160FE8468A77B6A495155C3DACEA
+This third resource was added in the Dustman attacks and it is the agent.exe wiper binary.
+As can be seen above, the first two resources are the same as those included in Soy.exe.
+The execution flow of Dustman.exe and Soy.exe generally follows that seen within the TDL source code referenced above and can be summarized as follows:
+Check OS version.
+Check if VirtualBox is installed by checking registry key Software\Oracle\VirtualBox.
+Decrypt and drop elrawdsk.sys from resources to current directory.
+Decrypt and load the vulnerable VirtualBox driver from resources and drop to current directory.
+Open Service Control Manager and check for the existence of and attempt to stop the following services: VBoxUSBMon, VBoxNetAdp, VBoxNetLwf, VBoxDrv.
+If VirtualBox is not installed, then create the following service using the vulnerable VirtualBox driver (assistant.sys).
+Name: VBoxDrv
+Type: Kernel Driver
+Start Type: Demand Start
+Binary Path: .\assistant.sys
+The vulnerable VirtualBox driver is then exploited by loading and executing TDL shellcode, and resulting in the loading of the elrawdsk.sys driver into the system.
+Some of the strings used within the TDL code are encrypted with the XOR key “I’m 22 and looking for fulltime job!” This same encryption method and key were also used by Soy.exe in the ZeroCleare attacks.
+As mentioned earlier, Dustman.exe‘s code is almost identical to that of soy.exe, except that at the end of the code it now additionally drops and executes agent.exe.
+To execute agent.exe, Dustman.exe does the following:
+Gets list of drives using GetLogicalDriveStringsW
+Loops through the list and takes the following actions
+Checks each drive type using GetDriveTypeW
+If drive is either a fixed or removable drive, then it executes agent.exe with that drive’s letter as a parameter.
+CreateProcessA: C:\windows\system32\cmd.exe /c agent.exe $drive E.g.
+C:\windows\system32\cmd.exe /c agent.exe C
+Once it has looped through the list, Dustman.exe exits.
+The following screen captures of the decompiled “start” functions illustrate the code similarities between Dustman.exe and Soy.exe.
+The code of both functions is nearly identical, with the main difference being the addition of the agent.exe execution code at the end of Dustman.exe:
+Figures 2 and 3: ZeroCleare Attacks — Side-by-side comparison of the decompiled start functions from Dustman.exe and Soy.exe (Source: IBM X-Force)
+The second file is named agent.exe, and we identified it as the wiper component.
+It is very similar to ZeroCleare’s ClientUpdate.exe, and shares parts of the same code.
+File name
+Type
+MD5 Hash
+Compiled
+agent.exe (x64)
+64-bit Windows binary
+f5f8160fe8468a77b6a495155c3dacea
+29 December 2019 05:56:27
+Agent.exe uses the legitimate EldoS RawDisk driver to access and wipe the hard drive directly.
+It uses the driver in the same manner as ClientUpdate.exe by opening a device handle via a unique file name using the specified logical drive (For example, C:\) followed by the EldoS RawDisk license key.
+For example:
+\\?\ElRawDisk\?
+?\(drive letter):#b4b615c28ccd059cf8ed1abf1c71fe03c0354522990af63adf3c911e2287a4b906d47d
+While it’s quite similar, unlike ClientUpdate.exe, Dustman’s Agent.exe takes one parameter, which is the drive letter of the volume to be wiped.
+The same EldoS license key is used in both samples:
+b4b615c28ccd059cf8ed1abf1c71fe03c0354522990af63adf3c911e2287a4b906d47d
+It then uses the DeviceIoControl API to overwrite the drive contents with data from a buffer.
+The buffer used to wipe the disk is:
+************** Down With Saudi Kingdom, Down With Bin Salman **************
+This differs from ClientUpdate.exe, which used a data buffer consisting of 0x55 to overwrite the drives.
+Agent.exe has the following PDB string:
+c:\users\admin\desktop\dustman\furutaka\drv\agent.plain.pdb
+Malware offshoots are not a foreign concept in the world of malicious code, where code reuse is a rampant phenomenon.
+What has been less common about Dustman is the speed in which it was already launched in attacks, although the modifications from the original ZeroCleare kill chain are rather minor.
+Can Dustman be attributed to the same threat actor groups?
+While that is a plausible scenario, IBM X-Force IRIS does note that there are some differences in the attacker’s tactics, techniques and procedures (TTPs) and intrusion points between the ZeroCleare and Dustman cases.
+Want to keep up with emerging threat intelligence?
+Join our teams on X-Force Exchange.
+For emergencies or if you suspect your organization is under attack, please call:
+X-FORCE EMERGENCY RESPONSE HOTLINE: 888-241-9812
+agent.exe assistant.sys elrawdsk.sys
+Name: VBoxDrv Type: Kernel Driver Start Type: Demand Start Binary Path: .\assistant.sys
+Down With Bin Salman
+C:\Users\Admin\Desktop\Dustman\x64\Release\Dustman.pdb C:\windows\system32\cmd.exe /c agent.exe A \\.\%s elrawdsk.sys agent.exe Software\Oracle\VirtualBox \assistant.sys I’m 22 and looking for fulltime job!
+VBoxDrv \Device VBoxUSBMon VBoxNetAdp VBoxNetLwf \assistant.sys C:\windows\system32\cmd.exe Down With Bin Salman
+{82B5234F-DF61-4638-95D5-341CAD244D19} ************** Down With Saudi Kingdom, Down With Bin Salman ************** \?

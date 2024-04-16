@@ -1,0 +1,31 @@
+At the end of last year Mr. Jake Williams from aka @MalwareJake asked a very important question about Lack of visibility during detecting APT intrusions in twitter.
+Results show us that endpoint analysis is the most important part of any research connected with APTs.
+Also, for sure endpoint forensics is critical during any Incident Response (IR) because in many cases the initial intrusion happened too far away in time so there are no relevant logs and no backups to identify the first victim and the way how attackers were moving from one computer to another.
+At least once a year we have such issues during IR activities with our customers.
+In these cases we use a very simple script that is uploaded to every Windows computer in the corporate network to collect logs, NTFS data, entries from the Windows registry and strings from the binary files to find out how exactly the attackers were moving through the network.
+It’s holiday season and it is our pleasure to share this script with you.
+We hope it will help to save a lot of time during IR and any malware/APT investigations providing the so much needed visibility into potentially infected endpoint PCs.
+Let’s start with collecting the collect file system information from the computer using the wonderful forensics tool FLS (administrative privileges required) from the open source package Sleuthkit.
+The only thing that the official Windows build lacks is Windows XP/2003 support.
+If you are planning to run the tool on Windows XP/2003 machines then you may need to recompile FLS from sources using MinGW or download our our pre-compiled version (see the end of this blog post).
+We also do not want to write the results to the computers’ hard drive to avoid wiping its unallocated space.
+So the tool is going to utilize a big (approx.
+300 MB free space for one corporate computer ) share folder that should be prepared in advance and should be accessible from all computer in the network that will execute the script:
+set data_share=”\\corp_share\data_share” net use y: %data_share% mkdir y:\%COMPUTERNAME%_report set dp=y:\%COMPUTERNAME%_report echo %date% %time% %COMPUTERNAME% > %dp%\report.log fls.exe -lpr \\.\c: >> %dp%\fls.log
+It will take several (dozens of) minutes to create the full list of filesystem entries for the computer’s system drive.
+After that we are ready to extract the inode numbers of Windows registry files that are interesting to us.
+We will use the ICAT tool from the same Sleuthkit package and the RegLookup utility to grab modification timestamps of every windows registry key.
+At the end we want to collect all the strings (using the tools either by Mr. Mark Russinovich or from http://pubs.opengroup.org/onlinepubs/9699919799/utilities/strings.html tool (our choice)) from the registry files to search for any data from the unallocated space and deleted keys:
+::Get Windows reg files findstr /i “windows\/system32\/config\/system ” %dp%\fls.log | findstr /vi “profile” | findstr /vi log | cut -f2 -d” ” | cut -f1 -d”:” > %dp%\system.reg.inode for /f “tokens=1” %%a in (%dp%\system.reg.inode) do icat \\.\c: %%a > %dp%\system.reg findstr /i “windows\/system32\/config\/software ” %dp%\fls.log | findstr /vi “profile” | findstr /vi log | cut -f2 -d” ” | cut -f1 -d”:” > %dp%\software.reg.inode for /f “tokens=1” %%a in (%dp%\software.reg.inode) do icat \\.\c: %%a > %dp%\software.reg ::Convert reg files reglookup.exe %dp%\system.reg > %dp%\system.reg.log reglookup.exe %dp%\software.reg > %dp%\\software.reg.log ::Get strings from reg files strings -afel %dp%\system.reg > %dp%\system.str.log strings -afeb %dp%\system.reg >> %dp%\system.str.log strings -afel %dp%\software.reg > %dp%\software.str.log strings -afeb %dp%\software.reg >> %dp%\software.str.log
+Once finished, we are ready to do the same with the Windows system and security eventlog files.
+To parse log the files will we use the open source tools evtxexport and evtexport by Mr. Joachim Metz
+::Get Logs findstr -i “windows\/system32\/winevt/logs/system.evtx” %dp%\fls.log | cut -f2 -d” ” | cut -f1 -d”:” > %dp%\system.evtx.inode for /f “tokens=1” %%a in (%dp%\system.evtx.inode) do icat \\.\c: %%a > %dp%\system.evtx findstr /i “windows\/system32\/winevt/logs/security.evtx” %dp%\fls.log | cut -f2 -d” ” | cut -f1 -d”:” > %dp%\security.evtx.inode for /f “tokens=1” %%a in (%dp%\security.evtx.inode) do icat \\.\c: %%a > %dp%\security.evtx strings -afeb %dp%\system.evtx > %dp%\system.evtx.str.log strings -afel %dp%\system.evtx >> %dp%\system.evtx.str.log strings -afeb %dp%\security.evtx > %dp%\security.evtx.str.log strings -afel %dp%\security.evtx >> %dp%\security.evtx.str.log ::Conv evtx evtxexport.exe %dp%\system.evtx > %dp%\system.evtx.res.log ::get evt logs findstr /i “windows\/system32\/config/SysEvent.Evt” %dp%\fls.log | cut -f2 -d” ” | cut -f1 -d”:” > %dp%\SysEvent.Evt.inode for /f “tokens=1” %%a in (%dp%\SysEvent.Evt.inode) do icat \\.\c: %%a > %dp%\SysEvent.Evt findstr /i “windows\/system32\/config/SecEvent.Evt” %dp%\fls.log | cut -f2 -d” ” | cut -f1 -d”:” > %dp%\SecEvent.Evt.inode for /f “tokens=1” %%a in (%dp%\SecEvent.Evt.inode) do icat \\.\c: %%a > %dp%\SecEvent.Evt ::get strings from evt strings -afeb %dp%\SysEvent.Evt > %dp%\SysEvent.Evt.str.log strings -afel %dp%\SysEvent.Evt >> %dp%\SysEvent.Evt.str.log strings -afeb %dp%\SecEvent.Evt > %dp%\SecEvent.Evt.str.log strings -afel %dp%\SecEvent.Evt >> %dp%\SecEvent.Evt.str.log ::Conv evt evtexport.exe %dp%\SysEvent.Evt > %dp%\SysEvent.Evt.res.log
+Actually this is it.
+All logs will be collected in our share’s folder so we may search for something interesting.
+In the latest cases with Carbanak we were looking for mentions of the malicious Powershell scripts so let’s add the following string in our version of this script:
+findstr /i “powershell” %dp%\*.log >> %dp%\report.log
+This will provide us with a complete picture of how the attackers were moving from one computer to another with exact timestamps and artifacts on NTFS, registry and logs that is critical for fast and effective IR with no lack of endpoint visibility.
+GLHF and HAPPY IR in NEW YEAR!
+PS.
+LINK 2 FILE
+SHA256 (HappyNewYear.zip) = c166d1e150db24ea27014e1d4a9eeb79f9e317ded9918a623fee8e66a010f9fa

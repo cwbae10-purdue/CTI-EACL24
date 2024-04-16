@@ -1,0 +1,80 @@
+A FortiGuard Labs Threat Analysis Report: This blog originally appeared on the enSilo website and is republished here for threat research purposes.
+enSilo was acquired by Fortinet in October 2019.
+Microsoft’s mitigation for Meltdown created a new part in the kernel that PatchGuard left unprotected, making the hooking of system calls and interrupts possible, even with HVCI enabled.
+In early January 2018, a new class of vulnerabilities, called speculative execution, were publicly disclosed.
+These vulnerabilities, dubbed Spectre and Meltdown, stem from side-channels in the CPU.
+Although these vulnerabilities reside in hardware, some mitigations can be implemented in software.
+One of the more complex mitigations, Kernel Page Table Isolation (KPTI), required significant changes to the OS kernel, and due to its importance, it was even backported to previous OS versions.
+In this blog post, we’ll describe a new method to bypass Microsoft PatchGuard by leveraging KPTI to hook to system service calls and interrupts for user-mode.
+NOTE: After developing a working PoC, we contacted the Microsoft Security Response Center to report our finding, along with feasible solutions.
+Microsoft confirmed the issue and introduced a fix in Windows 10 RS5 that followed our suggested resolution.
+Speculative execution is a trait of modern CPUs that is meant to boost performance.
+The CPU executes instructions internally out-of-order and ahead of time, and in case they shouldn’t have been executed they are discarded before the final state of the CPU is affected.
+When instructions are discarded they impact the cache, making it possible to use it as a side channel by measuring access times to memory.
+Meltdown (also referred to as Rogue Data Cache Load) works by leveraging a CPU race condition that can arise between instruction execution and privilege checking.
+It allows user-mode code to read kernel-space memory in a reliable and relatively fast manner.
+Kernel Virtual Address (KVA) Shadow is Microsoft’s implementation of KPTI for Windows.
+Basically, the process virtual address space is now split into two separate page tables – one is used while code runs in the kernel, and the second while running user-mode code.
+The kernel-mode page table maps the complete address space (both user and kernel), while the user-mode page table maps only the bare minimum of the kernel space that is needed to perform the transitions between ring 3 and ring 0.
+The code for performing these transitions resides in ntoskrnl.exe, and is placed in a specific section named KVASCODE.
+This section is mapped to the same virtual address on both user and kernel page tables, along with stack space, and a dedicated part at the end of the Kernel Processor Control Block (KPRCB) structure so sensitive kernel information won’t leak.
+The user address space is shared between the two page tables of each process.
+The minimal kernel address space mapped in the user page table is shared between different processes, and the same goes for the regular kernel address space.
+This is implemented by having different PML4 (the top-most level of the page-table) entries in different page tables point to the same PDP tables.
+To maximize performance and reduce overhead, KVAS is enabled on less privileged applications as a fully privileged processes that can gain access to kernel memory by loading drivers.
+There are additional changes to PTEs related to TLB management, but we won’t get into that as it’s nonessential to the scope of this post.
+The transitions between ring 3 and ring 0 now goes through a new step – the minimal kernel space mapped in the user address table.
+We can think about this a bit like an indirect jump having been inserted into the transition process.
+The new system call and interrupts transition code checks whether or not the user page table is used, but if so, switches to the kernel page table and resumes regular operations in the kernel.
+The reverse operation happens when transitioning back to ring 3.
+PatchGuard, or Kernel Patch Protection, is designed to protect the OS from tampering during run-time.
+Among the things it detects are the patching of code in ntoskrnl, HAL, and NDIS, as well as the modification of critical structures, such as IDT and SSDT.
+With the understanding that the first and last instructions of ring 3 to ring 0 transitions are no longer executed in the actual OS kernel, but in a separate address space, we now have a new environment which runs code in kernel-mode and may be left unprotected.
+Since the kernel isn’t mapped in the user page table, PatchGuard can’t operate during these transitions back and forth between kernel-mode and user-mode.
+To put it simply, the kernel address space in the user page table is invisible to PatchGuard, so we can intercept and manipulate service calls and interrupts in ring 0 system that triggered while in user-mode.
+Before we go further, we need to be able to access this new user page table.
+Since address translation is performed by the MMU with physical addresses, the page table of a different address space isn’t necessarily accessible in the virtual address space we are currently in.
+While running in kernel-mode, we can access physical memory.
+So we first need to find the physical address of the user page table.
+This can be done by obtaining it either from the EPROCESS.Pcb.UserDirectoryTableBase or the CR3 register in a thread’s user-mode context.
+From here onward, PTE remapping and page table traversals are straightforward and result in us having full control over the kernel address space in the user page table.
+We can allocate memory by making PTEs valid, and swap pages by changing PTEs in the PFN (Page Frame Number) field.
+In case read\write is required, we can map pages in the same manner back to the kernel page table.
+As the logic of ring 0 entry points changed, hooking them needs to change respectively.
+The pages of the KVASCODE section are mapped to the same physical pages in all page tables, both user and kernel.
+We start by changing the user page table so that KVASCODE virtual addresses will be mapped to different physical pages.
+This frees the prolog of the function for our own use.
+As it’s now redundant, there’s no need to check anymore which page table is in use.
+It will also prevent PatchGuard from detecting code changes since no actual pages of ntoskrnl will be changed.
+The next thing we need to tackle is how to actually run our code.
+The KVASCODE section size is very limited, and we can map additional pages in the user page table.
+This won’t allow us to use services provided by the OS.
+What’s possible instead is to switch to the kernel page table.
+As our code is not mapped in the user page table, we can’t jump to it directly before switching page tables.
+Simply switching page tables will simply result in returning to the original KVASCODE pages, which aren’t under our control.
+Instead, what’s possible to do at this point is to utilize ROP.
+In the pages we remapped in the user page table, we’ll create a CR3 assignment gadget with a ret instruction overlapping in both virtual address spaces.
+This way, even after changing the page table, the ret instruction will be executed.
+Following that, we’ll change the prolog to push the address of our driver and jump to the CR3 assignment gadget we created.
+VBS doesn’t render the technique impossible, but does introduce some complications.
+With HyperVisor Code Integrity (HVCI), it's no longer possible to run unsigned code in the kernel.
+HVCI prevents creating hooks dynamically, so it’s necessary to have them compiled in the driver.
+This creates a significant difficulty because it means we have to know in advance the locations of the functions in every page.
+Since these functions don’t tend to change much, and the size of the KVASCODE section doesn't really change (and includes a large cave), it's not totally impossible.
+In case offsets of data structures or values that are determined only on runtime are required, they can be stored in a data page that we'll map in the user page table in a fixed offset adjacent to the KVASCODE pages.
+Another thing to pay attention to is that on a machine with VBS enabled, the root partition reverts back to using the int 2e instruction instead of the syscall\sysenter instructions.
+The solution is quite simple – PatchGuard should check that the PFNs of PTEs for KVASCODE pages in both the kernel and user page tables are the same.
+This will ensure that the code in the minimal kernel address space matches the code in the actual kernel address space.
+Seeing that the code in the kernel is validated by PatchGuard, it ensures no tampering has occurred.
+Major architectural changes to modern operating systems introduce new complexities, and new avenues for attackers and researchers alike.
+Researchers can utilize this new method to monitor system calls made by user-mode processes without depending on virtualization and other hardware capabilities, or messing with OS security mechanisms.
+Due to KVAS performance optimization, coverage can be applied to less privileged applications that are usually are more likely to pose security risks.
+This research was conducted on Windows 10 RS4 x64.
+However, since KVAS has been backported to all supported Windows versions, it is also applicable to Windows 7, 8.1 and corresponding server versions.
+Although this post focuses on Windows, the technique we detailed is also relevant to other major operating systems that use KPTI, such as Linux and macOS.
+29/3/2018: Report to MSRC
+18/4/2018: Confirmation from MSRC
+25/4/2018: Release of Windows RS5 insider preview build 17655 with the fix as we suggested.
+This bypass technique has been patched by Microsoft.
+Please ensue you have Windows 10 Build 17655 with the fix or later.
+Find out about the FortiGuard Security Services portfolio and sign up for our weekly FortiGuard Threat Brief.

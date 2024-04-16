@@ -1,0 +1,34 @@
+The last few weeks saw new variants of the Locky ransomware that employs a new anti-sandbox technique.
+In these new variants, Locky’s loader code uses a seed parameter from its JavaScript downloader in order to decrypt embedded malicious code and execute it properly.
+For example, the downloaded Locky executable is executed by the JavaScript in the following manner:
+sample.exe 123
+Below is a screenshot of it in action:
+This new trick may pose challenges for automated Locky tracking systems that utilize sandboxing due to the following considerations:
+New Locky binaries will not execute properly without the correct parameter.
+JavaScript downloaders may fail to download if the download locations are already down.
+Currently, the in-the-wild JavaScript downloaders we have seen are using the parameters “123” and “321”.
+Of course, this can be easily changed by Locky’s perpetrators.
+So the question this raises is – how do we get around this anti-sandbox mechanism?
+First, let’s understand its decryption routine.
+The three-digit argument passed to the malware binary is first converted to an integer value:
+This is then used as the key for the loader’s decryption routine, shown below:
+Whenever the malware receives an invalid argument value, the decrypted payload will be incorrect and consequently causes the malware execution to crash.
+If Windows Error Reporting popup is enabled, the following message box appears when the application crashes (note that “Product Activation” is a fake file property for this specific sample):
+While receiving this sort of error message may be unpleasant, we can actually use it to our advantage to brute force the correct parameter (decryption key).
+Specifically, the absence of this popup during a brute force session means that the Locky executable has executed correctly!
+Furthermore, we can see in the following decryption code snippet that this malware only uses the lower 8 bits from the key by moving one HEX byte to the register “al”:
+This means that for the decimal parameter “321” (0x141 H), only 0x41 H will be used as the decryption key.
+This also means that the parameters “65” (0x41 H) and “577” (0x241 H) will work as well!
+Finally, since the key only uses one byte length, we can brute force the 256 possibilities.
+To test our theory, we put together a Python script that brute forces Locky binary without its JavaScript downloaders.
+It brute forces a 0-255 range and monitors the Windows Error popup (and at the same time suppresses it).
+If the Windows Error popup does not appear, it means that the correct key has been found and the script halts.
+In a matter of milliseconds, our script was able to identify the correct key for a Locky sample that expected the seed “123” (0x7B H):
+The key “379” (0x17B H) also works for the same sample:
+For a sample that expects a “321” parameter, it was able to identify “65” as a correct key:
+While Locky’s new anti-sandbox technique may prove effective in circumventing sandboxes, understanding its code allows us to come up with simplistic approaches to continue to support the sandboxing of new variants.
+Fortinet detects Locky binaries as W32/Locky variants and blocks Locky C&C communication via the IPS signature Locky.Botnet.
+If you want to learn more about Locky, you can catch our upcoming Virus Bulletin 2016 presentation this coming October.
+Our presentation will also detail the system we built to monitor and extract intelligence from Locky samples.
+Catch you there!
+-=Fortiguard Lion Team=-

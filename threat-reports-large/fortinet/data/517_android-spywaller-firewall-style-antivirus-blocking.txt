@@ -1,0 +1,44 @@
+Malware has been known to use new and innovative ways to evade detection by Antivirus software, a phenomenon AV analysts have often seen with PC malware.
+Not a lot of examples of the same have been seen employed by mobile malware.
+A recently discovered Android malware has brought to light one such Antivirus evasion technique with its use of "a legitimate firewall to thwart security software".
+The legitimate firewall referred to is iptables which is a well-known "administration tool for IPv4 packet filtering and NAT" on Linux.
+The malware essentially sets up rules using iptables to reject network traffic originating from a well-known Chinese Antivirus application.
+This post is a technical explanation of how the malware achieves this.
+The main malicious service used by the malware is called com.GoogleService.MainService which calls the disable360Network() function that implements the selective blocking of network traffic.
+The function first reads the list of installed applications and checks for package names corresponding to a well-known Chinese Antivirus on the list.
+The corresponding UID is then read from the ApplicationInfo class for the matching package and the Api.disableUidNetwork(.. , UID, ..) function is called.
+This function copies the binaries "iptables_armv5" and "busybox_g1" from the folder /res/raw in the package to the folder /app_bin within the package's home directory on the phone.
+Next it creates a script saved as "droidwall.sh" in the /app_bin directory and runs it as root.
+This script basically creates environment variables BUSYBOX, GREP and IPTABLES.
+Subsequently, it creates an iptables chain called 'droidwall' for all network traffic on the phone.
+The traffic for interfaces "rmnet+", "pdp+", "ppp+", "uwbr+", "wimax+", "vsnet+", "ccmni+", "usb+" is forwarded to a chain droidwall-3g and that for interfaces "tiwlan+", "wlan+", "eth+", "ra+" to a chain droidwall-wifi.
+The main UID Blocking is implemented by the filtering rule droidwall-rejet that is defined as
+The droidwall-reject rule receives traffic from the droidwall-3g and droidwall-wifi rules under the conditions defined below
+These rules mainly ensure that all traffic originating from the application with kernel user-ID as UID is dropped.
+The flow of traffic filtered by droidwall can be seen in the illustration below.
+Icons made by Freepik from www.flaticon.com is licensed by CC BY 3.0
+This unique Antivirus evasion trick is the first of its kind I've come across on Android malware so far.
+Apart from that, the malware employs various Anti-debugging tricks, a few of which are explained below.
+To begin with, the application misleadingly calls itself "Google Service" and comes in a package called "com.schemedroid.apk".
+Once the package is launched, its icon is hidden from and can no longer be seen in the applications menu.
+However, a few seconds later, it also requests Root access from the user.
+The hiding of the application icon is the only visible, suspicious activity by the malware, that also has the potential to go unnoticed in some cases.
+In reality, the seemingly benign sample hides its malicious code in a misleadingly named and encrypted file droid.png in the package assets.
+The MainActivity in the original application launches SchemeService that, in turn launches the decryption routine that XOR 'decrypts' and loads the malicious code.
+The decrypted file is saved as annotation.jar.
+A simple python script that can be used to emulate this :
+The decrypted file annotation.jar, as expected is a JAR file, containing the malicious functions.
+It is loaded using API's from Android's DexClassLoader API as seen below.
+Several other components of the malware are similarly encrypted and present in the package assets with misleading names
+logo.png : Root exploit for SDK versions 14 to 18
+help4.png : Root epxloit for other SDK versions
+splash : su binary
+setting.prop : Malware configuration file, containing C&C address and the status of various flags used by the malware receivers, among other things.
+about.png : Malware daemon
+The malicious class names are Base64 encoded to prevent string-based searches for the malicious class names.
+com.GoogleService.Common.Config decrypts, reads and updates the configuration file used by the malware.
+com.GoogleService.MainService registers several receivers to perform a variety of functions, from monitoring the victim's location, recording all incoming calls, taking pictures or recording videos using the phone camera to even monitoring when the SIM card on the phone is changed.
+More interestingly, it has the ability to steal message history from known Android messenger applications like Skype, Whatsapp, Viber, Voxer, QQ etc.
+and can even be instructed to drain phone battery or slow down operation by performing several miscellaneous operations in the background.
+Fortinet detects the sample as Android/Spywaller.A!tr.
+A detailed description can be found here.

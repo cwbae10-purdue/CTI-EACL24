@@ -1,0 +1,42 @@
+While analyzing a recent malicious Microsoft Word document, it downloaded a ransomware variant, “SAGE 2.0” (Sage Locker), which is a spin-off from CryLocker.
+This ransomware has been slowly making the rounds lately; most notably because a number of these campaigns have been seen delivering both Sage and Cerber ransomware families from the same download locations, sometimes changing between the two periodically throughout the day.
+In this blog post, I plan to analyze the distribution infrastructure for the ransomware and enumerate indicators that can be deployed for detection and prevention; however, before I get into the infrastructure, I need to briefly mention how the distribution occurs.
+I stumbled across this, not because of the ransomware itself, but due to how the Microsoft Word documents download the ransomware executable.
+Specifically, these Microsoft Word documents are delivered via e-mail, as usually happens with these types of ransomware campaigns, and launch a PowerShell process to download the actual ransomware using an evasion technique I’ve been monitoring.
+The idea behind the evasion technique is to bypass pattern or string matches that prevent process launching by using the Windows command-line escape caret character injected between your regular characters to break up commands such as “powershell” and “executionpolicy” – below is an example of this.
+If, for example, you tried to block “powershell”, it would fail because the carets have broken up the word, but it will have no impact on Microsoft Window’s actual processing of it.
+The Microsoft Word document contains an obfuscated macro that puts together this command and executes it, which subsequently downloads the ransomware file and runs it.
+Nothing mind bending but, despite its attempt to evade detection and prevention, it actually stands out more and has the reverse effect.
+Pivoting off of this path in the URL “read.php?f=0.dat”, I was able to use Palo Alto Networks AutoFocus to quickly identify 9,107 unique Microsoft Word document since December 15th, 2016 that matched this pattern in their dynamic process activity.
+From there, I was able to extract all of the download locations being used by this campaign from the identified samples.
+To determine if there were any underlying correlations at the registrant level, I pulled WHOIS data for all of the identified domains and, sure enough, another pattern begins to emerge.
+Figure 1 Connections between delivery domains.
+What you see in Figure 1 are five clusters of domains: the light green represent the Name of the person who registered the domain and the dark gray represents the persons e-mail.
+For each “person” there are multiple domains that are tied to that identity.
+With this information in hand, I used the e-mails to continue pivoting and pulled every domain these identities have registered.
+To my surprise, there were 574 total domains, with each one having between 125-160 except for the “dns at unit.org.hk” address, which has just nine.
+Now, with just a quick review of some of these domains you can get a feel for the general malicious nature of them through the abundant amount of domains masquerading as other companies, whether for phishing or evasion purposes.
+Using this new list of domains, I was able to go back through AutoFocus and further enumerate another 12,422 samples, all showing similar activity to the previous documents.
+Below are examples of each variation of their download command and unique URL path.
+“search.php”
+“read.php?f=1.dat”
+“read.php?f=404”
+“admin.php?f=0.dat”
+“admin.php?f=1.jpg”
+This next one is particularly interesting as it was serving Locky instead of Sage or Cerber.
+The first instance of this was on December 9, six days before the Sage and Cerber campaigns described in this post began.
+Another thing to note is that it uses a different PowerShell command but the actor(s) behind it still used the “read.php?f=X.dat” format during the download.
+“read.php?f=3.dat”
+Last, but not least, there was samples starting on August 6, 2016 which used yet another iteration to download the ransomware.
+This one uses BITS to transfer the file as opposed to PowerShell and drops the file with a screensaver “scr” extension instead of the previously seen executable “exe” in newer iterations.
+“admin.php?f=1.exe”
+After going over the files and scraped data from dynamic analysis reports, it’s clear the actor(s) behind this campaign have a pattern they like to follow.
+Regardless of ransomware variant, these small trails can allow us to unravel a larger infrastructure and generate more actionable data for current and, possibly, future threats.
+Palo Alto Networks customers are defended by this threat in the following ways:
+The domains used to delivery this malware and used in related attacks are blocked through Threat Prevention
+WildFire identifies files using these techniques as malicious
+AutoFocus users can identify related activity using the PowerShellCaretObfuscation and CerberSage_Distribution
+Below is a summary of indicators that can be used for detection and prevention.
+Enumerated Paths:
+Direct ransomware download URLs:
+Enumerated Domains:

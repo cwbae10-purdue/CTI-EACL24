@@ -1,0 +1,66 @@
+Double zero-day vulnerabilities fused into one.
+A mysterious sample enables attackers to execute arbitrary code with the highest privileges on intended targets
+Late in March 2018, ESET researchers identified an interesting malicious PDF sample.
+A closer look revealed that the sample exploits two previously unknown vulnerabilities: a remote-code execution vulnerability in Adobe Reader and a privilege escalation vulnerability in Microsoft Windows.
+The use of the combined vulnerabilities is extremely powerful, as it allows an attacker to execute arbitrary code with the highest possible privileges on the vulnerable target, and with only the most minimal of user interaction.
+APT groups regularly use such combinations to perform their attacks, such as in the Sednit campaign from last year.
+Once the PDF sample was discovered, ESET contacted and worked together with the Microsoft Security Response Center, Windows Defender ATP research team, and Adobe Product Security Incident Response Team as they fixed these bugs.
+Patches and advisories from Adobe and Microsoft are available here:
+APSB18-09
+CVE-2018-8120
+The affected product versions are the following:
+Acrobat DC (2018.011.20038 and earlier versions)
+Acrobat Reader DC (2018.011.20038 and earlier versions )
+Acrobat 2017 (011.30079 and earlier versions)
+Acrobat Reader DC 2017 (2017.011.30079 and earlier versions)
+Acrobat DC (Classic 2015) (2015.006.30417 and earlier versions)
+Acrobat Reader DC (Classic 2015) (2015.006.30417 and earlier versions)
+Windows 7 for 32-bit Systems Service Pack 1
+Windows 7 for x64-based Systems Service Pack 1
+Windows Server 2008 for 32-bit Systems Service Pack 2
+Windows Server 2008 for Itanium-Based Systems Service Pack 2
+Windows Server 2008 for x64-based Systems Service Pack 2
+Windows Server 2008 R2 for Itanium-Based Systems Service Pack 1
+Windows Server 2008 R2 for x64-based Systems Service Pack 1
+This blog covers technical details of the malicious sample and the vulnerabilities it exploited.
+PDF (Portable Document Format) is a file format for electronic documents and as with other popular document formats, it can be used by attackers to deliver malware to a victim’s computer.
+In order to execute their own malicious code, attackers have to find and exploit vulnerabilities in PDF viewer software.
+There are several PDF viewers; one very popular viewer is Adobe Reader.
+The Adobe Reader software implements a security feature called a sandbox, also known in the viewer as Protected Mode.
+The detailed technical description of the sandbox implementation was published on Adobe’s blog pages in four parts (Part 1, Part 2, Part 3, Part 4).
+The sandbox makes the exploitation process harder: even if code execution is achieved, the attacker still would have to bypass the sandbox’s protections in order to compromise the computer running Adobe Reader.
+Usually, sandbox bypass is achieved by exploiting a vulnerability in the operating system itself.
+This is a rare case when the attackers were able to find vulnerabilities and write exploits for the Adobe Reader software and the operating system.
+The malicious PDF sample embeds JavaScript code that controls the whole exploitation process.
+Once the PDF file is opened, the JavaScript code is executed.
+At the beginning of exploitation, the JavaScript code starts to manipulate the Button1 object.
+This object contains a specially crafted JPEG2000 image, which triggers a double-free vulnerability in Adobe Reader.
+Figure 1.
+JavaScript code that manipulates the Button1 object
+The JavaScript uses heap-spray techniques in order to corrupt internal data structures.
+After all these manipulations the attackers achieve their main goal: read and write memory access from their JavaScript code.
+Figure 2.
+JavaScript code used for reading and writing memory
+Using these two primitives, the attacker locates the memory address of the EScript.api plugin, which is the Adobe JavaScript engine.
+Using assembly instructions (ROP gadgets) from that module, the malicious JavaScript sets up a ROP chain that would lead to the execution of native shellcode.
+Figure 3.
+Malicious JavaScript that builds a ROP chain
+As the final step, the shellcode initializes a PE file embedded in the PDF and passes execution to it.
+After having exploited the Adobe Reader vulnerability, the attacker has to break the sandbox.
+This is exactly the purpose of the second exploit we are discussing.
+The root cause of this previously unknown vulnerability is located in the NtUserSetImeInfoEx function of the win32k Windows kernel component.
+Specifically, the SetImeInfoEx subroutine of NtUserSetImeInfoEx does not validate a data pointer, allowing a NULL pointer dereference.
+Figure 4.
+Disassembled SetImeInfoEx routine
+As is evident in Figure 4, the SetImeInfoEx function expects a pointer to an initialized WINDOWSTATION object as the first argument.
+The spklList could be equal to zero if the attacker creates a new window station object and assigns it to the current process in user-mode.
+Thus, by mapping the NULL page and setting a pointer to offset 0x2C, the attacker can leverage this vulnerability to write to an arbitrary address in the kernel space.
+It should be noted that since Windows 8, a user process is not allowed to map the NULL page.
+Since the attacker has arbitrary write primitive they could use different techniques, but in this case, the attacker chooses to use a technique described by Ivanlef0u and Mateusz “j00ru” Jurczyk and Gynvael Coldwin.
+The attacker sets up a call gate to Ring 0 by rewriting the Global Descriptor Table (GDT).
+To do so an attacker gets the address of the original GDT using the SGDT assembly instruction, constructs their own table and then rewrites the original one using the above-mentioned vulnerability.
+Then the exploit uses the CALL FAR instruction to perform an inter-privilege level call.
+Figure 5.
+The disassembled CALL FAR instruction
+Once the code is executed in kernel mode, the exploit replaces the token of the current process with the system token.
+Initially, ESET researchers discovered the PDF sample when it was uploaded to a public repository of malicious samples.

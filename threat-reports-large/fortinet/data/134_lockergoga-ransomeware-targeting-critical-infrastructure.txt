@@ -1,0 +1,155 @@
+A FortiGuard Labs Threat Analysis Report
+Since the discovery of Stuxnet, more and more attacks are being discovered targeting critical infrastructures.
+While some attacks are sophisticated and some are not, both can cause significant damage with far-reaching impact.
+Figure 1.
+Critical infrastructure attacks since Stuxnet discovery
+In the early age of ransomware, these attacks were not primarily used to target critical infrastructure.
+But recently, the FortiGuard Labs threat research teams have seen an increasing trend of ransomware attacks targeting critical infrastructures using attacks such as WannaCry, NotPetya, SamSam and now LockerGoga.
+This says a lot about the future of ransomware.
+Discovered early this year, LockerGoga is a new ransomware family that has been detected attacking industrial companies, severely compromising their operations.
+The file-encrypting malware’s entrance to the scene began when it was allegedly involved in attacking an engineering consulting firm based in France.
+Just two weeks ago, it made headlines again for crippling the operations of the an international manufacturer.
+And shortly thereafter, two American chemical companies were also reported to have been hit by the same malware.
+At the moment, there are very limited details as to how this malware got into their systems, but there seems to be a high possibility that the campaigns were targeted and conducted in a multi-stage scheme.
+Building on that premise, the fact that the malware’s execution needs administrative rights suggests that the attackers had previously gained high system privileges in an earlier stage of the attack.
+These uncertainties aside, in this article we will dive into what we know for certain about the characteristics of LockerGogas as a ransomware.
+We will also show that although it has some unusual techniques, it is not as advanced as one would expect from such high-profile, targeted attacks.
+The binary for this particular variant of LockerGoga does not utilize any type of security evasion or obfuscation.
+Instead, the binary only goes as far as encoding the RSA public key that is used in its later stages for file encryption.
+It’s possible to speculate that the attackers may have already been fully aware of the target companies’ security measures, and were therefore confident that their malware would not be intercepted even without any obfuscation.
+Another interesting fact is that the malware uses open-source Boost libraries for its filesystem, and inter-process communication and Crypto++ (Cryptopp) for file encryption.
+One of the advantages of using these libraries is easier development and implementation since developers only need to work with wrapper functions instead of calling individual native APIs to achieve the same goal.
+And since this utilizes a higher level of programming, statically and dynamically analysing the application without source code is more complicated than just reading a straight sequence of Windows APIs.
+However, since they do not use standard libraries, they need to be manually linked and the functions need to be physically added to the final binary, which results a larger file size than usual.
+The image below shows the execution flow of LockerGoga ransomware.
+There are three basic stages to the malware’s execution, and the malware switches between them depending on supplied parameters or the lack thereof.
+Figure 2.
+LockerGoga Execution Flow
+LockerGoga uses a master/slave model to perform file encryption.
+A “master” process communicates with “slave” processes in a unidirectional fashion.
+LockerGoga uses the Boost Interprocess Communication (IPC) library to implement this model.
+The “master” and “slave” processes communicate through a shared memory where data is written.
+The “master” process searches for files to encrypt, then writes the paths of these files in the shared memory.
+The “slave” processes then read the shared memory to get the file path and perform the file encryption.
+There is not much going on in the malware’s initial execution, which occurs by executing without parameters.
+It just drops a copy of itself in %TEMP%/tgytutrc{number}.exe and executes it with the “-m” (master) parameter.
+Adding the “-l” parameter enables the malware to write details of its execution in “C:\.log”.
+Figure 3.
+Sample LockerGoga execution log
+The “master” process is responsible for most of the malicious routines, like searching for files to encrypt, locking out Administrator users from the system, and disabling network interfaces.
+Log Off Sessions and Change Administrator Passwords
+The first thing it does is log off all other sessions except the current one.
+It does this by using the Windows native tool logoff.exe.
+Afterwards, it sets a hardcoded password for all administrator accounts.
+This is one of the confusing behaviors of this malware.
+If the malware sets a password that is practically unknown to the victims, they are essentially locked out of their systems, giving justice to its “Locker” name.
+However, this also prevents them from reading the ransom note and having the chance to pay, which defeats the idea of the campaign being monetary-driven.
+In fact, it is this unusual behaviour that started the speculations that this malware may have a different purpose.
+Figure 4.
+Procmon log for logging off other sessions and setting administrator passwords
+Figure 5.
+Sets password for Administrator accounts
+It then executes its slave processes to perform the actual file encryption, which will be discussed in more details in the Slave section below.
+It does this by executing its binary with the parameters “-i <shared memory name> -s”.
+The “-s” instructs the malware to run in “slave” mode.
+The “-i” specifies the shared memory name used for interprocess communication between the “master” and the “slaves”.
+This is implemented using Boost’s IPC library.
+To be able to communicate with the “slave” processes, the master process creates a named shared memory, “SM-tgytutrc”, with a size of 0x10000 bytes.
+It uses Boost library to initialize this memory, but internally it is using the File Mapping APIs.
+Figure 6.
+Creates a named shared memory
+As seen above, the “slave” process calls CreateFileMappingA() API, with the handle set to 0xFFFFFFFF which means it will use the Windows Page File.
+The “master” process enumerates files for encryption and puts their Base64 encoded paths into the shared memory.
+Further discussion on how the “slave” processes use the data written in the shared memory can also be found in the Slave section below.
+In order to prevent the recovery of the encrypted files from deleted files on the disk, it uses another Windows native tool: cipher.exe.
+Cipher.exe clears all the unused or free disk space on the disk drives, making sure none of the deleted files can be restored.
+After that, it disables all interfaces in the system, possibly to prevent remote connections from connecting to it.
+This is an unusual case for a ransomware when recovery of the encrypted files is less of a worry, since you have to figure out how to get inside your own system first.
+Figure 7.
+Procmon log for executing slaves, cipher.exe, netsh.exe
+The “slave” processes are responsible for the file encryption function.
+A “slave” process expects a message from the master process containing the path of the file to be encrypted.
+The slave process is executed with the following parameters:
+-i <shared memory name> -s –l
+The –l (log) is used when the master process was also executed with –l parameter.
+To map a view of the shared memory, it calls MapViewOfFileEx() API.
+Figure 8.
+Mapping a view of the shared memory
+It then waits for an incoming message from the master process.
+This message contains a base64 encoded data which when decoded, is actually the path of the file it will encrypt.
+Figure 9.
+Base64 encoded path of the file it will encrypt
+Before encrypting the file, it calls the Restart Manager and the Service Control Manager APIs to stop non-critical services that might be using the file it will encrypt.
+Figure 10.
+Restart Manager and Service Control Manager stopping services that might be using the file it will encrypt
+The file encryption function starts with getting the addresses of Native APIs that it will use to manipulate the file it will encrypt.
+These include:
+NtOpenFile
+NtClose
+NtReadFile
+NtWriteFile
+RtlInitUnicodeString
+Next, it prepares a memory space that’s 0x90 bytes in size which will be appended to the encrypted file.
+This will hold the “GOGA” structure that contains the following data:
+Figure 11.
+“GOGA” structure contains encryption information
+The marker contains the string “GOGA1510”.
+This is followed by the size of the file to be encrypted.
+The next DWORD is always 0 (more on this below).
+The next data contains the randomly generated AES key and IV, followed by the end marker “goga” and padding.
+Figure 12.
+Data initialisation in the “GOGA” structure
+It then checks whether the file with .locked extension exists.
+If it exists, it will delete the file.
+Figure 13.
+Deletes encrypted file with .locked extension
+It then renames the targeted file adding the .locked extension.
+Figure 14.
+Rename the file adding .locked extension
+The “slave” process splits the file into 0x10000 byte chunks, and then encrypts each chunk individually with Crypto++ AES algorithm using the randomly generated key and IV.
+Figure 15.
+File encryption in chunks of 0x10000 bytes
+Before the last chunk (likely to be less than 0x10000 bytes in size) is encrypted, the negated value of its crc32 is appended to the chunk, increasing the size to plus 4 bytes.
+Figure 16.
+Negated CRC32 of the last chunk is appended to the file content before encryption
+The “append_negated_crc32val” function above is then called twice.
+The second call assigns value to the “always_0” DWORD in the “GOGA” structure mentioned above.
+This means that the “always_0” member might have also contained the crc32 of the last chunk of the file content.
+However, for some reason, a -1 value is copied to the crc32 buffer by the author before the function ends, so on the second cal, a 0 (~(-1)) will be copied to the “always_0”.
+Figure 17.
+-1 is copied to the CRC32 buffer
+Lastly, the AES key and IV used to encrypt the file, which is contained in the “GOGA” structure mentioned above, are encrypted with an RSA algorithm using the following public key.
+Figure 18.
+RSA public key embedded in the malware body
+The final “GOGA” structure is then appended to the encrypted file.
+Figure 19.
+“GOGA” structure is appended to the encrypted file
+Next, the ransom note named “README-NOW.txt” is dropped into the %Desktop% of the current user.
+It contains instructions to contact some email addresses for payment instructions.
+Figure 20.
+LockerGoga ransom note
+LockerGoga is not at all exceptional in terms of sophistication, especially when compared to other ransomware families.
+However, it has a unique way of iterating through the files of the victim.
+In most cases, ransomware uses low level Windows APIs in a multi-threaded approach to encrypt all the files, which is more than adequate for its purposes.
+In this case however, it spawns a process of itself in "slave" mode to encrypt a file.
+That means for each file, a new "slave" process is executed just to encrypt the file.
+This creates much more noise, as any process spawning hundreds of child processes will be an obvious cause for suspicion, to say the least.
+Although the malware developer obviously does not bother using evasions, especially considering the binaries don't have any obfuscation, its use of a valid Digital Certificate may be the source of their confidence.
+Plus, according to reports, there is a high possibility that these attacks are targeted, which might entail a previously conducted reconnaissance stage—an integral part of any targeted attack—to check the security composure of the target before deploying the payload, and in that process they may have figured out that evasions were not needed.
+In this kind of targeted attack, it is not a matter how sophisticated or advanced the malware payload is.
+It is a matter of how they were able to get inside the company.
+Even the fastest and most advanced malware will not be able to cause any damage unless it finds its way into a system.
+So while LockerGoga has some features that give it an edge compared to other ransomware families, it’s not about that.
+It's how they were able to deliver and execute the ransomware inside the company.
+On this note, it is very important to both users and the security industry for us to continue to investigate so we can find out how what happened to patient zero.
+As this incident is still an ongoing investigation, we'll be keeping everyone posted with any developments.
+-= FortiGuard Lion Team =-
+Fortinet customers are protected by the following:
+Samples are detected by W32/Crypren.AFFL!tr.ransom signature
+FortiSandbox rates the LockerGoga’s behaviour as high risk
+IOCs Sha256 c97d9bbc80b573bdeeda3812f4d00e5183493dd0d5805e2508728f65977dda15 – W32/Crypren.AFFL!tr.ransom
+View the latest Fortinet Threat Landscape Indices for botnets, malware, and exploits.
+Learn more about FortiGuard Labs and the FortiGuard Security Services portfolio.
+Sign up for the weekly FortiGuard Threat Intelligence Briefs.
+Learn more about the FortiGuard Security Rating Service, which provides security audits and best practices.
+Read more about our Network Security Expert program, Network Security Academy program or our FortiVets program.

@@ -1,0 +1,61 @@
+If you look at the last few Internet Explorer security bulletins, you’ll notice that many of the patched vulnerabilities were use-after-frees (or UAFs) [1, 2].
+Use-after-free is still a common bug class because the task of manually identifying them, especially in large and complex codebases is a challenge.
+The reason is that their existence is a result of the combined actions from different parts of an application – namely, the parts of the code that can cause the freeing of the object and the parts of the code that use the object.
+Therefore, inferring that a UAF condition may occur by looking at the code will not always be a straightforward task.
+In this blog post, I’ll briefly explain UAFs, cite two UAF examples, and finally mention some runtime tools that can help you detect UAFs.
+Use-after-free is the result of dereferencing a pointer that points to an object that had already been freed (also called a dangling pointer):
+Two common reasons that lead to dangling pointers are:
+Not updating the reference count of a currently in-use object.
+This results in the object currently in-use to be prematurely freed.
+Not updating a pointer value once the object it points to is freed.
+Typically, exploits that leverage UAFs will attempt to reallocate the memory previously allocated to the freed object.
+This causes the dangling pointer to point to an attacker-controlled data.
+The application’s execution flow is then controlled when an attacker-controlled data obtained via the dangling pointer is used within the application.
+One prominent example of a UAF vulnerability is CVE-2012-4969 [3], a zero-day Internet Explorer vulnerability found exploited in-the-wild last September 2012.
+Consider the following simplified diagram (functions called in between are removed for brevity) which shows the use-after-free condition:
+In the above scenario, the use-after-free occurred inside the CMshtmlEd::Exec() function and the freed object was the object pointed to by the this pointer.
+The CMshtmlEd::Exec() function is reachable via the execCommand() JavaScript DOM method.
+To free the CMshtmlEd object, the attack invoked execCommand() in a way that a JavaScript event will be triggered, this allowed an attacker-controlled JavaScript event handler to be invoked in the execution path of CMshtmlEd::Exec().
+The freeing of the CMshtmlEd object occurred when the attacker-controlled JavaScript event handler invoked document.write() which in turn results in the freeing of several objects, one of which is the currently in-use CMshtmlEd object.
+When execution finally returns to CMshtmlEd::Exec(), the this pointer, which became dangling pointer, is dereferenced resulting to a use-after-free condition.
+The root cause in this particular example is an incorrect reference count of the CMshtmlEd object which allowed the attack to prematurely free it while it is in-use.
+Interestingly, while looking at this zero-day vulnerability, I realized the possibility that there might be similar use-after-free scenarios (i.e.
+an event handler can trigger a free of currently in-use objects).
+So just to find similar potentially low-hanging bugs, via ad hoc manual fuzzing, I tried different combinations of JavaScript methods and JavaScript events.
+After several unsuccessful attempts, I eventually stumbled across a similar UAF vulnerability which essentially was due to the CPasteCommand object being freed while currently in-use.
+The root cause of the bug was also due to an incorrect reference count of an object.
+We reported this vulnerability to Microsoft and it was patched last February 2013 [1].
+Another example of a use-after-free vulnerability is CVE-2012-4792 [4], another zero-day Internet Explorer vulnerability found exploited in the wild last December 2012.
+The simplified diagram below shows the use-after-free condition:
+In this particular case, a pointer to a CButton object was stored in the CDoc object; however, the reference count of the CButton object was never updated.
+Additionally, when the CButton object was later removed from the DOM tree (via the .outerText=”” construct), its pointer in the CDoc object was never updated.
+Afterwards, when the CButton object was garbage-collected, the CButton pointer stored in the CDoc object became a dangling pointer.
+The use-after-free condition was then triggered when the dangling CButton pointer stored in the CDoc object was dereferenced.
+Without the right tools in place, it would be difficult to reliability detect UAF conditions since there will be instances where the memory previously occupied by the freed object is not immediately re-occupied by another object, thereby leaving some of its contents still intact.
+In these cases, the UAF condition may only randomly manifest itself through access violations.
+Additionally, the location of access violations resulting from UAFs will probably be different from the location where the initial dereferencing of the dangling pointer occurred.
+This is because, unless the memory pointed to by the dangling pointer is released, the dereferencing of the dangling pointer will not trigger the access violation by itself; it is the use of the unexpected values obtained using (or written via) the dangling pointer which will potentially trigger the access violations.
+Fortunately, there are tools available [5] to detect different classes of memory corruption bugs including UAFs at runtime.
+Since I mostly look at closed-sourced Windows applications, the tool I mainly use is the page heap feature of Windows [6] which can be enabled using the GFlags tool [7] or the Application Verifier tool [8].
+I usually enable full page heap verification for an application before analyzing a simplified version (minimum code/fields required to trigger the vulnerability) of an exploit.
+In the case of UAFs, if full page heap verification is enabled, the memory where the freed object was stored will become inaccessible since its page protection will be set to PAGE_NOACCESS, this means that the first instruction that attempts to dereference the dangling pointer will trigger an access violation.
+As an example, when full page heap verification is enabled for Internet Explorer, a simplified version of the exploit for CVE-2012-4969 (IE CMshtmlEd UAF) will immediately trigger an access violation in CMshtmlEd::Exec(), exactly when the code that first dereferences the dangling pointer (this pointer stored in the edi register) is executed:
+(270.784): Access violation – code c0000005 (first chance)First chance exceptions are reported before any exception handling.This exception may be expected and handled.eax=00000000 ebx=0000001f ecx=05b29f30 edx=0000000c esi=00000000 edi=06070f78eip=3d0e107d esp=02d29de4 ebp=02d29df0 […]mshtml!CMshtmlEd::Exec+0x131:3d0e107d 8b7f08 mov edi,dword ptr [edi+8] ds:0023:06070f80=???????
+?
+Additionally, if debug symbols are available, the stack trace of when the object was freed can also be dumped via the “!heap -p” command in WinDbg:
+0:008> !heap -p -a edi address 06070f78 found in _DPH_HEAP_ROOT @ 141000 in free-ed allocation ( DPH_HEAP_BLOCK: VirtAddr VirtSize) 55a8418: 6070000 2000 7c927553 ntdll!RtlFreeHeap+0x000000f9 3d0602c4 mshtml!CMshtmlEd::Release+0x00000025 3d2fec6c mshtml!CHTMLEditor::DeleteCommandTarget+0x00000034 3d2fa581 mshtml!CHTMLEditor::RemoveContainer+0x00000167 3d16b500 mshtml!CHTMLEditor::Notify+0x00000026 3cf347c0 mshtml!CHTMLEditorProxy::Notify+0x00000021 3cf34682 mshtml!CDoc::NotifySelection+0x00000059 3d0f1691 mshtml!COmWindowProxy::SwitchMarkup+0x00000347 3d074d6c mshtml!CDocument::open+0x00000471 3d073c42 mshtml!CDocument::write+0x00000081 […]
+The stack trace will be useful in investigating what caused the free operation along with the information that can help you deduce the type of the freed object.
+Use-after-free bugs require a thorough code review to be identified manually especially in complex and large codebases.
+Fortunately, tools are available to assist you in catching use-after-frees and other memory corruption bugs at runtime.
+It is a good idea to enable these runtime tools when fuzzing or testing software so that memory corruption bugs will manifest themselves when they occur.
+[1] “Microsoft Security Bulletin MS13-009 – Critical : Cumulative Security Update for Internet Explorer (2792100),” [Online].
+Available: http://technet.microsoft.com/en-us/security/bulletin/MS13-009 [2] “Microsoft Security Bulletin MS13-021 – Critical : Cumulative Security Update for Internet Explorer (2809289),” [Online].
+Available: http://technet.microsoft.com/en-us/security/bulletin/MS13-021 [3] “Microsoft Security Bulletin MS12-063 – Critical : Cumulative Security Update for Internet Explorer (2744842),” [Online].
+Available: http://technet.microsoft.com/en-us/security/bulletin/MS12-063 [4] “Microsoft Security Bulletin MS13-008 – Critical : Security Update for Internet Explorer (2799329),” [Online].
+Available: http://technet.microsoft.com/en-us/security/bulletin/MS13-008 [5] “Comparison of various memory error detectors,” [Online].
+Available: https://code.google.com/p/address-sanitizer/wiki/ComparisonOfMemoryTools [6] “How to use Pageheap.exe in Windows XP, Windows 2000, and Windows Server 2003,” [Online].
+Available: http://support.microsoft.com/kb/286470 [7] “GFlags and PageHeap,” [Online].
+Available: http://msdn.microsoft.com/en-us/library/windows/hardware/ff549561(v=vs.85).aspx [8] “Application Verifier,” [Online].
+Available: http://msdn.microsoft.com/en-us/library/windows/desktop/dd371695(v=vs.85).aspx [*] “Happy New Year Analysis of CVE-2012-4792,” [Online].
+Available: http://blog.exodusintel.com/2013/01/02/happy-new-year-analysis-of-cve-2012-4792/ [*] “Undangle: Early Detection of Dangling Pointers in Use-After-Free and Double-Free Vulnerabilities,” [Online].
+Available: http://software.imdea.org/~juanca/papers/undangle_issta12_av.pdf

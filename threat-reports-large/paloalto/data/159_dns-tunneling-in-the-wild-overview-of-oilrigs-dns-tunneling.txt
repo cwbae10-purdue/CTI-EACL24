@@ -1,0 +1,36 @@
+On March 15, Unit 42 published a blog providing an overview of DNS tunneling and how malware can use DNS queries and answers to act as a command and control channel.
+To supplement this blog, we have decided to describe a collection of tools that rely on DNS tunneling used by an adversary known as OilRig.
+Unit 42 has been tracking the OilRig threat group since early 2016, which has resulted in over a dozen blogs describing various attacks carried out by this adversary.
+We have been covering the various tools OilRig uses in their operations, many of which rely on DNS tunneling to communicate between infected hosts and their command and control (C2) server.
+The repeated use of DNS tunneling clearly represents one of their preferred communication methods; therefore, we chose to publish an overview of OilRig’s tools that use various DNS tunneling protocols.
+A high-level analysis of the tunneling protocols used by these tools suggests:
+All subdomains contain a randomly generated value to avoid the DNS query resulting in a cached response
+Most rely on an initial handshake to obtain a unique system identifier
+Most rely on hardcoded IP addresses within the DNS answers to start and stop data transfer
+Data upload includes a sequence number that allows the C2 to reconstruct the uploaded data in the correct order
+Depending on the tool, A, AAAA, and TXT query types have been used by OilRig for tunneling
+All of the DNS tunneling protocols will generate a significant number of DNS queries
+This blog will dive deep into the DNS tunneling protocols used by OilRig’s tools Helminth, ISMAgent, ALMACommunicator, BONDUPDATER, and QUADAGENT.
+Each of these tools use DNS queries and the answers to these queries to communicate back and forth with its C2 server.
+Not only will this blog discuss the structure of the queries and the responses, but it will also show these protocols in action with screenshots of Wireshark displaying how the tunnels would look within a packet capture.
+OilRig delivered Trojans that use DNS tunneling for command and control in attacks since at least May 2016.
+Since May 2016, the threat group has introduced new tools using different tunneling protocols to their tool set.
+Figure 1 shows a timeline of when OilRig first used each of the 5 tools and their sub-variants in attacks, based on our visibility.
+Figure 1.
+Timeline of OilRig introducing DNS tunneling tools
+Regardless of the tool, all of the DNS tunneling protocols use DNS queries to resolve specially crafted subdomains to transmit data to the C2 and the answers to these queries to receive data from the C2.
+Therefore, the protocols must abide by the DNS protocol, so the specially crafted subdomains must have labels (portions of the subdomain separated by periods) must start and end with a letter or digit, contain letters, digits and hyphens and be less than 63 characters in length.
+Also, the entire domain queried, which includes the C2 domain and the specially crafted subdomain cannot exceed 253 characters.
+The protocol used by each of the five tools to communicate with its C2 via DNS tunneling differ in many ways.
+First, the structure of the subdomains queried that the tools use to transmit information to the C2 differ.
+Next, the structure of the data received by the Trojans from the C2 in the answers to the DNS queries differ as well.
+The structure of the subdomains used to transmit data differ dramatically, both in the amount of data included and the encoding used to represent the data.
+The two encoding methods used by these tools to transmit data within the subdomains included base16 and base64 encoded data.
+The encoding method greatly impacts the amount of data the tool is able to transmit in the subdomain of each query, as base16 requires 2 ASCII characters to represent each byte of data, so each character byte within the subdomain can transmit half (.5) a byte of data.
+Compare this with the use of base64 to encode the data, in which each character of base64 encoded data in the subdomain represents 6-bits (.75 bytes) of the data.
+This makes the base64 encoding more effective from a transmission throughput perspective.
+The DNS query type used by the Trojan for its tunnel greatly effects the amount of data that the C2 can transmit to the Trojan for each query.
+For instance, the tools that issue DNS A queries transmit data via IPv4 addresses within the answers, so the C2 is only able to transmit 4-bytes per query, whereas tools using AAAA queries can transmit 16-bytes within the IPv6 answer.
+Table 1 shows the tools and their variants covered in this blog with a focus on the number of bytes of data the C2 can provide per query, the amount of characters used in the specially crafted subdomain, the corresponding amount of data bytes sent per query and the encoding format used to transmit the data.
+The table below shows that QUADAGENT can transmit the most amount of data per query, as it has 60 characters within its subdomain to transmit base64 encoded data, meaning each query can transmit 45 (60*.75 = 45) bytes of data.
+The table also shows that the updated version of BONDUPDATER can download the most amount of bytes per query, as the C2 can provide 186.75 bytes of data thanks to the 255-byte maximum size for TXT queries and the C2 providing base64 encoded data after a 6 character sequence number ((255-6)*.75 = 186.75), which will be discussed later in this blog.

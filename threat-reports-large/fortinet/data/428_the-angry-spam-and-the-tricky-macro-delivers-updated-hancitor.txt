@@ -1,0 +1,110 @@
+Hancitor is one of the better-known malware downloaders due to its numerous SPAM runs and evolving delivery technique.
+It reminds us of Upatre, which gained notoriety status over the past two years but has now died down, possibly due to the takedowns of its major payloads.
+In the case of Hancitor, it still seen as a favourite carrier of very much active malware families such as Pony and Vawtrak.
+Just recently, we found a new spam campaign of Hancitor with some notable developments that may have been in the previous variants, but were not discussed in any other reports.
+This article revolves around the macro tricks it uses to stall analysts, and new commands that it utilizes to better persist on infected devices.
+Finally, this variant also contains an interesting piece of comment by the malware author written in the macro code, which made us feel obliged to take a closer look in the first place.
+The Angry Spam
+The new spam run involves a fake complaint mail from an upset sender regarding an unauthorized credit card charge.
+As usual, it contains a document with an embedded macro as an attachment.
+Fig.1 Complaint mail with an attached document
+The Tricky Macro
+Because most malware vectors are comprised of a SPAM-Macro combination, what happens next should be obvious.
+The document starts with a typical macro malware message with instructions that the macro must be enabled in order to access what is claimed to be a protected document.
+To make the story more believable, the document has actually been protected by a password, which restricts any editing or formatting to the document – an attempt to appear more convincing.
+Fig.2 Document was protected to be more convincing
+There have been several developments of document macros being used by Hancitor, which separates it from previous variants used by other malware families.
+Garbage codes in the form of comments are included, to confuse both analysts and signature-based detections.
+The author also added some interesting comments directed towards Fortinet.
+Although the reminder is unnecessary, it’s always nice to be recognized (*wink*.)
+Fig.3 Macro code uses garbage comments for confusion
+In addition, it also has a unique way of executing its payload.
+Unlike exploited documents, macros do not have explicit operators to directly execute shellcodes using VBA operators.
+To achieve this, macros used by Hancitor import Windows API’s to write shellcode to an allocated memory space and then execute them using API’s with callback functions.
+Previous variants used CallWindowProc and EnumResourceTypesA API’s to execute the shellcodes.
+This variant uses the EnumDateFormatsW API to achieve the same result.
+Fig.4 Macro code uses Windows API’s to execute shellcode
+Notable attempts were also used to hide the shellcode.
+Hiding strings and codes inside form controls have become pretty common with macro malware.
+The reason behind this technique may be due to the fact that some anti-virus engines only dump the macro code, but not the forms.
+In addition, this variant has also added some additional measures to complicate visually finding the shellcode.
+Usually, the codes are written in the control’s properties where text can be written (e.g.
+labels, captions, etc.
+).
+Fig.5 Macro obtains the shellcode from ControlTipText property
+At first inspection, the form only contains two elements – postpaid and sottishness.
+However, based on the macro code, the string should be in the ControlTip property of the lancers control, which is a child control of the sottishness frame.
+Fig.6 Form controls list does not showing “lancer” control
+Frames are used to group controls, which are generally useful for building form layouts.
+Apparently, if a control is inside a frame, it will not be included in the list of the form’s children.
+It will be included in the frame’s list.
+The form and the frame had to be resized to see the lancer toggle button control.
+Fig.7 lancers control appears when the frame control is selected
+Finding the shellcode is also a bit tricky.
+At this point, based on the macro code, we already know that the encrypted shellcode is in the ControlTipText property of the lancer toggle button.
+However, interestingly, at first glance it may seem to be empty.
+But judging by the position of the cursor in the image below, we know that it has data in it.
+It is just, for some reason, invisible or in some kind of a text with a white font, which should not be possible since these are just properties and formatting should not be allowed.
+Fig.8 Invisible text inside ControlTipText property
+To check the text inside, the entire text must be copied and pasted somewhere.
+Fig.9 Copy-pasted text from the control property
+This text, when decrypted, is the shellcode that will be used as the callback function to EnumDateFormatsW.
+Fig.10 Executes the shellcode as a callback function
+So how was the text invisible?
+It’s a very neat trick.
+We suspected that it is somehow related to the length of the text.
+So we tested different text lengths until we got the same result.
+The magic number is 1247h.
+If the length of the text is greater than this value, the text becomes invisible.
+This also works with other properties that accept text (e.g.
+label, captions, etc.)
+Fig.11 Text becomes invisible with length greater than 0x1247
+Hancitor
+To search for the encrypted Hancitor binary, it uses a technique called egg hunting wherein a string marker is searched in the memory.
+This variant looks for the marker “STARFALL” in Winword’s memory.
+After decrypting the binary, it will be injected to a newly created Explorer process.
+Fig.12 Shellcode searches for the marker to decrypt Hancitor
+Similar to the previous Hancitor variants, to notify its C&C of a successful infection the following information is sent:
+GUID - Unique ID generated from result of GetAdaptersAddress API
+BUILD - Malware build version (also used as key for config decryption/encryption)
+INFO - Computer and account names
+IP - Infected user’s public address
+TYPE - Harcoded value of "1"
+WIN - Windows version and the architecture of the infected machine
+It then waits for commands from the C&C, which were just plain strings in previous variants.
+For this variant, however, they are already encrypted using a custom algorithm.
+Fig.13 A communication between Hancitor and the infected user
+We noticed that some commands have been added and removed.
+Fig.14 Hancitor command switch
+The command ‘b’, which was unimplemented in previous variants, is now fully functional.
+Fig.15 ‘b’ command function
+Commands ‘l’ and the newly added ‘e’ are basically the same in that they both download a DLL and execute it in the memory without writing it to a physical file.
+Their only difference is that the latter receives an argument.
+We also noticed a function that loads the DLL using a new thread, but for some reason, it is currently unimplemented.
+Fig.16 Function for loading the DLL
+The “c” command basically updates the C&C list of Hancitor.
+This list is received as an encrypted data, and written to a file as .cfg.
+Fig.17 Function for updating the C&C list from the written config file
+Conclusion
+This article demonstrates that Hancitor is actively evolving.
+By using simple but effective visual tricks and obfuscations, it makes reverse engineering complicated.
+And with its development on fileless loading for both itself and its payloads, it decreases the effectiveness of file signature-based detections.
+-= FortiGuard Lion Team =-
+IOC
+Sha256:
+5a17ac4bcda4f74db411190791a104670ddf871f93de245aaaf77ea50362b745 - W97M/Hancitor.A!tr
+5d077b1341a6472f02aac89488976d4395a91ae4f23657b0344da74f4a560c8d - W97M/Hancitor.A!tr
+915aee146b74ebdcb6977376ea8c7718a53b73e1771261035790e8d3e33668c3 - W32/Vawtrak.HCT!tr
+CC:
+hxxp://mohaneventuse.com/ls5/gate.php
+hxxp://sinresguref.ru/ls5/gate.php
+hxxp://kinuginthat.ru/ls5/gate.php
+hxxp://mycaltherab.com/ls5/gate.php
+hxxp://ranrighwiket.ru/ls5/gate.php
+hxxp://harworigo.ru/ls5/gate.ph
+hxxp://gunomehad.com/ls5/gate.php
+hxxp://wamuchperhedt.ru/ls5/gate.php
+hxxp://howevengrathan.ru/ls5/gate.php
+hxxp://tinheranter.com/ls5/gate.php
+hxxp://ningwitjohnno.ru/ls5/gate.php
+hxxp://tycahatit.ru/ls5/gate.php

@@ -1,0 +1,57 @@
+While analyzing the components of Duqu, we discovered an interesting anomaly in the main component that is responsible for its business logics, the Payload DLL.
+We would like to share our findings and ask for help identifying the code.
+At first glance, the Payload DLL looks like a regular Windows PE DLL file compiled with Microsoft Visual Studio 2008 (linker version 9.0).
+The entry point code is absolutely standard, and there is one function exported by ordinal number 1 that also looks like MSVC++.
+This function is called from the PNF DLL and it is actually the “main” function that implements all the logics of contacting C&C servers, receiving additional payload modules and executing them.
+The most interesting is how this logic was programmed and what tools were used.
+The code section of the Payload DLL is common for a binary that was made from several pieces of code.
+It consists of “slices” of code that may have been initially compiled in separate object files before they were linked in a single DLL.
+Most of them can be found in any C++ program, like the Standard Template Library (STL) functions, run-time library functions and user-written code, except the biggest slice that contains most of C&C interaction code.
+Layout of the code section of the Payload DLL file
+This slice is different from others, because it was not compiled from C++ sources.
+It contains no references to any standard or user-written C++ functions, but is definitely object-oriented.
+We call it the Duqu Framework.
+The code that implements the Duqu Framework has several distinctive properties:
+Everything is wrapped into objects
+Function table is placed directly into the class instance and can be modified after construction
+There is no distinction between utility classes (linked lists, hashes) and user-written code
+Objects communicate using method calls, deferred execution queues and event-driven callbacks
+There are no references to run-time library functions, native Windows API is used instead
+All objects are instances of some class, we identified 60 classes.
+Each object is constructed with a “constructor” function that allocates memory, fills in the function table and initializes members.
+Constructor function for the linked list class.
+The layout of each object depends on its class.
+Some classes appear to have binary compatible function tables but there is no indication that they have any common parent classes (like in other OO languages).
+Furthermore, the location of the function table is not fixed: some classes have it at offset 0 of the instance, but some does not.
+Layout of the linked list object.
+First 10 fields are pointers to member functions.
+Objects are destroyed by corresponding “destructor” functions.
+These functions usually destroy all objects referenced by member fields and free any memory used.
+Member functions can be referenced by the object’s function table (like “virtual” functions in C++) or they can be called directly.
+In most object-oriented languages, member functions receive the “this” parameter that references the instance of the object, and there is a calling convention that defines the location of the parameter – either in a register, or in stack.
+This is not the case for the Duqu Framework classes – they can receive “this” parameter in any register or in stack.
+Member function of the linked list, receives “this” parameter on stack
+The layout and implementation of objects in the Duqu Framework is definitely not native to C++ that was used to program the rest of the Trojan.
+There is an even more interesting feature of the framework that is used extensively throughout the whole code: it is event driven.
+There are special objects that implement the event-driven model:
+Event objects, based on native Windows API handles
+Thread context objects that hold lists of events and deferred execution queues
+Callback objects that are linked to events
+Event monitors, created by each thread context for monitoring events and executing callback objects
+Thread context storage manages the list of active threads and provides access to per-thread context objects
+This event-driven model resembles Objective C and its message passing features, but the code does not have any direct references to the language, neither does it look like compiled with known Objective C compilers.
+Event-driven model of the Duqu Framework
+Every thread context object can start a “main loop” that looks for and processes new items in the lists.
+Most of the Duqu code follow the same principle: create an object, bind several callbacks to internal or external events and return.
+Callback handlers are then executed by the event monitor object that is created within each thread context.
+Here is an example pseudocode for a socket object:
+The Duqu Framework appears to have been written in an unknown programming language.
+Unlike the rest of the Duqu body, it’s not C++ and it’s not compiled with Microsoft’s Visual C++ 2008.
+The highly event driven architecture points to code which was designed to be used in pretty much any kind of conditions, including asynchronous commutations.
+Given the size of the Duqu project, it is possible that another team was responsible for the framework than the team which created the drivers and wrote the system infection and exploits.
+The mysterious programming language is definitively NOT C++, Objective C, Java, Python, Ada, Lua and many other languages we have checked.
+Compared to Stuxnet (entirely written in MSVC++), this is one of the defining particularities of the Duqu framework.
+After having performed countless hours of analysis, we are 100% confident that the Duqu Framework was not programmed with Visual C++.
+It is possible that its authors used an in-house framework to generate intermediary C code, or they used another completely different programming language.
+We would like to make an appeal to the programming community and ask anyone who recognizes the framework, toolkit or the programming language that can generate similar code constructions, to contact us or drop us a comment in this blogpost.
+We are confident that with your help we can solve this deep mystery in the Duqu story.

@@ -1,0 +1,72 @@
+This is the first installment in a three-part series on the AVLay RAT discovered by IBM X-Force.
+Part two expands on how the researchers reverse engineered the malware, and part three demonstrates how X-Force gained control of AVLay and fully simulated the overlay attack in its labs.
+The malware reversed in this blog was discovered by X-Force researcher Andre Piva who leads threat research of Brazilian malware.
+It was initially described in this blog post by X-Force’s Chen Nahman and Andre Piva.
+When it comes to financial cybercrime in Brazil, attackers targeting local users are known to use region-specific tactics to commit online banking fraud.
+For example, IBM X-Force usually sees the use of Delphi-based malware to execute what’s known as overlay attacks — a popular malware-enabled fraud scheme.
+These attacks usually include displaying malicious images or browser windows on the victim’s screen while using a remote access Trojan (RAT) to simultaneously gain control of the device behind the scenes.
+The goal of this combination is to siphon money out of victim accounts, making fraudulent transactions appear to originate from trusted devices.
+In recent investigations of malware campaigns in Brazil, X-Force researchers discovered a new Trojan variant that uses the overlay-remote access Trojan combination.
+Our team named this code AVLay, since it uses a well-documented tactic, mixing Dynamic Link Library (DLL) hijacking with a legitimate executable borrowed from various antivirus programs.
+Using this malware, attackers in the region target financial entities, but their interest also extends to cryptocurrency platforms, seeing how popular digital coins are in Brazil.
+Our team ran into AVLay when we detected it in campaigns targeting Brazilian banks.
+At first, our malware analysis team noticed that AVLay is comprised of two parts — a legitimate executable and a malicious DLL — that both reside in the same folder.
+When any executable file runs, it loads DLLs specified in its imports table.
+Since the malicious DLL is named as one of the DLLs in the import table of the legitimate executable, it is loaded into the process.
+An initial glimpse into AVLay may be gained by opening the malicious DLL in the IDA Pro disassembler and applying Delphi F.L.I.R.T.
+signatures.
+This method will reveal that many of the functions are recognized as part of the Visual Component Library (VCL) framework, indicating that the malware is written in Delphi.
+Writing malware in Delphi is an extremely popular trend in Brazil and common to most variants in the region, as many malicious programs are written by amateurs, sold commercially or reused by others.
+Figure 1: Malicious DLL’s Delphi F.L.I.R.T signatures shown via IDA Pro (Source: IBM Security)
+Once we determined that we were looking at Delphi code, we could use relevant tools to further examine it.
+Interactive Delphi Reconstructor (IDR) is a tool for decompiling Delphi executables.
+After identifying the underlying Delphi libraries and functions, we used them to pick out the actual malware’s code and analyze it.
+Another useful feature of IDR is the ability to generate an IDC script and load it into IDA Pro, transferring all the resolved names of Delphi functions and objects.
+IDC is an internal scripting language that is used to interact with IDA programmatically.
+Many objects in Delphi have event handlers.
+Event handlers are functions that are executed after the occurrence of a certain event, such as the creation of an object.
+By going to the Forms section in the IDR tool, we could see all the forms and objects the malware uses and their corresponding event handlers.
+This information was valuable in our malware analysis and provided further insight into AVLay’s inner workings.
+Combining the power of IDR with IDA Pro to perform this task reduced the complexity of reverse engineering our malicious executable.
+Figure 2: View of the main form of the malware in IDR (Source: IBM Security)
+In the image below, we see all the Delphi objects that are present on the main form.
+There are several timers, two sockets, an HTTP client and other components.
+In the left pane, we can see the objects and the event handler functions related to each object.
+The first line shows the name of the OnCreate event handler for the main form, which is the function being executed as soon as the main form is created.
+In many cases, by simply browsing through the forms in IDR, we can reveal images of fake forms presented to the victim during overlay attacks.
+In the example below, we read text from the fake pop-ups shown to victims and inferred the social engineering ploy.
+The attacker advises the victim that their device has to be reactivated for online banking.
+The victim is taken through a “test transaction” and two-factor authorization (2FA).
+The text tricks the victim by saying that the transaction will not be processed, which is a lie.
+The victim is led to unknowingly authorize the fraudulent transaction.
+Figure 3: One of the forms used by the malware as part of the overlay attack (Source: IBM Security)
+Malware authors make an effort to hide the strings their malware uses with the intention of complicating detection and analysis.
+One of the ways to do that is by encrypting the strings.
+Decrypting them, therefore, helps dissect the malware and reveal its inner workings.
+As we set on the path to decrypt AVLay’s strings, we explored some of the event handler functions in IDR and IDA and could see that many hexadecimal strings were followed by the same function.
+This implied that these strings were encrypted, and that the function that followed would most likely decrypt them.
+Figure 4: Encrypted strings followed by the decryption function in IDR (Source: IBM Security)
+Decryption can be an obstacle in the malware analysis process, and one way to approach it is to analyze the decryption function, understand the decryption process and examine the algorithms used by the malware’s author.
+In this case, we decided to set a breakpoint on the decryption function and let the program run.
+Since the decryption function is called extensively throughout the program, we reasoned the breakpoint should be hit within a few moments.
+Then, we followed the execution flow with a debugger and analyzed the routines or application programming interfaces (APIs) called.
+In the image below, we can see the decryption function viewed in IDA Pro, after applying the IDC script taken from IDR.
+Figure 5: The string decryption function in IDA Pro (Source: IBM Security)
+There are a few recognized crypto-related functions that start with TRwCSP.
+A quick Google search implies that these functions are part of a commercial package that can be used by Delphi developers called RAPware.
+This package is a wrapper library that calls Windows APIs under the hood.
+From a quick view of the code, we could see that the TRwCSP_DeriveKey function accepts some parameters — most importantly, the constant 0x660F (address 0x89CC9A) and a long ASCII string (address 0x89CCB6).
+When digging further into the TRwCSP_DeriveKey function we found another constant, 0x8004, and three Windows APIs that were called under the hood:
+CryptCreateHash
+CryptHashData
+CryptDeriveKey
+This indicates that TRwCSP_DeriveKey is a wrapper function that’s responsible for hashing the initial key and generating a cryptographic session key through Windows APIs.
+Upon looking in the MSDN documentation for those functions and their parameters, we could see that CryptDeriveKet accepts a parameter called Algid.
+By looking at the ALG_ID enum definition, we could see that 0x660F stands for CALG_AES_192 and 0x8004 stands for CALG_SHA1.
+It then became clearer that the long ASCII string is the initial encryption key, and that it is hashed with SHA1 and used to derive a 192-bit key for the AES encryption algorithm.
+The last step here was to write an IDA Python script to decrypt all the strings.
+Decrypting strings provides insight into what the code is doing.
+Below is an example of some of the decrypted strings in our sample (internal numeric values and fake messages to the victim):
+Figure 6: Some of the decrypted strings in IDA, added as comments to the decryption function calls (Source: IBM Security)
+In part two of this series, we will explain what triggers AVLay, its server commands, command-and-control (C&C) communications and main fraud-enabling modules that help AVLay control infected devices.
+Pavel is a malware researcher for IBM Security's Trusteer's group.

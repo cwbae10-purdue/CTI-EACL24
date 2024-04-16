@@ -1,0 +1,99 @@
+Last month, iSightPartners revealed a Microsoft Office zero-day leveraged in a targeted attack by a Russian cyber espionage team.
+This vulnerability has been patched in Microsoft bulletin MS15-070.
+CVE-2015-2424 was assigned to this vulnerability.
+In this blog post, we will discuss the nature of the vulnerability to give some insights to other researchers for understanding and detecting this specific Word vulnerability.
+We first extracted the embedded objects inside the exploit document (sha1: e7f7f6caaede6cc29c2e7e4888019f2d1be37cef) using RTFScan from OfficeMalScanner which provides us a list of embedded OLE objects shown in Table 1.
+Some evidence shows that the exploit was designed to execute on a specific workstation, probably targeting the machine that has no DEP/ASLR protection enabled, with a hardcoded address, 0x7c809ae1, specified in one of the OLE objects.
+Nevertheless, this particular RTF document used in the attack cannot be exploited reliably in our test environments.
+Extracted OLE file name
+Purpose
+OLE_DOCUMENT__9e5fbd__1.bin
+Contain shellcode used to trigger the payload
+OLE_DOCUMENT__9e5fbd__2.bin
+Contain unintended Control.TaskSymbol.1 used by the exploit
+OLE_DOCUMENT__9e5fbd__3.bin
+Contain Forms.Image.1 that is possibly used in the process of the exploitation
+OLE_DOCUMENT__9e5fbd__4.bin
+Contain Msxml2.SAXXMLReader.5.0 with truncated data.
+Its purpose is still unclear
+Table 1: Embedded OLE objects inside the RTF exploit document
+Here we will focus on the second embedded OLE document.
+An OLE document is also known as Structure Storage Compound File or Compound File binary format.
+Simply put, it uses the file hierarchy structure similar to the FAT file system so that the data streams in the compound file will be stored to FAT sectors or Mini FAT sectors depending on the data stream size.
+Generally, the directory sector is always located in the sector after the FAT sector allocator, which is used to store the sector number of the next sector in the chain.
+In this particular sample, the FAT sector allocator can be found at sector #0 while the directory sector is located at sector #1, which is also defined in the Compound File header.
+Figure 1 illustrates the Compound File header as well as the FAT sector allocator viewed under OffVis.
+Figure 1: Offset to Compound File header and FAT sector allocator at sector #0
+Basically, a directory sector contains an array of directory entry structures that is used to contain information about the stream and storage objects in the compound file.
+This sample contains two directory entries stored in 2 different sectors that will result in confusion to some OLE parsers while traversing the array of directory entries.
+For example, we can see the sample trying to chain the first directory entry to the second directory entry at sector #5 that confused OffVis as shown in Figure 1.
+Figure 2: Chained directory entry confused OffVis
+In Figure 2, we can see that there are one storage object and three stream objects; some of the objects are commonly found in legitimate DOC files.
+However, we cannot tell the other stream objects using OffVis because of the chained directory entry.
+As mentioned in the previous section, the second directory entry can be found in sector #5 where we can also find other stream objects.
+Table 2 shows the summary of the storage and stream objects stored in the compound file.
+Please note that the description for these objects can be found in the Word Binary file format specification:
+Object type
+Object name
+Description
+Root storage object
+Root Entry
+A parent node for other storage objects and stream objects
+Stream object
+PRINT
+Contains an MFPF structure followed immediately by a Metafile data
+Stream object
+CompObj
+Contains the ProgID description of the compound file
+Stream object
+ObjInfo
+Contains an ODT structure which specifies information about the embedded OLE object
+Stream object
+OCXDATA
+Contains the data of the OLE control
+Table 2: Stream objects defined in the compound file
+We cut out some of the irrelevant stream objects and restructured the directory entry to better illustrate the objects that we are interested in under OffVis.
+We did that by removing the PRINT stream object as well as the second directory entry while keeping the other stream objects.
+As a result, one directory sector (512 bytes) will be enough to hold all the objects' information.
+See Figure 5 to find out the differences between the original and modified compound file.
+When we look into the resulting compound file using OffVis again, we are able to determine the OCXDATA stream that actually consists of the CLSID of the TaskSymbol control, {44f9a03b-a3ec-4f3b-9364-08e0007f21df}.
+While the ObjInfo stream can be described by the ODT structure, the first field in the ODT structure is a 16-bit value, 0xB200, that represents the information about the OLE; this value can be described by the ODTPersist1 structure.
+This ODTPersist1 data specifies that the compound file is an OLE control and its data is referenced in OCXDATA.
+In short, the ObjInfo and OCXDATA stream objects play an important role in triggering the vulnerability as they could allow one to load any ActiveX control.
+Now that all the irrelevant data had been discarded, we will need to convert the resulted compound file binary to a hexadecimal string and place it into an RTF file using a simple Python script shown below.
+Later we will open the final RTF file with WINWORD version 12.0.6720.5000.
+>>> data = open('handcraft-poc.doc', 'rb').read()
+>>> i = 0
+>>> while (1):
+... try:
+... _causedexcept = data.encode('hex')[i]
+... print data.encode('hex')[i:i+200]
+... i += 200
+... except:
+... break
+Figure 3: OCXDATA stream contains Control.TaskSymbol.1 CLSID
+Figure 4: Handcrafted RTF file with relevant stream objects that will trigger the vulnerability
+Figure 5: Comparing between the original OLE document and the handcrafted OLE document
+We will attach WinDBG to WINWORD with breakpoint set in Ole32!CoCreateInstance API to demonstrate the initialization of Control.TaskSymbol.1.
+Our breakpoint is hit with the expected TaskSymbol CLSID upon loading the resulted RTF file as shown in Figure 6.
+There are some DLLs being loaded before Ole32!CoCreateInstance is hit.
+If you are not aware, %SYSTEM32%\mmcndmgr.dll is associated with Control.TaskSymbol.1.
+This is why it also gets loaded before TaskSymbol initialization.
+This implied that a specially crafted RTF file can be used to load a desired COM associated with its corresponding DLL.
+This technique is not something new but it was commonly used by exploit authors to circumvent ASLR mitigation, some of which (like MSCOMCTL.OCX and OTKLOADR.DLL) have been patched by Microsoft.
+However, in this particular case, it was used to trigger a remote code execution exploit by attackers.
+This type of attack vector has been well covered by Haifei Li from McAfee Labs in the recent BlackHat USA 2015
+Figure 6: TaskSymbol COM initialization
+While exploring other ActiveX objects, we realized that there is another interesting component that could potentially trigger the same vulnerability.
+The ActiveX object with ProgID MMC.IconControl.1 that we found has the same mmcndmgr.dll associated to it as shown in Figure 7.
+Based on our experiment, we can pretty confidently confirm the same vulnerability was triggered when loading MMC.IconControl.1 on unpatched Office 2010 and above.
+We did not verify why the same vulnerability did not affect Office 2007 but the good news is that this issue has been patched by Microsoft as we tested the latest, at the time of writing this blog post, Microsoft bulletin MS15-081 for Office.
+Figure 7: MMC IconControl class linked with %SYSTEM32%\mmcndmgr.dll
+We discovered the similar faulty code path between CVE-2015-2424 and CVE-2015-1612 when trying to understand the root problem of the vulnerability.
+Both of them try to load the TaskSymbol control using DOC files.
+After some further research, we found out that CVE-2015-1612 attempts to load the ActiveX control using the Open XML format.
+Perhaps this is the reason why they deserved different CVE numbers.
+We urge Microsoft Office users to update their Office application to the latest version in order to prevent themselves from falling victim to attackers manipulating these vulnerabilities.
+Meanwhile, as always, we already released generic detections in our AV (MSWord/CVE_2015_2424!exploit & MSWord/CVE_2015_1642!exploit) and IPS (MS.Office.RTF.Control.TaskSymbol.Remote.Code.Execution) engine to protect our customers from these threats.
+Special thanks to Peixue Li for his valuable input and Tien Phan for contributing the IPS signature
+-= FortiGuard Lion Team =-

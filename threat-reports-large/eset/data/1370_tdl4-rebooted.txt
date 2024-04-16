@@ -1,0 +1,38 @@
+ESET researchers have noticed a new phase in the evolution of the TDL4 botnet.
+ESET researchers have been tracking the TDL4 botnet for a long time, and now we have noticed a new phase in its evolution.
+Based on the analysis of its components we can say that some of those components have been rewritten from scratch (kernel-mode driver, user-mode payload) while some (specifically, some bootkit components) remain the same as in the previous versions.
+These changes might suggest one of the following: either the team developing the botnet has been changed, or TDL4 developers have started selling a bootkit builder to other cybercrime groups.
+The dropper (Win32/Olmasco.R) that we have analyzed sends copious tracing information to the C&C (Command & Control server) during the installation of the rootkit onto the system.
+In the event of any error, it sends a comprehensive error message which gives the malware developers enough information to determine the cause of the fault.
+All this suggests that this bot is still under development.
+We also found a form of countermeasure against bot trackers based on virtual machines: during the installation of the malware it checks on whether the dropper is being run in a virtual machine environment and this information is sent to the C&C.
+Of course, malware that checks on whether it is running in a virtual environment is far from unusual in modern malware, but in this form it’s kind of novel for TDL.
+Among the latest TDSS modifications that have attracted our attention are the way the rootkit infects the system, and changes in the hidden file system layout.
+Order of the Boot
+The bootkit part of the malware has been changed since the previous modification of TDL4.
+In contrast to its previous incarnation, where the MBR (Master Boot Record) was overwritten and space was reserved at the end of the bootable hard drive for storing malicious components, this version of TDL4 employs rather a different approach in order to infect the system.
+Firstly, it creates a partition at the end of the bootable hard drive.
+If we look at the partition table of a hard drive with Vista or a later Windows operating system installed, we can see that there is some unpartitioned (or unallocated) space at the end.
+Usually this space is large enough to hold a rootkit’s components.
+Sometimes there is even more free space available, enough for the rootkit’s own partition.
+In such a case, the size of the malicious partition is limited to 50 GB.
+The malware creates a hidden partition by modifying a free partition table entry in the MBR partition table.
+Bear in mind that the MBR contains a partition table at offset 0x1BE from its beginning in the first sector of the disk.
+This table consists of four 16-bytes entries, each describing a corresponding partition on the hard drive.
+Thus there are, at most 4 primary partitions on the hard drive and there is exactly one partition marked as active, which means that it is partition from which the OS will be booted.
+The malware overwrites an empty entry in the partition table with the parameters for the malicious partition, marks it as active and initializes the VBR (Volume Boot Record) of the newly created partition, as shown in this figure:
+If there is no free entry in the partition table then the malware reports to the C&C server and terminates.
+You can see what happens with the partition table after the system is infected with TDL4 in the figure below.
+As a result of these manipulations, the MBR code remains untouched.
+The only thing to be changed is the partition table.
+When the infected machine is next booted control is passed to the malicious VBR (the VBR of the TDL4 partition) right after execution of the MBR code and before the OS bootloader components are loaded.
+This allows the malware to gain control before the operating system does.
+When the malicious VBR receives control it reads a file with the name “boot” from the root directory of TDL4’s file system, and transfers control to it.
+This “boot” component plays the same role as ldr16 module in the previous incarnation of TDL4: it hooks the BIOS interrupt 13h handler to patch the BCD and OS bootloader, and loads the VBR of the originally active partition.
+The bootkit components of the malware are the same as in the previous modification of TDL4 except that their names in the malicious file system have been changed.
+The following diagram depicts the boot process of the infected machine.
+Hidden file system
+The layout of the hidden file system has been changed also.
+In contrast to the previous version, which was capable of storing at most 15 files – regardless of the size of reserved space – the capacity of the new file system is limited by the length of the malicious partition.
+The file system presented by the latest modification of the malware is more advanced than previously.
+For instance, the malware is able to detect corruption of the files stored in the hidden file system by calculating its CRC32 checksum and comparing it with the value stored in the file header.

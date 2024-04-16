@@ -1,0 +1,78 @@
+Duqu has been getting a lot of attention in the media.
+According to Symantec, there are 15 confirmed variants found thus far.
+One of the interesting challenges posed by Duqu is that every instance appears to be unique.
+Also, the main components are encrypted on disk, therefore restricting our search space to in-memory.
+The OpenIOC language is a powerful and flexible tool for detecting both known and unknown evil.
+So why not leverage it to find all variants of Duqu?
+In this blog post we'll take a closer look at Duqu and demonstrate how to create an IOC to spot the entire Duqu family.
+It is important to note that when talking about Duqu, there are really two different components; the main module (consisting of the driver and 2 PNF files) and the keystroke logger that Duqu gets its name from.
+These two entities can run independently of one another, so for this discussion we will focus on the main module.
+Now let's walk through Duqu in a logical fashion...
+First we have the infamous Duqu driver.
+The elusive installer will register Duqu as a service.
+Each Duqu driver installation has a different file name, a different MD5, a different service name used within the registry, different version information, and different file sizes.
+Initially it appeared that the driver was always 24,960 bytes long, except for when it was signed, but since then different file sizes have been reported.
+This makes finding the driver on disk a little daunting, but when the Duqu driver starts executing, things start getting more interesting.
+When the driver loads, we can see that it creates two devices (shown here courtesy of Mandiant Redline)
+We currently have access to four of the different Duqu drivers.
+For this blog post we looked at jminet7.sys and cmi4432.sys, along with their corresponding encrypted PNF files, and adpu321.sys and iaStor451.sys (we did not have their PNF components.
+All four drivers create the Gpd1 device, while two of the drivers create the {3093AAZ3-1092-2929-9391} device and the other two create the {624409B3-4CEF-41C0-8B81-7634279A41E5} device.
+So Gpd1 seems to be consistent, while the GUID is less so.
+We will include these facts in our IOC, but we want to find something that is more focused on how Duqu does its magic and that is less likely to change.
+With each Duqu driver installation, there will be two files with the extension ".pnf".
+One of the PNF files is an encrypted DLL while the other PNF file is an encrypted configuration file.
+The main Duqu driver decrypts the DLL/PNF file using a key stored in an encrypted registry key (HKLMSYSTEMCurrentControlSetServices:FILTER).
+The driver then injects this decrypted DLL into services.exe.
+This injected DLL will decrypt another DLL that is stored within its own resource section (named .rsrc in the binary) along with the PNF/config file.
+The config file will indicate which process to inject the final DLL into.
+Depending on what that process is, the injected DLL in services.exe will create a new instance of this process and map in the DLL that it decrypted from the resource section.
+In the examples that we've been able to look at so far, the process that is finally injected into has been lsass.exe, winlogon.exe and svchost.exe.
+This means there will be a process which meets the following conditions:
+Named lsass.exe, winlogon.exe or svchost.exe
+Its parent process is services.exe
+It does not have a named executable in memory since the main process is overwritten
+It contains injected code (unnamed section of memory that contains an MZ/PE header).
+It contains injected code (unnamed section of memory that contains an MZ/PE header).
+This can easily be seen by running Mandiant Redline.
+Since svchost's parent should always be services.exe, this is not much of a giveaway, but for lsass and winlogon, it's definitely abnormal.
+Lsass's parent should always be winlogon and winlogon's parent should always be smss.exe.
+With this information, we can start writing an IOC that focuses more on how Duqu behaves.
+Making the IOC
+First, let's open the MANDIANT IOC Editor and create a new IOC.
+We start out with a parent OR, meaning that any component under it could be true for a match.
+Almost all IOCs start out with an OR, which is what the MANDIANT IOC Editor defaults to.
+We'll put the pieces from our analysis under this OR to create the IOC that will match against the different parts of Duqu that we've observed.
+We start our first AND block (items must be true together to make a match) by including the Driver DeviceName Gpd1, since it was the same in all instances that we saw in Redline.
+We then OR this with the other names we saw, using the OR because we did not see it in all the instances we looked at.
+This way, the first AND block will match on either Gpd1 by itself, or Gpd1 + either of the unique strings we saw.
+Next, we want to describe the injected processes we've seen.
+We have lsass.exe, winlogon.exe, and svchost.exe.
+Because it could be any of these, we include each one under the parent OR in the IOC, so that the presence of any of them will match (as opposed to all of them having to match, which would require an AND).
+We describe the specific conditions for each process in an AND block, since we want all the conditions in each section to be true for a match.
+We'll take the case where the process name is lsass.exe, and we'll combine it with our conditions from above.
+Currently, we can describe the process name, the fact that there is no section name in memory because it was overwritten, and the fact that it contains injected code.
+Under an AND, these all have to be true to give us a match for lsass.exe:
+We'll repeat the process for winlogon and svchost:
+While reversing the injected DLL within services.exe I noticed that it should have created a mutex ({0de1ac9d-35da-433f-937a-8553016874f1}) and 2 events ({0df29544-7ded-4091-a8e6-b87402e6064c}2 and {92D9FA5C-D148-476E-BCC9-A4BEAC2E70D7}).
+I was able to confirm that services.exe contained references to these 3 handles, something else that we should add to our IOC.
+Unfortunately, even though we had access to 4 of the drivers, we only had access to 2 sets of PNF files that we were able to decrypt.
+Due to this, we are not able to tell if these change with the different variants, but these handles are seen in both of the variants that we do have.
+Let's add this additional information to the IOC.
+We create another AND block and include under it the fact that we are looking at services.exe, that is injected, and the handle names that were uncovered:
+There are some publicly available bits of information from other analysts who have looked at Duqu.
+It is always a good practice to test your IOCs on real data before doing wide deployment of them - this is especially true when using data gathered from third parties.
+But in certain cases, samples of some malware may not be easily available and/or you may wish to make IOCs to search for malware that you don't have specific samples of yet.
+Make sure to keep good testing practices in mind when you make all IOCs -especially for data you didn't gather yourself.
+IOC Finder can be used as a tool to test against a standard build as a control, as well as looking at infected boxes to see if you are finding malware.
+One publicly documented variant was signed by C-Media Electronics Incorporation.
+We will include that information in a separate AND block:
+Symantec also released some items on what the installer might leave behind on a host:
+The existence of the registry entry:HKEY_LOCAL_MACHINESOFTWAREMicrosoftWindowsCurrentVersionInternet SettingsZones4"CFID" (though Kaspersky claims that it is really "CF1D", so we'll include both so we don't miss anything)
+The existence of an event log entry with an EventID of 3221235481, event type of 1 and event source of DCOM
+Thanks to Symantec for this information.
+Registry keys and event log entries are easily describable in OpenIOC, so we will add those in as well:
+After having tested this in the field, we've rearranged the IOC slightly differently than the order we've just gone through, however the components are the same.
+Putting this all together, here is our IOC for Duqu:
+The IOC we created can be downloaded here:
+We hope this has been useful.
+If you have comments or questions, please drop a post in the MANDIANT Forums: https://community.fireeye.com/welcome.

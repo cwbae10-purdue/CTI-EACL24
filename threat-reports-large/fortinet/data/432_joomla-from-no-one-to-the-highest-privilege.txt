@@ -1,0 +1,45 @@
+Joomla, a popular free and open-source content management system, just released version 3.6.4 that fixed two critical vulnerabilities:
+[CVE-2016-8870] - Core - Account Creation: attackers can exploit this vulnerability to create any account in a Joomla system regardless of whether its registration has been disabled.
+[CVE-2016-8869] - Core - Elevated Privileges: with the vulnerability above, an attacker not only can register an account in a vulnerable system, but also register with the highest privilege – Administrator.
+We took a deeper dive to see how these exploits tick and would like to congratulate Davide Tampellini on his first CVE discovery.
+The “Account creation” vulnerability is addressed in the patch located here https://github.com/joomla/joomla-cms/commit/bae1d43938c878480cfd73671e4945211538fdcf.
+In this patch, however, they simply removed the “register” function.
+This is an interesting fix looks because Joomla’s default registration flow does not use this register function.
+Instead, it uses the register function found in https://github.com/joomla/joomla-cms/blob/staging/components/com_users/controllers/registration.php#L108
+Now, by taking a look at how Joomla has implemented registration, we can understand why this additional function in user.php can be harmful to the system:
+Figure 1 – Joomla register request
+In Figure 1, above, we can see the Joomla register request.
+If you look at the task parameter you will see that Joomla uses that value to decide which class and method in component “– users –“ will be used.
+Nothing special happens if Joomla uses the register method of registration - UsersControllerRegistration class.
+The system will check the configuration and allow user to either register or not:
+Figure 2 - Joomla registration
+Surprisingly, there is another register method available in the UsersControllerUser class in the same “users” component.
+Figure 3 – Second register method
+This register function does not check to see if the configuration allows user registration, so an attacker can exploit this function to create a new user in the Joomla system even though that was not allowed by the previous register function.
+By tweaking some parameters in the register request, like in Figure 4, below, a new user account can be created successfully.
+Figure 4 – Creating a new user account
+According to the register method found in UsersControllerUser class, and as shown in the screenshot below, you simply need to supply the array name user so it can process and complete the registration.
+Figure 5 – Completing the unauthorized registration
+When I saw the CVE-2016-8869-“Elevated Privileges” vulnerability in Joomla, the first thing I thought of was the Joomla Privilege Escalation vulnerability from four years ago (https://developer.joomla.org/security/news/395-20120303-core-privilege-escalation).
+The concept behind this old vulnerability was simple: any variables you supply to Joomla will be processed.
+To exploit this vulnerability, then, when you created a new user you just needed to provide an extra variable called groups and create a group id value, and a new user would be created with that group id.
+To prevent this attack, Joomla released a patch:
+Figure 6 – Joomla patch preventing elevating privilege
+But this patch does not address the register vulnerability in UsersControllerUser described previously because that register method does not set the same state variable name for the register data.
+To understand why this patch will not work, let’s take a look at the register method in the UsersModelRegistration class.
+Figure 7 - Register method in the UsersModelRegistration class
+This register method processes registration data and then writes it to a database.
+The code shown in Figure 7 is used to merge register data from getData() (which was patched for the groups flaw) and the data supply directly from the register method from UsersControllerUser or UsersControllerRegistration class.
+The register from default UsersControllerRegistration class will be processed normally by getData and the groups will then be filtered:
+Figure 8 – Processing register data
+You can see in line 243 that it gets data from the state that had been set by the registration method in UsersControllerRegistration.
+But when an attacker uses a different registration method, such as the one we described in UsersControllerUser, the data will use a different name, as seen below.
+Figure 9 – Bypassing the getData protocol
+As a result, the groups will not be filtered, which will allow the escalation of privileged.
+The request below will create user “test” within the Administrator group in Joomla.
+Figure 10 – Creating a new user with Administrator privilege
+By combining two vulnerabilities in one, as depicted above, we are able to gain the full control of a Joomla instance.
+This serves as a reminder for how careful editors should be when merging new code into old code, and also how difficult that exercise is.
+To prevent these kinds of issues, developers not only have to be extremely careful when merging functions, but they also need to remember to remove unused parts of the code when possible, such as Joomla’s secondary register function.
+NOTE: the two vulnerabilities described above are covered by IPS signature Joomla.Core.Account.Creation.Elevated.Privileges
+-=- Fortiguard-Lion Team -=-

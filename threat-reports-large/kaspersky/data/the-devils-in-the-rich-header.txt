@@ -1,0 +1,51 @@
+In our previous blog, we detailed our findings on the attack against the Pyeongchang 2018 Winter Olympics.
+For this investigation, our analysts were provided with administrative access to one of the affected servers, located in a hotel based in Pyeongchang county, South Korea.
+In addition, we collected all available evidence from various private and public sources and worked with several companies to investigate the command and control (C&C) infrastructure associated with the attackers.
+During this investigation, one thing stood out – the attackers had pretty good operational security and made almost no mistakes.
+Some of our colleagues from other companies pointed out similarities with Chinese APT groups and Lazarus.
+Yet, something about these potential connections didn’t quite add up.
+This made us look deeper for more clues.
+The attackers behind OlympicDestroyer employed several tricks to make it look similar to the malicious samples attributed to the Lazarus group.
+The main module of OlympicDestroyer carries five additional binaries in its resources, named 101 to 105 respectively.
+It is already known that resources 102 and 103, with the internal names ‘kiwi86.dll’ and ‘kiwi64.dll’ share considerable amounts of code with other known malware families only because they are built on top of the Mimikatz open-source tool.
+Resource 105, however is much more interesting in terms of attribution.
+Resource 105 is the ‘wiper‘ component of OlympicDestroyer.
+This binary launches a destructive attack on the victim’s network; it removes shadow copy backups, traverses the shared folders on the networks and wipes files.
+Anyone familiar with the wipers attributed to the Lazarus group will find strong similarities in the file deletion routines:
+File deletion routines.To the left 3c0d740347b0362331c882c2dee96dbf (OlympicDestroyer), on the right 1d0e79feb6d7ed23eb1bf7f257ce4fee (BlueNoroff by Lazarus).
+Both functions do essentially the same thing: they delete the file by wiping it with zeroes, using a 4096 bytes memory block.
+The minor difference here is that the original Bluenoroff routine doesn’t just return after wiping the file, but also renames it to a new random name and then deletes it.
+So, the similar code may be considered as no more than a weak link.
+A much more interesting discovery appeared when we started looking for various kinds of metadata of the PE file.
+It turned out that that the wiper component of OlympicDestroyer contained the exact ‘Rich’ header that appeared previously in Bluenoroff samples.
+MZ DOS and Rich headers of both files (3c0d740347b0362331c882c2dee96dbf – OlympicDestroyer, 5d0ffbc8389f27b0649696f0ef5b3cfe – BlueNoroff) are exactly the same.
+This provided us with an interesting clue: if files from both the OlympicDestroyer and Bluenoroff families shared the same Rich header it meant that they were built using the same environment and, having already found some similarities in the code, this could have meant that there is a real link between them.
+To test this theory, we needed to investigate the contents of the Rich header.
+The Rich header is an undocumented structure that appears in most of the PE files generated with the ‘LINK.EXE’ tool by Microsoft.
+Effectively, any binary built using the standard Microsoft Visual Studio toolset contains this header.
+There is no official documentation describing this structure, but there is enough public information that can be found on the internet, and there is also the LINK.EXE itself that can be reverse engineered.
+So, what is a Rich header?
+A Rich header is a structure that is written right after the MZ DOS header.
+It consists of pairs of 4-byte integers.
+It starts with the magic value, ‘DanS’ and ends with a ‘Rich’ followed by a checksum.
+And it is also encrypted using a simple XOR operation using the checksum as the key.
+The data between the magic values encodes the ‘bill of materials’ that were collected by the linker to produce the binary.
+The first value of each record is a tool identifier: the unique number of the tool (‘C++ compiler’, ‘C compiler’, ‘resource compiler’, ‘MASM’, etc.
+), a Visual Studio specific, and the lowest 16 bits of the build number of the tool.
+The second value is a little-endian integer that is a number of items that were produced by the tool.
+For example, if the application consists of three source C++ files, there will be a record with a tool id corresponding to the C++ compiler, and the item count will be exactly ‘3’.
+The Rich header in OlympicDestroyer’s wiper component can be decoded as follows:
+It is a typical example of a header for a binary created with Visual Studio 6.
+The ‘masm613’ items were most likely taken from the standard runtime library, while the items marked as ‘VC 2003’ correspond to libraries imported from a newer Windows SDK – the code uses some Windows API functions that were missing at the time VC 6 was released.
+So, basically it looks like a C++ application having three source code files and using a slightly newer SDK to link the Windows APIs.
+The description perfectly matches the contents of the Bluenoroff sample that has the same Rich header (i.e.
+5d0ffbc8389f27b0649696f0ef5b3cfe).
+We get very different results when trying to check the validity of the Rich header’s entries against the actual contents of OlympicDestroyer wiper’s component.
+Even a quick visual inspection of the file shows something very unusual for a file created with Visual Studio 6: references to ‘mscoree.dll’ that did not exist at the time.
+References to “mscoree.dll” and error messages typical for the MSVC libraries
+After some experimentation and careful comparison of binaries generated by different versions of Visual Studio, we can name the actual version of Studio that was used: it is Visual Studio 2010 (MSVC 10).
+Our best proof is the code of the ___tmainCRTStartup function that is only produced with the runtime library of MSVC 10 (DLL runtime) using default optimizations.
+Beginning of the disassembly of the ___tmainCRTStartup function of the OlympicDestroyer’s wiper component, 3c0d740347b0362331c882c2dee96dbf
+It is not possible that the binary was produced with a standard linker and was built using the MSVC 2010 runtime, having the 2010’s startup code invoking the WinMain function and at the same time did not have any Rich records referring to VC/VC++ 2010.
+At the same time, it could not have the same number of Rich records for the VC6 code that is missing from the binary!
+A binary produced with Visual Studio 2010 and built from the same code (decompiled), having the same startup code and almost identical to the wiper’s sample will have a Rich header that is totally different:

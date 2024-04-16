@@ -1,0 +1,63 @@
+Once again, we have seen a significant new ransomware family in the news.
+LockerGoga, which adds new features to the tried and true formula of encrypting victims’ files and asking for payment to decrypt them, has gained notoriety for the targets it has affected.
+In this blog, we will look at the findings of the McAfee ATR team following analysis of several different samples.
+We will describe how this new ransomware works and detail how enterprises can protect themselves from this threat.
+LockerGoga is a ransomware that exhibits some interesting behaviors we want to highlight.
+Based on our research, and compared with other families, it has a few unique functions and capabilities that are rare compared to other ransomware families that have similar objectives and/or targeted sectors in their campaigns.
+In order to uncover its capabilities, we analyzed all the samples we found, discovering similarities between them, as well as how the development lifecycle adds or modifies different features in the code to evolve the ransomware in a more professional tool used by the group behind it.
+One of the main differences between LockerGoga and other ransomware families is the ability to spawn different processes in order to accelerate the file encryption in the system:
+Like other types of malware, LockerGoga will use all the available CPU resources in the system, as we discovered on our machines:
+Most of the LockerGoga samples work the same way but we observed how they added and removed certain types of functionality during their development lifecycle.
+The ransomware needs be executed from a privileged account.
+LockerGoga works in a master/slave configuration.
+The malware begins its infection on an endpoint by installing a copy of itself on the %TEMP% folder.
+After being copied, it will start a new process with the -m parameter.
+The master process runs with the -m parameter and is responsible for creating the list of files to encrypt and spawning the slaves.
+The slave processes will be executed with a different set of parameters as shown below.
+Each slave process will encrypt only a small number of files, to avoid heuristic detections available in endpoint security products.
+The list of files to encrypt is taken from the master process via IPC, an interface used to share data between applications in Microsoft Windows.
+The communication is done through IPC using a mapped section named SM-<name of binary>.
+Here is the IPC technique used by LockerGoga:
+The master process (run as <LockerGogaBinary> -m) creates a named section on the system for IPC.
+The section is named “SM-tgytutrc”.
+The master ransomware process posts the filepath of the file to be encrypted to the named section “SM-tgytutrc”.
+This section is used by the slave processes to pick up the filepath and encrypt the target file.
+Sandbox replication of master process screenshot below showing:
+Creation of the named section.
+Subsequent creation of slave processes to encrypt target files on the endpoint.
+Sandbox replication of slave process (encryption process) below showing:
+Obtaining access to the section created by the master process.
+Reading and encryption of a target file found based on the filepath specified in the named section.
+The ransomware creates multiple slave processes on the endpoint to encrypt files.
+Some analysts believe this is the case simply because it speeds up the encryption process, but we are not convinced as the same outcome can be achieved via a multi-threaded approach in the ransomware process instead of a multi-process approach.
+Instead, we suspect this approach is adopted for the following reasons:
+Footprint: If every encryption process encrypts only a small number of files on the endpoint and terminates, then the overall footprint of the attack on the system decreases since it may be difficult to co-relate multiple encryption processes to the same threat.
+Sandbox Bypass: Some sandbox-based detection systems monitor the threshold of the number of files written on the system and may co-relate it to the file extensions being written to.
+E.g.
+If a process reads, say, 200 files on the sandbox but only creates files with one specific extension (typical of ransomware – Extn “.locked” in the case of LockerGoga) then this can be considered anomalous behavior.
+LockerGoga may be able to bypass such detection techniques.
+File I/O based detection bypass: A multi-process-based approach makes sure that the amount of I/O (File/Disk I/O etc.)
+for each encryption process is within a certain limit, thus bypassing detection techniques that monitor exorbitant I/O based detection.
+Reliability: Even if one encryption process is manually terminated by an end-user, as long as the master ransomware process is running the files will continue to be encrypted by new slave processes.
+If the ransomware process does not use the multi-process approach, then terminating the ransomware process stops the encryption on the endpoint.
+Username Administrator:
+Username Tinba:
+The author implemented a logging function that can be enabled if you callout the sample in execution using the parameter “-l” to store all the results in a file called ‘log.txt’ in the root C drive:
+During execution we enabled the log function and saw how the ransomware encrypts the system, causing high CPU usage and opening the ransom note during the process.
+This is the aspect in an infected system:
+As we executed the sample with the log function, we could access this file to check the status of the encryption.
+Obviously, this most likely a debug function used by the developer.
+In order to know how the ransomware works, and with the help of the log function enabled, we could establish the order of LockerGoga to encrypt the system:
+Log file creation in the C: drive
+Folder and file enumeration
+File encryption & ransom note creation in the desktop folder.
+One interesting thing to mention is that, before encrypting any file in the system, the malware will search for files in the trashcan folder as the first option.
+We are not certain why it takes this unusual step, though it could be because many people do not empty their recycle bins and the ransomware is looking to encrypt even those files that may no longer be required:
+LockerGoga will start to enumerate all the folders and files in the system to start the encryption process.
+This enumeration is done in parallel, so we can expect the process wouldn’t take much time.
+After the enumeration the ransomware will create the ransom note for the victim:
+The ransom note was created in parallel with the encrypted files, and it is hardcoded inside the sample:
+Like other ransomware families, LockerGoga will create the ransom note file to ask the user to pay to recover their encrypted files.
+We highly recommend not paying under any circumstance so as not to continue funding an underground business model.
+In case of a ransomware infection, please check https://www.nomoreransom.org
+Below is an example of the ransom note content on an infected machine:

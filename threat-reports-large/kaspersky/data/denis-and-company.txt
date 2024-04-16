@@ -1,0 +1,266 @@
+In April 2017, we published a detailed review of a malicious program that used DNS tunneling to communicate to its C&C.
+That study prompted us to develop a technology to detect similar threats, which allowed us to collect a multitude of malware samples using DNS tunneling.
+In this article, we will examine some of the most notable malicious programs that use DNS tunneling.
+Kaspersky Lab’s security products detect them with generic (‘Trojan.Denes.UDP.C&C’ or ‘Backdoor.Win32.Denis.
+*’) or individual verdicts.
+The first piece of malware we’ll look at has a multi-layer C&C communication protocol structure that is similar to the OSI model and sets it apart from all the other Trojans reviewed here.
+The creators of Trojan.Win32.Ismdoor.gen have obviously put a lot of effort into its design and development.
+Of course, for its transport layer this Trojan uses a DNS tunnel.
+The length of outgoing ‘datagrams’ are limited to 60 characters, though DNS server configurations and the actual protocol permit this value to be larger.
+The C&C server’s commands are resolved into IPv6 addresses.
+A typical query sent to the C&C server looks like this:
+n.n.c.<Session ID >.<Server domain>.com
+Structure of transport layer request and response
+There is a session layer protocol in place above the DNS tunnel transport layer, which implies the ability to exchange ‘short’ and ‘long’ packets.
+It differs from the transport layer in that it has a mechanism to check for lost messages.
+While a transport layer session closes with the exchange of data on the number of packets sent and received, a session layer closes by checking that every sent packet has been received correctly.
+It is up to the server which option to use; for instance, the ‘long’ packet protocol is used for uploading files from an infected computer.
+Example of short message exchange protocol
+At this level, the bot’s operation can be broken down into five steps:
+Declare session ID to server;
+Send a message in packets;
+Send the number of packets sent;
+Receive the number of incoming packets;
+Receive incoming packets.
+A session example:
+Declare session ID to server
+Each time a communication session is opened the bot generates a GUID and sends it to the server.
+This GUID is then used to identify all communications within that session, and is always written in the third-level domain position.
+In this case, the URL has the following structure:
+n.n.c.<Session ID>.<Server domain>.com
+The message A67DDB8A2A17334765443253702AA3 is a positive response.
+Otherwise, the GUID is sent to the server again.
+Send a message in packets
+As we said earlier, the selected communication mechanism imposes certain restrictions on packet sizes.
+An outgoing message is broken into packets 60 bytes long, and sent in the form of URLs:
+<Outgoing packet>.<Packet number>.dr.<Session ID >.
+<Server domain>.com
+The response must be A67DDB885A3432576548A2A3707334.
+Send the number of packets sent
+When all packets have been sent successfully, their number is sent as a query in the following format:
+n.<Number of packets>.f.<Session ID >.<Server domain>.com
+It should be noted that the packet numbering starts with 0.
+The response is 20202020202020202020202020202020.
+Receive the number of incoming packets
+This step is implemented with the following type of URL format:
+n.n.fc.<Sessions ID >.<Server domain>.com
+The response must be in the following format:
+A67D: DB8: 85A3: 4325: 7654: 8A2A :: <Number of incoming packets>
+Receive incoming packets
+The request to receive the next packet looks like this:
+www.
+<Packet number>.s.
+<Session ID > .<Server domain>.com
+The incoming messages come in the form of 16-byte IPv6 packets.
+In this case, communication with the server can be broken down into the following steps:
+Send the number of packets which the file was divided into;
+Send the file;
+Send periodic queries to server to check for lost packets;
+Resend lost packets.
+The session ID comes from the query in which the file was requested.
+Send the number of packets
+Query: n.<Number of packets>.<Session ID >.<Server domain >.com
+Response: A67DDB8A2A17334765443253702AA3.
+Send the file in packets
+Query: <Outgoing packet>.<Packet number >.d.<Session ID >.<Server domain >.com
+Response: the server does not reply to this message, or sends a ‘Server failure’ response.
+Send periodic queries to server to check for lost packets
+Over regular intervals, the bot sends the following query to the server:
+uff<Number of packets>.< Number of packets >.<Server domain >.com
+Response: 20202020202020202020202020202020
+After that, the steps ‘Receive the number of incoming packets’ and ‘Receive incoming packets’ from the previous section are implemented.
+In response, the numbers of packets – separated by commas – that the server has missed are sent.
+Resend lost packets
+Query: <Outgoing packet>.<Packet number>.dl.<Session ID>.<Server domain>.com
+The presentation layer in OSI is responsible for coding and decoding messages.
+The server response contained in an IPv4 address field is a regular ASCII string that is divisible by sixteen.
+The query to the server contained in a DNS query is coded in Base64 with a redefined index table.
+Example of the first message and its representation in the ‘datagram’ body The application layer is simply a set of GET-like queries to the C&C server: Check connection.
+This query is the string ‘M:CC?’; Register connection.
+This determines the available commands, and the IDs of the infected computer and the bot (M:AV?appId=<…>&uniqueId=<…>); Registration confirmation command; ‘Generic’ response (M:ME?appId=<…>&message=<…>); Receive command (M:GAC?appId=8); Confirm command (M:CR?cd=<Command GUID>); Send file (M:SF?commandId=CmdResult=<Command GUID>|||<Result of command execution >); Receive file (M:GF?).
+As stated above, this Trojan is well designed and written, has a well-thought-out system of communication as well as a payload rich in capabilities.
+Below is a list of its main commands: SI — send information about the infected system; RunNewVersion — update; Restart — restart; remove — remove itself; CreateMimi1Bat — execute Mimikatz; ExecuteKL — activate keylogger; RemoveKL — remove files created by ExecuteKL; GetVersion — report the Trojan’s version; PauseUpload —suspend uploading files to the server; ResumeUpload — resume uploading files to the server; PauseDownload —suspend downloading files from the server; ResumeDownload — resume downloading files from the server; PWS — take a screenshot; DownloadFile — download a file from the server; UploadFile — upload a file to the server.
+The other commands available to the Trojan are responsible for the logic of its operation (such as changing the C&C address, etc.).
+Backdoor.Win32.ClIEcker This next sample uses a different workflow based on ANY DNS packets.
+This mechanism allows the malicious program to receive DNS packets of a random structure from the server.
+With this Trojan, there is no logical breakdown into sub-protocols – there are just outgoing and incoming requests.
+We were able to detect several modifications of this Trojan.
+Below, we describe features and characteristics present in all of them.
+One interesting peculiarity of Backdoor.Win32.ClIEcker is how it finds out the victim computer’s IP address – to do so it uses Internet Explorer’s COM interface.
+The Trojan contains a list of website addresses where the visitor can see their own IP address (such as http://www.ip-adress.com).
+The Trojan randomly selects one of these, visits that address, finds the string in the body of the page that is followed by the IP address, and extracts it.
+To disguise this query as much as possible, the Trojan will also select a random referral address and use it in the appropriate request to Internet Explorer.
+The only thing that remains unclear is why such a complicated method is used; typically, Trojans find out a computer’s IP address by requesting data from sites that return a string containing the IP address as an HTML page.
+Perhaps it was done in an attempt to avoid resolving to an IP address that may be in the IoC list for this Trojan, or it might just have been a thoughtless cut-and-paste job from a code repository or forum.
+To complicate things even further, the Trojan supports a command to open a website in Internet Explorer upon request from the server – for this, a trivial call in the form “IEXPLORE.EXE google.com” is used, rather than the complex COM interaction.
+Because of this, the Trojan could be detected as a Trojan-Clicker, though, as we explained in an earlier article, Trojan Clickers typically use a virtual desktop to do this.
+Examples of URL addresses used for resolving IP/referral address and receiving page contents via COM In the initiating request, several parameters describing the victim system are sent along with a unique RC4 key that’s created using the following info about the victim computer: Major version of the operating system; Logical flag indicating if a modem connection is used or not; Trojan ID; User’s encrypted IP address; Antivirus service code.
+Some explanation should be given for the last point.
+The Trojan contains a list of security software; each security product is coded by a bit in this code sent to the server.
+For example, all processes related to McAfee products will be denoted by the flag 0x400 in the antivirus service code.
+Next, we will give a description for some of the commands: Code Arguments Description 0 File name Execute the downloaded file.
+1 URL Open the specified webpage in IE.
+2,3 NULL These commands must receive the code for the executable file as an argument, save the file and run it.
+In the first case, the current version of the Trojan ceases running.
+For some reason, these commands are disabled.
+The Trojan ignores the rest of this list of commands and proceeds to request a new one.
+5 Server query period in minutes There are two possible values for the server query period.
+One is used if the previous list of commands was executed in full.
+Otherwise, the other is used.
+This command sets the wait period for the first option.
+6 NULL Stop running.
+7 Wait period in minutes Pause for the specified period.
+18 Modifier If the modifier is >= 0, then the next command on the list is executed.
+Otherwise, processing of the list terminates.
+19 Server query period in minutes Sets the server query period in the event that processing of the list was interrupted.
+21 NULL Sets flag for prompt reconnection.
+This allows the Trojan to query the server for a new list of commands immediately after it completes the previous list.
+22 NULL Delete the downloaded file.
+23 File name Set a new name for the downloaded file.
+The command with code 8 deserves special attention, as it contains the Trojan’s main functions.
+Its job is to download and launch the payload.
+This command has the following arguments: Name of argument Description File_Size Size of the downloaded file.
+SessionID Session ID.
+ServerKey Key for RC4 received from the server.
+GetFile_URL URL for file download.
+DNS_URL URL of the DNS server which will be used to create a DNS tunnel.
+GetPacketInterval Server query period for the next packet.
+KeyMod Flag for modifying the key.
+ReportURL URL of the server where successful file download will be reported.
+ExecMode File execution modifier.
+If it is larger than 2, the file will be neither saved nor executed.
+If it equals 2, the file will be saved and executed.
+Otherwise, the Trojan will attempt to inject the downloaded file into the IE process.
+Packet_Number Packet number.
+The file is transferred in TXT DNS packets.
+All communication with the server is, by default, encrypted with an RC4 key that is generated based on information about the victim computer.
+However, the server may request that the key be changed, and send a new key in a file download request.
+In any case, the key required for generating the S-box is encrypted with itself, and the resulting string is subsequently used.
+The S-box is modified according to the packet number, so it is unique for every new packet.
+When decryption is completed, the integrity of the resulting file is checked with CRC32.
+Backdoor.Win32.Denis Backdoor.Win32.Denis has the simplest structure and the simplest DNS server communication functionality.
+This piece of malware has the same name as the Trojan described in this article, however, all similarities finish there.
+This malicious program uses A DNS-format packets to communicate with the DNS server; in this format, the response size is limited to 4 bytes.
+All indicators point to this being a regular Trojan Downloader, and it is quite slow in downloading files.
+The typical format of a message sent to the server looks like this: IC<Container type>.<UID>.<Container>.<Server address> By ‘container’, we mean the results of the Trojan’s operation in a packed form.
+The structure of the container may vary significantly depending on the command and the response.
+UID is the user’s ID that is 0x20 bytes long.
+It is a Base32 string which, after decoding, has the following structure: Offset Description 0x0 – 0xF Contains the user host name.
+0x10 – 0x14 Contains the user IP address.
+The container is also a Base32 string: Offset Description 0x0 – 0x3 The time taken to create the message in seconds.
+0x4 – 0xB ‘IACIMAOQ’ signature.
+0xC – 0x22 Message.
+A total of four types of containers exist.
+The Trojan determines which one is required, depending on the command it has received, and the results of executing it: Type Purpose Message Description 1 Send information about the victim system.
+Information about the logical drives in the user’s system.
+The first byte indicates the amount of data sent.
+Pairs of bytes then follow: the letter of the logical drive and its type.
+The rest is filled with arbitrary characters.
+2 Send information about the status of file receiving.
+Real file size, the current file size, counter of lost responses.
+If the transferred file does not exist yet, it is created and the container type is changed to 1.
+Otherwise, a message is sent in which the first 4 bytes contain the complete file size that was received in the message coded 0xC0.
+The next 4 bytes store the current file size.
+The next 4 bytes contain the counter of lost messages coming from the server.
+The rest is filled with arbitrary characters.
+3 Send information about successful receipt of the file.
+No Prior to each network communication, the current file size is compared to real file size.
+If they match, then container type is changed to 4.
+4 Send information about the successful execution of the command with code 0xCB.
+No NULL Commands Code Arguments Description 0x7F Stored in the 4th byte.
+Number of minutes.
+Pause for the specified number of minutes.
+Send container type 1.
+0xC0 Stored in the last three bytes.
+The size of the transferred file.
+Receive the size of the transferred file.
+Send container type 2.
+0xCB NULL Rename the current executable file to < APPDATA>\ IACIMAOQ.
+Send container type 4.
+0xA The 2nd byte stores the number of the packet.
+The 3rd and 4th bytes are a pair of bytes of the transferred file.
+Receive part of file and write it.
+Send container type 1.
+As can be seen from the description of commands, this Trojan’s purpose is to download and launch files.
+MD5 15b36b1e3a41ad80bbd363aea8f2d704 — Trojan.Win32.Ismdoor.gen 1FD599FB9FA62EB91511002771D78104 — Backdoor.Win32.ClIEcker 1f3a2c48a7f5c2c31e71f552d74c3543 — Backdoor.Win32.Denis
+Example of the first message and its representation in the ‘datagram’ body
+The application layer is simply a set of GET-like queries to the C&C server:
+Check connection.
+This query is the string ‘M:CC?’;
+Register connection.
+This determines the available commands, and the IDs of the infected computer and the bot (M:AV?appId=<…>&uniqueId=<…>);
+Registration confirmation command;
+‘Generic’ response (M:ME?appId=<…>&message=<…>);
+Receive command (M:GAC?appId=8);
+Confirm command (M:CR?cd=<Command GUID>);
+Send file (M:SF?commandId=CmdResult=<Command GUID>|||<Result of command execution >);
+Receive file (M:GF?
+).
+As stated above, this Trojan is well designed and written, has a well-thought-out system of communication as well as a payload rich in capabilities.
+Below is a list of its main commands:
+SI — send information about the infected system;
+RunNewVersion — update;
+Restart — restart;
+remove — remove itself;
+CreateMimi1Bat — execute Mimikatz;
+ExecuteKL — activate keylogger;
+RemoveKL — remove files created by ExecuteKL;
+GetVersion — report the Trojan’s version;
+PauseUpload —suspend uploading files to the server;
+ResumeUpload — resume uploading files to the server;
+PauseDownload —suspend downloading files from the server;
+ResumeDownload — resume downloading files from the server;
+PWS — take a screenshot;
+DownloadFile — download a file from the server;
+UploadFile — upload a file to the server.
+The other commands available to the Trojan are responsible for the logic of its operation (such as changing the C&C address, etc.
+).
+This next sample uses a different workflow based on ANY DNS packets.
+This mechanism allows the malicious program to receive DNS packets of a random structure from the server.
+With this Trojan, there is no logical breakdown into sub-protocols – there are just outgoing and incoming requests.
+We were able to detect several modifications of this Trojan.
+Below, we describe features and characteristics present in all of them.
+One interesting peculiarity of Backdoor.Win32.ClIEcker is how it finds out the victim computer’s IP address – to do so it uses Internet Explorer’s COM interface.
+The Trojan contains a list of website addresses where the visitor can see their own IP address (such as http://www.ip-adress.com).
+The Trojan randomly selects one of these, visits that address, finds the string in the body of the page that is followed by the IP address, and extracts it.
+To disguise this query as much as possible, the Trojan will also select a random referral address and use it in the appropriate request to Internet Explorer.
+The only thing that remains unclear is why such a complicated method is used; typically, Trojans find out a computer’s IP address by requesting data from sites that return a string containing the IP address as an HTML page.
+Perhaps it was done in an attempt to avoid resolving to an IP address that may be in the IoC list for this Trojan, or it might just have been a thoughtless cut-and-paste job from a code repository or forum.
+To complicate things even further, the Trojan supports a command to open a website in Internet Explorer upon request from the server – for this, a trivial call in the form “IEXPLORE.EXE google.com” is used, rather than the complex COM interaction.
+Because of this, the Trojan could be detected as a Trojan-Clicker, though, as we explained in an earlier article, Trojan Clickers typically use a virtual desktop to do this.
+Examples of URL addresses used for resolving IP/referral address and receiving page contents via COM
+In the initiating request, several parameters describing the victim system are sent along with a unique RC4 key that’s created using the following info about the victim computer:
+Major version of the operating system;
+Logical flag indicating if a modem connection is used or not;
+Trojan ID;
+User’s encrypted IP address;
+Antivirus service code.
+Some explanation should be given for the last point.
+The Trojan contains a list of security software; each security product is coded by a bit in this code sent to the server.
+For example, all processes related to McAfee products will be denoted by the flag 0x400 in the antivirus service code.
+Next, we will give a description for some of the commands:
+The command with code 8 deserves special attention, as it contains the Trojan’s main functions.
+Its job is to download and launch the payload.
+This command has the following arguments:
+The file is transferred in TXT DNS packets.
+All communication with the server is, by default, encrypted with an RC4 key that is generated based on information about the victim computer.
+However, the server may request that the key be changed, and send a new key in a file download request.
+In any case, the key required for generating the S-box is encrypted with itself, and the resulting string is subsequently used.
+The S-box is modified according to the packet number, so it is unique for every new packet.
+When decryption is completed, the integrity of the resulting file is checked with CRC32.
+Backdoor.Win32.Denis has the simplest structure and the simplest DNS server communication functionality.
+This piece of malware has the same name as the Trojan described in this article, however, all similarities finish there.
+This malicious program uses A DNS-format packets to communicate with the DNS server; in this format, the response size is limited to 4 bytes.
+All indicators point to this being a regular Trojan Downloader, and it is quite slow in downloading files.
+The typical format of a message sent to the server looks like this:
+IC<Container type>.<UID>.<Container>.<Server address>
+By ‘container’, we mean the results of the Trojan’s operation in a packed form.
+The structure of the container may vary significantly depending on the command and the response.
+UID is the user’s ID that is 0x20 bytes long.
+It is a Base32 string which, after decoding, has the following structure:
+The container is also a Base32 string:
+A total of four types of containers exist.
+The Trojan determines which one is required, depending on the command it has received, and the results of executing it:
+Commands
+As can be seen from the description of commands, this Trojan’s purpose is to download and launch files.
+15b36b1e3a41ad80bbd363aea8f2d704 — Trojan.Win32.Ismdoor.gen 1FD599FB9FA62EB91511002771D78104 — Backdoor.Win32.ClIEcker 1f3a2c48a7f5c2c31e71f552d74c3543 — Backdoor.Win32.Denis

@@ -1,0 +1,79 @@
+As you may know, IBM X-Force Red is IBM Security’s penetration testing team.
+The team features professional, world-class testers who help organizations find and manage their security vulnerabilities on any and all platforms, including software and hardware devices.
+Our motto is “hack anything to protect everything.”
+This post features a case study from IBM X-Force Red that shows how we ran into trouble on a black-box penetration testing assignment, worked against a well-prepared blue team, and overcame the obstacles to ultimately establish a solid adversarial operation.
+Let’s take a closer look at what we did to get through security and, more importantly, what your team can do to better secure your organization in an ever-evolving adversarial landscape.
+On one of our red team’s recent engagements with a customer’s blue team, we were tasked with delivering a malicious payload to network users without setting off security controls or alerting the defensive team.
+As a first attempt, we sent a phishing email to feel out the level of awareness on the other side.
+The email message was rigged with our malicious payload, for which we selected the attachment type and a lure that would appear credible.
+However, the blue team on the other side must have been lying in wait for suspicious activity.
+Every one of our emails was delivered, but our payloads were not.
+The payloads did not call home to the control server we had set up, and we started getting visits from the defensive team in the form of an anti-malware sandbox.
+Within minutes, additional sandboxes hit on our command and control (C&C) server’s handler, and soon more than 12 security vendor clouds were feasting on the payload.
+We understood at that point that our payload had been detected, analyzed and widely shared by the blue team, but since this was a black-box operation, we had little way of knowing what went wrong after sending out our rigged emails.
+Going back to the drawing board, we realized that we must have triggered the blue team’s dynamic malware detection systems and controls.
+We had to find a new way to deliver the payload in a more concealed manner — preferably encrypted — and to have it detonate only when it reached its final destination to prevent premature discovery.
+To do so, we had to overcome some hurdles, including:
+Sidestepping traffic inspection controls;
+Opening a siloed channel to send information from outside into the organizational networks;
+Decreasing repeatable sampling of our externally hosted content;
+Minimizing the chance of attribution at the initial visit/download/delivery stages; and
+Bypassing URL inspections.
+Some creative thinking summoned a good candidate to help us overcome most controls, mostly because it is a legitimate service that people use in daily interactions: Mozilla’s Firefox Send (FFSend).
+Before we continue to describe the use of FFSend, we would like to note here that it is a legitimate tool that can be used safely, and that it was not compromised.
+We also disclosed information in this blog to Mozilla ahead of its publication and received the company’s support.
+FFSend is a legitimate file transfer tool from Mozilla.
+It has several interesting features that make it a great tool for users, and when files are sent through, its developers indicate it will generate “a safe, private and encrypted link that automatically expires to ensure your stuff does not remain online forever.” This makes FFSend a useful way to send private files between people in a secure manner.
+To send a file, the sender, accessing FFSend via a browser, uploads the file he or she wants to share with the recipient through a simple web interface.
+He or she receives a URL for a shared link and can send it to the recipient.
+The recipient visits the shared link and downloads the file, at which point the FFSend service “forgets” the link and removes shared content from the server.
+Figure 1: Basic flow of events using FFSend
+From our red team’s perspective, FFSend was a good fit for sending encrypted files.
+Let’s see how it answered some of the needs we defined.
+FFSend allows for large file sizes up to 1 GB, which is large enough an allowance to both send a payload and exfiltrate data.
+This answered our need for a siloed, covert channel into the organization.
+It would encrypt and decrypt the payload for us with an AES-GCM algorithm directly in the internet browser, yet we won’t have to deal with any key generation or distribution.
+The payload would evade the inspection of intercepting proxies that can unwrap Transport Layer Security (TLS), and would remain private and won’t be shared with any party along the way, including Mozilla.
+Figure 2: Schematic view of FFSend’s automated encryption
+Since firefox.com is a trusted domain on most organizational controls, we gain yet another advantage by using FFSend.
+We won’t have to labor to set up a fake site that would raise suspicion, and we can still get our file’s link across to the recipient.
+The trusted Firefox domain is also more likely to slip through URL inspection and anti-phishing controls, as well as blacklists that organizations deploy to catch malicious content coming from rogue resources.
+Figure 3: FFSend is considered a trusted source
+As for reducing repeated sampling of the payload, we get that as well by setting a strict one-time-only limit on the number of times our FFSend link can be accessed after it’s generated, avoiding the sandbox attempts and threat sharing.
+Moreover, FFSend automatically expires links after 24 hours, which effectively makes the path to our payload self-destruct if the target has not opened it.
+Self-destruction is also featured on FFSend’s application program interface (API), so it can also be ordered ad hoc after a link is sent but before its default expiration.
+Figure 4: FFSend’s link expiration and self-destruct schema
+Avoiding attribution is also easier when using a legitimate service that implements ephemeral storage of the files it delivers.
+Using such a service allowed us to avoid any links back to our testers, since there was no account required to send a file, nor was information on the owner of the encrypted data sent, required or kept.
+This meant our ownership of the malicious file would be anonymous, though there would still be a tie to our originating IP address and browser fingerprints.
+With most information concealed, we deemed this level of anonymity good enough for the desired outcome.
+Figure 5: No sender identity required, no attribution links back to red team
+With the file sending issue resolved, we still needed a covert communication channel to help us establish an ongoing operation without being ousted by the blue team.
+To set up a communications channel, we did not wish to start from scratch.
+We decided to use FFSend to make it work as the siloed, covert channel we needed.
+That was one problem solved, but to coordinate the sending and receiving of data over that channel, we would also need a side channel of communications to avoid inspection and detection.
+Communication gets inspected by a number of security controls, so it is essential that we blend in with the environment.
+To do that, we would have to choose a communication protocol that would allow us to look like everyone else on the network.
+Looking at the typical choices — Hyper Text Transfer Protocol Secure (HTTPS), Internet Control Message Protocol (ICMP) and Domain Name System (DNS) protocols — we selected DNS for its decent packet capacity and overall better chance of blending in with legitimate user traffic.
+DNS fit our need to implement a data channel to FFSend.
+Also, a command channel can offload to DNS.
+To make everything work together, DNS record content could be encrypted with the same FFSend shared key used to post the data link, keeping things consistent.
+In our command protocol, we can accommodate short instructions and differentiate between the types of requests we want to task agents with, to run or receive responses on.
+For example, we can encode instructions such as fetch me <file> or execute <command>.
+The agent would then carry out the request and post the results over our FFSend data channel.
+On the wire side, channel interaction will look like a well-formed dynamic DNS request, separate from an HTTPS channel used for data.
+This split would ensure avoiding traffic correlation.
+Once we knew how to set up our covert communications, we set up a rogue control server and named it Foxtrot.
+Foxtrot was a mechanism we used to facilitate communication between any number of the remote agents.
+Having created Foxtrot with a modified FFSend service and a DNS side channel, IBM X-Force Red testers were able to push the initial payload to unsuspecting recipients.
+The payload circumvented dynamic defenses, helped our red team gain a foothold in the environment and established persistence to freely move data across intercepting proxies.
+We were also able to execute commands on compromised hosts, even when the defensive team had its security controls and monitoring turned on.
+Red teams have the advantage of only needing to find one way in, while blue teams are tasked with securing all ways in and out.
+This one-sided advantage means that defenders have to keep a close eye on attack tactics, techniques and procedures (TTPs) and expect encryption and covert side channels to challenge existing automated controls.
+After having achieved our goals, we came away with some tips for defenders that can help security teams prepare for the TTPs we used.
+Expect to see the use of client-side encryption gain more prominence in adversarial workflows, and choose security controls accordingly.
+Expect to see split-data and command channels grow in popularity among attackers, because this technique can help break automated analysis patterns employed by traditional security tools.
+Defenders should look into behavioral, heuristics-based detection, augmented by a fully staffed security operations center (SOC) to continuously detect split-channel operations.
+X-Force Red encourages defensive teams to test their incident response (IR) processes against simulated attacker workflows that employ custom tooling capabilities.
+What can teams do right now to get ahead of determined threat actors?
+Step up your security with pre-emptive action in the shape of professional penetration testing, and make sure the scope of the testing gradually covers both hardware and software.

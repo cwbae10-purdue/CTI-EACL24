@@ -1,0 +1,72 @@
+For the story behind the suspected industrial espionage, where ACAD/Medre.A was used, refer to Righard Zwienenberg’s blog post.
+For technical details from analysing the worm’s source code, read on.
+ACAD/Medre.A is a worm written in AutoLISP, a dialect of the LISP programming language used in AutoCAD.
+Whilst we classify it as a worm, due to
+For the story behind the suspected industrial espionage, where ACAD/Medre.A was used, refer to Righard Zwienenberg’s blog post.
+For technical details from analysing the worm’s source code, read on.
+ACAD/Medre.A is a worm written in AutoLISP, a dialect of the LISP programming language used in AutoCAD.
+Whilst we classify it as a worm, due to several features that aid its propagation, it can also be labeled as a trojan, as it tries to sneak into a victim system alongside legitimate AutoCAD drawings, or even a virus, as it infects the AutoCAD environment on the target system (similar to the way the Induc virus would infect the Delphi programming environment).
+But terminology aside, let’s take a look at what the Medre malware does.
+In short, the functions carried out by the worm are:
+Copying itself to various locations: This serves two main purposes: to ensure its repeated execution (i.e.
+installation) and chance to spread (distribution).
+The malicious payload: Stealing AutoCAD drawings from the infected system.
+In the following text, we’ll document how these tasks are accomplished.
+Although the malware is written in AutoLISP, its main functions are carried out by Visual Basic Scripts, which are dropped and executed by the VBS interpreter built in Windows.
+This is shown in the following code snippet, where the VBS script was previously stored to the MK-INFO-BIN variable.
+ACAD/Medre.A (its original filename is acad.fas) tries to copy itself to the following locations:
+%windir%System32Acad.fas
+%windir% Acad.fas
+%current_working_directory_of_DWG%cad.fas
+%current_ working_directory_of_DWG%acad.fas
+%ACAD_support_directory%cad.fas
+%ACAD_support_directory%acad.fas
+Here’s an example of a VBS script from the worm to perform these copy operations:
+ACAD/Medre.A also modifies the acad20?
+?.lsp file inside the AutoCAD Support directory.
+First, it checks which version of AutoCAD is installed, in order to determine the correct filename:
+Interestingly, the malware authors provide compatibility for AutoCAD versions 2000 (14.0) through 2015 (19.2).
+Once the correct filename is determined, the worm tries to locate the acad20?
+?.lsp file and add one line of code (“(if (findfile “cad.fas”)(load “cad.fas”))”) to it:
+If the file is not present, it is created with the following content:
+The above-mentioned actions ensure that the malicious code is executed whenever an AutoCAD drawing (.DWG) is opened on the infected system.
+More information on automatic loading of AutoLISP routines can be found in the official AutoCAD documentation.
+In addition to this, there’s a reason why the script (even when already running on an infected system) is copied to the directory of the currently opened DWG.
+If the user would want to send his drawings to someone else, it is likely that he will add the whole directory into an archive and send the worm along with it.
+As mentioned previously, the main motive of the malware is to steal AutoCAD drawings from the infected system.
+These are sent to the attacker via email.
+Apart from the stolen drawings, some additional information is also sent.
+The worm contains two arrays of email account names and passwords (from two different domains) which are set in the From field of the outgoing email and used for SMTP authentication.
+Here’s a code snippet showing the selection of which email address to use (with the credentials themselves blurred):
+Notice the use of CPUTICKS for randomization (the NTH function selects the Nth value of an array).
+The following figure shows the VBS script responsible for sending the drawing files to the attacker:
+Note that the variables PRINC-YFMC, PRINC-YJFWQ, PRINC-YFM and PRINC-YXMM are filled with values corresponding to the randomly selected email address, SMTP server, email username, email password, respectively.
+VL-FILE-FNAM-H points to the currently opened DWG (it is included as an attachment and the file path in the email body) and VL-INFO-C is a concatenation of the computer name and user name:
+Apart from emailing the stolen AutoCAD drawings, the worm also contains code for stealing e-mail client files, as well as a copy of itself and auxiliary information.
+ACAD/Medre.A can steal Outlook .PST files (Outlook Personal Folders), as referenced by the following Registry keys:
+[HKEY_CURRENT_USERSoftwareMicrosoftOffice11.0OutlookCatalog]
+[HKEY_CURRENT_USERSoftwareMicrosoftOffice12.0OutlookCatalog]
+[HKEY_CURRENT_USERSoftwareMicrosoftOffice13.0OutlookCatalog]
+and files belonging to the Foxmail email client.
+The installation directory of Foxmail is queried from the Registry entry:
+[HKEY_CURRENT_USERSoftwareAerofoxFoxmail] “Executable”
+and the following strings are appended to create paths to the files for exfiltration:
+“AddressAddress.INDX”
+“AddressAddress.BOX”
+“AddressSend.INDX”
+“AddressSend.BOX”
+Note that due to a programming error this part of code may not work.
+The stealing / emailing mechanism is similar as described above.
+Lastly, the worm prepares a RAR archive, also to be sent by email.
+The contents of the directory compressed in the encrypted RAR archive (password = “1”) are:
+Acad.fas (worm body)
+È¤Î¶»úÐµÖÆÍ¼.dxf
+(“È¤Î¶»úÐµÖÆÍ¼” is ??????
+in Chinese encoding).
+The .DXF file (AutoCAD Drawing Exchange Format) is generated by ACAD/Medre.A and contains metadata regarding the stolen AutoCAD drawing:
+ACAD/Medre.A uses the following Registry entries to store its internal data, such as timestamps:
+[HKCUSoftwareMicrosoftWindowsWindows Error Reporting]
+“FILE” “FILE-G” “FILE-H” “Time”
+Note that the [HKCUSoftwareMicrosoftWindowsWindows Error Reporting] Registry key is a legitimate one, only the 4 above-mentioned entries are used by the malware.
+As shown in the previous analysis, ACAD/Medre.A is yet another example of malware which is relatively simple, yet surprisingly effective in achieving its goals – in this case, mass theft of AutoCAD drawings.
+(You can download the ACAD/Medre.A removal tool here.)

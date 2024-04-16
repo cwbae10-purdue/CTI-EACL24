@@ -1,0 +1,75 @@
+For those who read my previous blog regarding a very interesting shellcode exploit running inside a PDF, I got a little curious during my spare time and, upon further research, I realized that there is yet another way to insert shellcode inside a Windows program.
+The assumption here is that the reader knows about the Windows executable format (hence PE headers) and has some knowledge of DEP, ASLR, and some exploit techniques such as ROP chains.
+For a while now, Windows has been using DEP to prevent a lot of exploits from working.
+The way it works is quite simple.
+Memory (in the form of subsequent pages) is allocated with certain protection attributes, those being:
+Combination of all the above
+Code is normally flagged as Read/Executable, while data is Read/Write.
+Some other things like resources (Icons, Bitmaps, etc.)
+are set as Read Only.
+If memory is allocated as Read/Write and a program attempts to execute from that location, an exception will be thrown and the program will be stopped.
+Windows will then inform the user that DEP prevented something bad from happening.
+Currently, shell code is using ROP as a mean to bypass DEP.
+By creating ROP gadgets on the stack, the code that is executed is valid and won’t trigger DEP.
+Most of the time, ROP gadgets will make a call to VirtualProtect:
+BOOL WINAPI VirtualProtect(
+_In_ LPVOID lpAddress,
+_In_ SIZE_T dwSize,
+_In_ DWORD flNewProtect,
+_Out_ PDWORD lpflOldProtect
+There are other APIs that can be used to accomplish the same thing, but for simplicity's sake, I will only use VirtualProtect.
+By using this API, the malware, once the memory has been allocated or found otherwise, will change the protection flags to include EXECUTE.
+From that point on, the battle is pretty much won since DEP won’t see anything.
+The issue with the aforementioned approach is that a call to VirtualProtect can be detected fairly easily.
+So how can we do without it?
+As shown in my other post, a Windows executable is made of several, contiguous chunks of bytes.
+You can find a much better explanation here.
+Let’s look at a real sample.
+I am running Regedit.exe on Windows XP SP3.
+Figure 1.
+PEB
+In Figure 1, we can see the PEB of Regedit.exe.
+I have outlined RPCRT4.dll because it is of particular interest.
+The module is located at 0x77E70000 and here’s the output of [!dh 0x77E70000]:
+0:001> !dh 77e70000
+File Type: DLL
+FILE HEADER VALUES
+14C machine (i386) 5 number of sections 49E5F46D time date stamp Wed Apr 15 07:51:25 2009 0 file pointer to symbol table 0 number of symbols E0 size of optional header 210E characteristics Executable Line numbers stripped Symbols stripped 32 bit word machine DLL OPTIONAL HEADER VALUES 10B magic # 7.10 linker version 89200 size of code 5C00 size of initialized data 0 size of uninitialized data 628F address of entry point 1000 base of code ----- new ----- 77e70000 image base 1000 section alignment 200 file alignment 3 subsystem (Windows CUI) 5.01 operating system version 5.01 image version 4.10 subsystem version 92000 size of image 400 size of headers 938E3 checksum 00040000 size of stack reserve 00001000 size of stack commit 00100000 size of heap reserve 00001000 size of heap commit 0 DLL characteristics 19C8 [ 436F] address [size] of Export Directory 82290 [ 64] address [size] of Import Directory 8C000 [ 408] address [size] of Resource Directory 0 [ 0] address [size] of Exception Directory 0 [ 0] address [size] of Security Directory 8D000 [ 4488] address [size] of Base Relocation Directory 836EC [ 38] address [size] of Debug Directory 0 [ 0] address [size] of Description Directory 0 [ 0] address [size] of Special Directory 0 [ 0] address [size] of Thread Storage Directory 30468 [ 40] address [size] of Load Configuration Directory 0 [ 0] address [size] of Bound Import Directory 1000 [ 378] address [size] of Import Address Table Directory 0 [ 0] address [size] of Delay Import Directory 0 [ 0] address [size] of COR20 Header Directory 0 [ 0] address [size] of Reserved Directory
+SECTION HEADER #1 .text name 8274B virtual size 1000 virtual address 82800 size of raw data 400 file pointer to raw data 0 file pointer to relocation table 0 file pointer to line numbers 0 number of relocations 0 number of line numbers 60000020 flags Code (no align specified) Execute Read Debug Directories(2) Type Size Address Pointer cv 23 83728 82b28 Format: RSDS, guid, 2, rpcrt4.pdb ( 10) 4 83724 82b24
+SECTION HEADER #2 .orpc name 690D virtual size 84000 virtual address 6A00 size of raw data 82C00 file pointer to raw data 0 file pointer to relocation table 0 file pointer to line numbers 0 number of relocations 0 number of line numbers 60000020 flags Code (no align specified) Execute Read
+SECTION HEADER #3 .data name EC8 virtual size 8B000 virtual address C00 size of raw data 89600 file pointer to raw data 0 file pointer to relocation table 0 file pointer to line numbers 0 number of relocations 0 number of line numbers C0000040 flags Initialized Data (no align specified) Read Write
+SECTION HEADER #4 .rsrc name 408 virtual size 8C000 virtual address 600 size of raw data 8A200 file pointer to raw data 0 file pointer to relocation table 0 file pointer to line numbers 0 number of relocations 0 number of line numbers 40000040 flags Initialized Data (no align specified) Read Only
+SECTION HEADER #5
+4488 virtual size 8D000 virtual address 4600 size of raw data 8A800 file pointer to raw data 0 file pointer to relocation table 0 file pointer to line numbers 0 number of relocations 0 number of line numbers 42000040 flags Initialized Data Discardable (no align specified) Read Only
+If we look at the optional header values, we can see that the size of the code for the entire module is 0x89200.
+Now, if you look at the two first sections, [.text] and [.orpc] we can see that [.text] has a size of 0x82800 and [.orpc] has a size of 0x6A00.
+0x82800 + 0x6A00 = 0x89200, so far so good.
+Let’s look closely at those two sections…
+Virtual Address: 0x1000, which goes with the Optional Header.
+Therefore, the code starts at 0x77E71000 and ends at 0x77EF3800.
+Virtual Address: 0x8B000
+Therefore, the code starts at 0x77EFB000 and ends at 0x77F01A00.
+If we were to compute the size of those sections combined we would end up with 0x90A00 which is 0x7800 (30720d) bytes larger than the given code size.
+The 30720 extra bytes are basically just padding.
+Most are set to zero and some may contain some random looking values.
+That space between [.text] and [.orpc] is not part of those sections, and its use is unknown.
+Since it is not declared data or code, we can assume that those bytes can be overwritten.
+Figure 2.
+End of .text section
+As the figure above shows, the end of the [.text] code section ends with some debug info and the rest of the page is padded with zeros.
+Then, there is more padding until the address reaches 0x77EFB000, which is the start of the [.orpc] section.
+Those padded gaps are very interesting because they are part of some code section, but obviously are not used.
+In this particular case, the padding spreads across a fair amount of memory and the protection of that chunk of memory is marked as EXECUTE.
+Of course, in order to write the shellcode in that spot, we would have to temporarily
+change the page protection to [W]rite, or call WriteProcessMemory() which would
+essentially do this for us.
+Let’s go back to the fictitious ROP exploit I was talking about earlier.
+Since we know that there is available memory with the proper protection flag, there is no longer a need to bother with VirtualProtect.
+The compiler used to create the DLL is kind enough to provide our exploit with that little piece of malware heaven.
+We can now craft a targeted exploit (on the same OS/Service Pack) since we know the location of the padded area, or if we want to be fancy, we could read the sections from the PE header and figure out a spot to write our code into.
+There is nothing DEP can do about this since the page protection never changes and the shell code resides within the code segment.
+The only way to detect the shellcode is to validate the address it runs at.
+For instance, looking at Figure 2, if the shellcode was to be written at [0x77EF3800], we would be able to find it because the section actually ends there.
+The detection algorithm would have to go through each Code section, calculate the address range and check whether or not the code runs within those limits.
+By placing the shell code within those tiny gaps in the executable, malware writers could potentially defeat anti-malware software that make sloppy checks as to from where APIs are called.
+Therefore, it is crucial for the "good guys" to be thorough in their work and to make sure to check every nook and cranny where malware could hide.

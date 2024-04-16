@@ -1,0 +1,62 @@
+Last week, the Internet Systems Consortium (ISC) released a critical update to its popular software, BIND.
+BIND is almost everywhere on the Internet, acting as a DNS name server.
+DNS is a network service used to translate human-readable domain names to numeric identifiers called IP addresses and vice-versa.
+The update was in response to a recently discovered DoS vulnerability (CVE-2015-5477), which can be exploited to take down the vulnerable BIND server remotely.
+ISC released an urgent patch for this vulnerability due to its severity.
+Only one packet is required to remotely crash the servers; no authentication is required.
+That means the attack can be easily automated and some reports already show that it’s been exploited in the wild.
+In this post, we are analyzing the root cause of this vulnerability.
+This DoS issue is caused by an error in function dns_tkey_processquery,which is used to handle dns TKEY query.
+It parses the dns TKEY query and extracts the TKEY Resource Record to do the related operation, such as TKEY Deletion and GSS-API Establishment.
+The code snippet (version 9.7.7) below shows the vulnerable function dns_tkey_processquery.
+isc_result_t dns_tkey_processquery(dns_message_t *msg, dns_tkeyctx_t *tctx,
+dns_tsig_keyring_t *ring)
+{
+....
+omitted for clarity
+...
+tkeyset = NULL;
+name = NULL;
+result = dns_message_findname(msg, DNS_SECTION_ADDITIONAL, qname,
+dns_rdatatype_tkey, 0, &name, &tkeyset);
+The function dns_tkey_processquery calls dns_message_findname to extract the TKEY Resource Record from the Additional section according to the domain name in the Query section of the DNS request.
+isc_result_t dns_message_findname(dns_message_t *msg, dns_section_t section,
+dns_name_t *target, dns_rdatatype_t type,
+dns_rdatatype_t covers, dns_name_t **name,
+dns_rdataset_t **rdataset)
+{
+....omitted for clarity...
+if (name != NULL)
+REQUIRE(*name == NULL); // pass assertion
+....omitted for clarity...
+result = findname(&foundname, target,
+&msg->sections[section]);
+....omitted for clarity...
+if (name != NULL)
+*name = foundname; //not NULL anymore
+....omitted for clarity...
+result = dns_message_findtype(foundname, type, covers, rdataset);
+//result= ISC_R_NOTFOUND here
+if (result == ISC_R_NOTFOUND)
+return (DNS_R_NXRRSET);
+If dns_message_type returns ISC_R_NOTFOUND, it will go back to dns_tkey_processquery and call dns_message_findname again to find the TKEY Resource Record from Answer section.
+Because the parameter “name” for dns_message_findname doesn’t reset to NULL after call the function in the first time, it will cause a Require assertion failure which makes the named progress terminate and exit.
+if (result != ISC_R_SUCCESS) {
+if (dns_message_findname(msg, DNS_SECTION_ANSWER, qname,
+dns_rdatatype_tkey, 0, &name,
+&tkeyset) != ISC_R_SUCCESS) {
+As you can see above, the function “dns_message_findname” is called again.
+isc_result_t dns_message_findname(dns_message_t *msg, dns_section_t section,
+dns_name_t *target, dns_rdatatype_t type,
+dns_rdatatype_t covers, dns_name_t **name,
+dns_rdataset_t **rdataset)
+{
+….
+if (name != NULL)
+REQUIRE(*name == NULL); //assertion fail this time!
+As a result, the named process terminates due to the assertion failure as shown in image below.
+The PoCs are also widely available, which may have accelerated the massive adoption by attackers.
+Both of these 2 PoCs send the TKEY query via UDP, but actually during our analysis we were able to verify that sending the attack over TCP is just as effective.
+Investigation of these PoCs also showed that the CLASS field of the resource record in the Question section is not fixed: it can be either “0xff” or “1”.
+From our tests, we were able to verify that only these 2 values can be used to conduct the attack.
+Fortinet released IPS signature ISC.BIND.TKEY.Queries.DoS for this vulnerability to cover all the attack vectors mentioned above.

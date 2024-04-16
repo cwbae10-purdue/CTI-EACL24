@@ -1,0 +1,51 @@
+Recently we blogged about iOS URL hijacking in Masque Attack II [1].
+According to Apple’s “App Programming Guide for iOS”, “If more than one third-party app registers to handle the same URL scheme, there is currently no process for determining which app will be given that scheme.” [2] However, when two apps register the same URL scheme, iOS always launches the same one to handle it in our experiments using multiple iOS versions and device models.
+Furthermore, one app can hijack another app from handling the same URL scheme if the developer crafts the bundle id carefully.
+Without fixing this imperfect design, iOS leaves this issue to app developers.
+There are many URL scheme conflicts among apps in Apple store.
+While not all of them are malicious or hijacking, they do interfere with each other and cause trouble for users.
+We name URL scheme conflicts in iOS apps as URL Masques.
+In this blog, we will study URL Masques on App Store in depth, and discuss potential attacks using them.
+Figure 1. iOS Inter-App Communication
+We use Facebook as an example to describe the Inter-App Communication between iOS apps, which normally has two steps [11]:
+Step 1: An app requests service from another “server” app by sending the later a main URL in certain scheme.
+For example, if an app Alice wants to login using Facebook, it sends a main URL with the scheme fbauth:// to the Facebook app for authentication.
+Step 2: After the server app finishes processing the request, it sends a callback URL to return results back to the calling app.
+For example, the Facebook app returns authentication results back to App Alice by sending a URL of fb118493188254996://, as shown in Figure 1.
+We found three kinds of URL Masques in App Store apps:
+● Main URL Masques for unjustified purposes
+● Main URL Masques to implement product features
+● Callback URL Masques due to sharing codebase or SDK by mistake
+The first kind hijacks other apps’ URL schemes for unjustified purposes, as found in the case where “Zhanqi TV” hijacks “Alipay” URL scheme.
+A recent wooyun article by Min Zheng [7] reveals that an App Store app “Zhanqi TV” [3], a platform for live broadcasting game contests, hijacks the URL scheme “Alipay” app, the popular payment app from Alibaba on latest non-jailbroken iOS 8.2.
+Figure 2 illustrates such a scenario, with Figure 2-1 showing the normal case where iOS launches Alipay app to process “alipay://” payment calls and Figure 2-2 showing the hijacking case where Zhanqi TV hijacks “alipay://” scheme thus prevents Alipay app from doing that.
+Figure 2-1.
+Normally iOS launches Alipay app to handle “alipay://” scheme for payments
+Figure 2-2.
+“Zhanqi TV” hijacks "alipay://" and prevents Alipay app from handling that scheme
+Figure 3.
+“Zhanqi TV” has an empty handler for "alipay://" URL scheme
+We reverse-engineered the “Zhanqi TV” app and found that its Alipay URL scheme handler did nothing, as shown in Figure 3.
+However, it does block other apps from using Alipay by doing so.
+We don’t know what is the exact reason for Zhanqi TV to do so.
+However, we do learn from such a case that URL Masques do bypass the Apple App Store review process and they cause trouble for iOS users.
+After being notified of this problem, Zhanqi TV developers are actively fixing this issue.
+The second kind leverages conflicting URL schemes to implement product features.
+As we noted in Masque Attack II blog [1], popular apps such as Google Chrome export functionalities to other apps through URL schemes.
+For instance, when opening links starting with “googlechrome://” or “googlechromes://” in mobile Safari, iOS launches Google Chrome to handle them.
+However, an app working as an “Anywhere Filter Browser” on App Store [8] preempts Google Chrome from doing that by registering “googlechrome://” and “googlechromes://”.
+In this way, it implements a part of its filtering features.
+At least for now, the review policy of Apple Store has not explicitly denied such a usage of URL Masques, as shown in this Anywhere Filter Browser case.
+The third kind might be due to sharing codebase or SDK without altering URL schemes.
+Some of these apps are using the same template for development and that might become the root cause of massive URL scheme conflictions.
+Table.1 shows the top 10 URL Masques collected from about 720K iOS apps.
+E.g.
+8048 different apps register the same URL scheme: fb118493188254996://, though many of them are from different developers.
+In the top list, ‘fbxxxxxxxxxxx’ are callbacks for facebook [9]; ‘QQxxxxxxxxxxx’ are callbacks for QQ, a popular messenger in China [10]; ‘dps.’ is a scheme prefix used in apps developed with Adobe Digital Publishing Suite [12, 13, 14].
+Table 1.
+Top 10 URL Masques
+Table 1 shows that callback URL Masques are much more popular than main URL Masques.
+Furthermore, just like their main URL counterparts, callback URL masques can also be used to attack against valuable apps.
+Due to the prevalence of callback URL Masques, it is even a bigger challenge for Apple to validate all these callback URL Masques in the review process.
+Here is a demo for iOS callback URL hijacking between Uber and Facebook.
+Note that this attack exploits the iOS URL hijacking vulnerability instead of any vulnerability in these two apps.

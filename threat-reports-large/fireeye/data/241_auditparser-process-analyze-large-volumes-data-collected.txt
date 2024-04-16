@@ -1,0 +1,54 @@
+In this blog post, I am going to show you some ways to review data that have been collected with the Mandiant Redline™ tool, without using the Redline interface.
+I will be using Mandiant's AuditParser™ tool in order to transform the Redline audit XML into tab separated data.
+This will let you take data and view it in different ways, as well as perform timeline analysis on data you have collected.
+I will focus on using data collected by a Redline Portable collector, which was configured to perform a Comprehensive Collection.
+The AuditParser tool will also work with audit data that have been collected with the MIR Agent, or with IOCFinder™.
+Timeline analysis can be an important technique when performing an investigation on a system.
+It involves taking data from several sources, in this case, Redline audit data, and sorting it chronologically.
+This allows an analyst to see numerous data sources in a chronological fashion, allowing multiple, discrete events to be correlated together.
+I will be demonstrating timeline analysis, with AuditParser, on a system that is infected with malware.
+The first item I want to show is how AuditParser converts audit data to the tab separated files.
+Once you've got the AuditParser tool, you can run it, and point to the directory of audit data that you have collected with Redline.
+There is also a Windows executable version of this tool available, if you do not have access to Python.
+C:Documents and SettingsUserDesktopAuditParser>python AuditParser.py -i ..LR_Collection -o ..Processed_Audits Parsing input file: ..LR_Collectionmir.w32apifiles.1176360b.xml Parsing input file: ..LR_Collectionmir.w32eventlogs.771e480e.xml Parsing input file: ..LR_Collectionmir.w32registryapi.3e2e3e42.xml Parsing input file: ..LR_Collectionmir.w32scripting-persistence.27091e25.xml ...
+This will output a set of files in ..Processed_Audits, which are the tab separated files, one for each audit in the input.
+C:Documents and SettingsUserDesktopAuditParser>dir ..Processed_Audits Directory of C:Documents and SettingsUserDesktopIndividual_Audits 10/19/2012 08:56 PM 20,385,250 mir.w32apifiles.1176360b.xml.txt 10/19/2012 08:56 PM 592,829 mir.w32eventlogs.771e480e.xml.txt 10/19/2012 09:00 PM 48,625,256 mir.w32registryapi.3e2e3e42.xml.txt 10/19/2012 09:01 PM 301,325 mir.w32scripting-persistence.27091e25.xml.txt ...
+Now that you have these files parsed, you can start performing analysis with any software that supports processing tab separated files, such as Microsoft Excel or Apache OpenOffice.
+This lets you quickly sort and filter data you have collected and quickly look for anomalies.
+Below is a screenshot of the output of the Persistence audit.
+The persistence audit combines the File, Registry and Services audit to look for executable files that will persistently run on a system.
+Each of the columns - denoting information collected from the Registry, Filesystem and Services - can be filtered in order to perform an investigative analysis.
+If you sort by files that do not have digital signatures (Column: Signature Exists, select 'False'), one entry is found.
+This is a serviceDLL entry.
+This indicates that there is an unsigned service running on this system.
+The Persistence audit gives you some information you can use to further analysis.
+It gives the location to the file on the file system, the file owner, a hash of the file, Registry path & value information.
+The file full path, "c:WINDOWSimewmimachine2.dll" is not a typical location for a service DLL, so this item is definitely something worth investigating.
+You could continue reviewing data in individual audits using some of the information presented in the Persistence audit module.
+In fact, there is some additional information contained in the XML for the persistence item, pertaining to the file 'wmimachine2.dll.'
+Continuing with the individual audits would be familiar sorting and filtering operations, so that will be skipped for now.
+Instead, what I'm going to show next is how to timeline the audit data that we have already collected in order to identify other items of interest which have occurred around the creation of our malicious serviceDLL.
+In order to do this, I will rerun the AuditParser tool with the timeline switches.
+C:Documents and SettingsUserDesktopAuditParser>python AuditParser.py -i ..LR_Collection -o ..Processed_Audits ed -t --starttime 2012-10-18T00:00:00Z --endtime 2012-10-21T00:00:00Z
+This will rerun AuditParser, regenerating the .txt files you already have processed and creating a new file, timeline.txt.
+This is a tab separated file that contains a timeline of File, Registry, Event Log, Url History, Process Item and Prefetch audit data.
+I picked a date range of 2012-10-18 through 2012-10-20 to timeline.
+Here is a screenshot of timelined data:
+You can see that we timeline on multiple timestamps for each item.
+For instance, a file can have up to eight different timestamps (API + NTFS timestamps), and the AuditParser tool will create an entry for each of those timestamps.
+From the Persistence audit data, you can see the file created date is "2012-10-20T01:06:55Z".
+You can start by narrowing down the date range of items displayed by filtering the date with the string '2012-10-20T01'.
+This will show you all of the activity on 2012-10-20 between 01:00:00Z and 01:59:59Z.
+Below is a screenshot of some activity around the time of interest.
+If you look through the data, you can see that there was a file staged in C:Recycler, named 'scvhost.exe'.
+This was likely executed with a command shell, cmd.exe.
+After scvhost.exe was executed, you can see the Eventlog record the service start for the ".NET Runtime Optimization Service v2.086521.BackUp_X86" service.
+Further down, you can see artifacts in the registry where the '6to4' service has been hijacked and used to host this new, malicious service.
+Here you can see the how the registry has been timelined, and shows the Paths and Values.
+This does not necessarily finish the investigation of this host.
+Malware analysis may need to be performed on the malware 'scvhost.exe' and 'wmimachine2.dll' in order to identify additional host-based and network-based indicators of compromise.
+The source of 'scvhost.exe' has not been identified, so that would require further investigation.
+Hopefully, this demonstration of using AuditParser to process Redline audit data has been helpful, showing a new way to process and analyze the large volume of data that can be collected with Redline.
+The timeline capability of AuditParser can be a powerful analysis tool.
+If they are not already, Redline and AuditParser should become part of your investigative toolkit.
+You can download each tool here (Redline) and here (AuditParser).

@@ -1,0 +1,127 @@
+Our previous analysis of the Flame malware, the advanced cyber-espionage tool that’s linked to the Stuxnet operation, was initially published at the end of May 2012 and revealed a large scale campaign targeting several countries in the Middle East.
+The Flame malware, including all of its components, was very large and our ongoing investigation revealed more and more details since that time.
+The news about this threat peaked on 4th June 2012, when Microsoft released an out-of-band patch to block three fraudulent digital certificates used by Flame.
+On the same day, we confirmed the existence of this in Flame and published our technical analysis of this sophisticated attack.
+This new side of Flame was so advanced that only the world’s top cryptographers could be able to implement it.
+Since then, skeptical jokes about Flame have disappeared.
+Later in June, we definitively confirmed that Flame developers communicated with the Stuxnet development team, which was another convincing fact that Flame was developed with nation-state backing.
+We also published our analysis of the Flame command-and-Control (C&C) servers based on external observations and publicly available information.
+That helped our understanding of where the C&C servers were located and how they were registered.
+With this blog post, we are releasing new information that was collected during forensic analysis of the Flame C&C servers.
+This investigation was done in partnership with Symantec, ITU-IMPACT and CERT-Bund/BSI.
+Operating system: 64-bit Debian 6.0.x
+Virtualization: In most of cases running under OpenVZ
+Programming languages used: PHP (most of code), Python, bash
+Database: MySQL with InnoDB tables
+Web server: Apache 2.x with self-signed certificates
+One of the C&C servers we analysed was owned by a European company with data centers in another European Union country.
+We managed to get a server image which was an OpenVZ file-system container.
+Working with the OpenVZ file-system containers added some constraints which made forensic analysis difficult.
+For instance, having only OpenVZ containers doesn’t let you look into the slack space of the hard drive to recover some deleted files.
+This server configuration was a typical LAMP (Linux, Apache, MySQL, PHP) setup.
+It was used to host a web-based control panel as well as to run some scheduled fully automated scripts in the background.
+It was accessible over the HTTPS protocol, ports 443 and 8080.
+The document root directory was /var/www/htdocs/ which has sub-directories and PHP scripts.
+While the systems had PHP5 installed, the code was made to run on PHP4 as well.
+For example, /var/www/htdocs/newsforyou/Utils.php has the “str_split” function defined which implements the “str_split” function logics from PHP5, that was not available in PHP4.
+The developers of the C&C code most likely implemented compatibility with PHP4 because they were not sure which one of two major PHP versions would be installed on the C&Cs.
+Figure 1 – Contents of the “newsforyou” directory
+The C&C control panel code was discovered in “newsforyou/CP/CP.php”.
+Opening it with a web browser displayed a login prompt:
+Figure 2 – Control panel login
+The username and password hash were later found in local MySQL database in the “settings” table.
+Login: username Password hash (MD5): 27934e96d90d06818674b98bec7230fa
+(ok, cracked: 900gage!
+@#)
+We reset the password hash and logged in to see how the panel looked from the attacker’s side.
+We were more than surprised when we logged in.
+Figure 3 – Control panel interface
+Our first impression was that the control panel appeared to be implemented by script-kiddies.
+It looked like a very early alpha version of a botnet C&C control panel.
+However, revisiting this picture one more time made everything clear – the attackers deliberately chose this interface.
+Unlike traditional cyber-criminals who implement eye-candy web interfaces which the average user can easily recognize as a botnet control panel, the developers of the Flame C&C made it very generic and unpretentious.
+The C&C developers didn’t use professional terms such as bot, botnet, infection, malware-command or anything related in their control panel.
+Instead they used common words like data, upload, download, client, news, blog, ads, backup etc.
+We believe this was deliberately done to deceive hosting company sys-admins who might run unexpected checks.
+There is no way to send commands to infected systems using only the C&C panel web interface and this is another difference from traditional botnets.
+An infected machine was controlled using a message-exchange mechanism based on files (the developers called the files “data containers”).
+To send a command or set of commands to a victim, the attacker uploaded a specially crafted tar.gz archive, which was processed on the server.
+A special server script extracted the archive contents and looked for *.news and *.ad files.
+These files were put into corresponding directories “news” and “ads”.
+The C&C allows an attacker to push an update to a specific victim, or all victims at a time.
+It is possible to prioritize a command which allows to organize an order of commands (i.e.
+collect all data and only after self-removal).
+The priority and target client ID was transferred in an unconventional way.
+They were stored in the filename that the attacker uploaded to a C&C.
+Below is a template of the news filename expected by the C&C:
+<random_number>_<user_type>_<user_id>_<priority>.<file extension>
+Source files analysis show that the C&C can understand several communication protocols to talk to different clients:
+OldProtocol
+OldProtocolE
+SignupProtocol
+RedProtocol (mentioned but not implemented)
+A close look at these protocol handlers revealed four different types of clients codenamed SP, SPE, FL and IP.
+We can confirm that the Flame malware was identified as client type FL.
+Obviously, this means there are at least three other undiscovered cyber-espionage or cyber-sabotage tools created by the same authors: SP, SPE and IP.
+Figure 4 – Clients and Protocols relations found in this C&C>
+A typical client session handled by the C&C started from recognition of the protocol version, then logging of connection information, followed by decoding client request and saving it to the local file storage in encrypted form.
+All metadata about files received from the client was kept in a MySQL database.
+The C&C script encrypts all files received from the client.
+The C&C uses a PGP-like mechanism to encrypt files.
+First, the file data is encrypted using the Blowfish algorithm in CBC mode (with static IV).
+The Blowfish key is generated randomly for each file.
+After file encryption, the Blowfish key is encrypted with a public key using asymmetric encryption algorithm from the openssl_public_encrypt PHP function.
+The encryption parameters:
+IV: 12345678
+ОpenSSL public key:
+—–BEGIN PUBLIC KEY—– MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtZslxFiR9KJE05Nhh7Xk +lVVpD9F6AQnvZeknDiwL3SBjZB/dB/LLXtwiet8LUS6JYCXnaIq4NxW1PymwGFZ zuc/B3p+ZAFPt06veOHOfaMAI0KDMb+laNPINvn/jJ8TfvCaUMUuMEY4sayh0xwD MwSAazMYI8rvaaS/BqhI/6vPN6D02UIpwT1TSBVeRRoPBHuYE7A93b8vJw9sBGIp KXZ90sgP1CjdAmCbhYelelninKdeTKCGvd5YXt86grWgEVf5WXzxXi3ZK1T4w0Yt mNhUEAwS7zCdtZ+Ak8b0M83wAirASvPZiBl6qF8hqCT5pKkwgBG//kk8JicboLsM VQIDAQAB —–END PUBLIC KEY—–
+This guarantees that no one other than the attacker can read the files obtained from the server file storage, because only the attacker has the private key which is essential to decrypt the files from the clients.
+In terms of functionality, infected clients support very few commands:
+GET_NEWS: Gets file(s) from ./news sub-directory that are assigned to current client ID.
+The news files contain updates and extra modules of Flame, as well as special commands, such as changing registry key values.
+ADD_ENTRY: Stores information collected by the client.
+ADD_SUB_ENTRY: Same as ADD_ENTRY.
+GET_AD: Gets files from ./ad_path directory.
+This functionality seems to be broken in the C&C, because there was no ./ad_path but ./ads directory.
+However the attacker can upload files to ./ads directory via the control panel.
+We have noticed that the naming convention of files and classes in the scripts is not common for Unix developers because every word in the variable, function and file name started with a capital letter.
+Also, there are special classes that are defined but never instanced, such as IProtocol (Protocol.php) and IRequestHandler (RequestHandler.php).
+Classes that are never instanced are used for inheritance mechanism in Object Oriented Programming.
+These classes are called interfaces in programming languages such as C++, C# and Java.
+Putting capital “I” to prefix such classes is a common habit for many Windows C++/C# developers.
+One of the most valuable traces left by the developers in the scripts were their nicknames and internal timestamps:
+@author [O] censored in 12/3/2006
+@author [D] censored on 12/4/2006
+@author [D] censored on 01/23/2007
+@author [H] censored on 09/02/2007
+@author [O] censored, [D] censored
+@author [D] censored (modifications)
+@author modified heavily by [D] censored
+@author [R] censored @copyright 2011
+Here is what is known regarding the activity of the developers:
+[D] censored: worked on at least 31 files
+[H] censored: worked on at least 10 files
+[O] censored: worked on at least 4 files
+[R] censored: worked on at least 1 file (duplicate files remover)
+Figure 5 – Timeline of Flame C2 programmers’ activity
+From this, we can conclude that the first C&C files were created on 03 December 2006, which means that the Flame platform is much older than we originally estimated.
+There were four people responsible for this C&C development.
+It is obvious to us that one of them, [H] censored, was more experienced than the others.
+He coded some very smart patches and implemented complex logics; in addition, he seems to be a master of encryption algorithms.
+We think [H] censored was most likely a team lead.
+The operators of the C&C used automation to prepare the server environment.
+We believe this is because they had so many servers that it was unreasonable to do everything manually.
+Below is a part of an interesting script (LogWiper.sh) from the filesystem root directory that remained on the current server:
+#!
+/bin/bash apt-get install -y chkconfig #stop history echo “unset HISTFILE” >> /etc/profile history -c find ~/.bash_history -exec shred -fvzu -n 3 {} \; service rsyslog stop chkconfig rsyslog off service sysklogd stop chkconfig sysklogd off service msyslog stop chkconfigm syslog off service syslog-ng stop chkconfig syslog-ng off shred -fvzu -n 3 /var/log/wtmp shred -fvzu -n 3 /var/log/lastlog shred -fvzu -n 3 /var/run/utmp shred -fvzu -n 3 /var/log/mail.
+* shred -fvzu -n 3 /var/log/syslog* shred -fvzu -n 3 /var/log/messages* #stop logging ssh cp /etc/ssh/aa sed -i ‘s/LogLevel.
+*/LogLevel QUIET/’ /etc/ssh/sshd_config shred -fvzu -n 3 /var/log/auth.log* services sh restart #delete hidden files find / -type f -name “.
+*” | grep -v “.bash_profile” | grep -v “.bashrc” | grep “home” | xargs shred -fvzu -n 3 find / -type f -name “.
+*” | grep -v “.bash_profile” | grep -v “.bashrc” | grep “root” | xargs shred -fvzu -n 3 #stop apache2 logging sed -i ‘s|ErrorLog [$/a-zA-Z0-9{}_.
+]*|ErrorLog /dev/null|g’ /etc/apache2/sites-available/default sed -i ‘s|CustomLog [$/a-zA-Z0-9{}_.
+]*|CustomLog /dev/null|g’ /etc/apache2/sites-available/default sed -i ‘s|LogLevel [$/a-zA-Z0-9{}_.
+]*|LogLevel emerg|g’ /etc/apache2/sites-available/default sed -i ‘s|ErrorLog [$/a-zA-Z0-9{}_.
+]*|ErrorLog /dev/null|g’ /etc/apache2/sites-available/default-ssl sed -i ‘s|CustomLog [$/a-zA-Z0-9{}_.
+]*|CustomLog /dev/null|g’ /etc/apache2/sites-available/default-ssl sed -i ‘s|LogLevel [$/a-zA-Z0-9{}_.
+]*|LogLevel emerg|g’ /etc/apache2/sites-available/default-ssl …
+shred -fvzu -n 3 /var/log/apache2/* service apache2 restart #self delete find ./ -type f | grep logging.sh | xargs -I {} shred -fvzu -n 3 {} \;

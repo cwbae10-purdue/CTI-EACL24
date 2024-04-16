@@ -1,0 +1,46 @@
+At this week’s RSA USA 2016 conference, I will be presenting my research on the attack surface and exploit mitigations in EdgeHTML, the rendering engine used by the Edge browser on Windows 10.
+One of the interesting features of EdgeHTML that I will discuss is its ability to use the built-in WinRT PDF Renderer library in Windows for rendering PDFs.
+The feature is useful in that users do not need to install and maintain additional software for reading PDFs.
+However, the feature also opens up another attack surface that can be used to attack the Edge browser.
+This blog post takes a look at this library and its security implications.
+The built-in WinRT PDF Renderer library in Windows (discussed here as WinRT PDF) is part of the Windows Runtime (WinRT) and was first introduced in Windows 8.1.
+It originally aimed to make it easier for developers to incorporate the rendering of PDFs in their Windows Store applications.
+The PDF engine in WinRT PDF can be traced back to Windows 8.
+Channel 9 noted that it is also the PDF engine used in the Reader App in Windows 8 and later in Windows 8.1.
+WinRT libraries such as WinRT PDF have well-documented APIs that applications can use.
+In the case of WinRT PDF, the Windows.Data.Pdf namespace provides the necessary classes that would allow applications to render PDFs into image files.
+Interestingly, in addition to using the documented WinRT PDF APIs, EdgeHTML uses additional, nondocumented WinRT PDF APIs that enable features such as PDF text searching and selection.
+Under the hood, EdgeHTML uses its edgehtml!CPDFHelper class for interfacing with WinRT PDF.
+Edgehtml!CPDFHelper retrieves the activation factory for the following WinRT PDF classes, which it then uses to instantiate the necessary classes used for loading, rendering and performing various operations on a PDF file:
+Class ID: “Windows.Data.Pdf.PdfDocument” (Windows::Data::Pdf::CPdfDocument) Activation Factory IID: {433A0B5F-C007-4788-90F2-08143D922599} (Windows::Data::Pdf::CPdfDocumentStatics)
+Activation Factory IID: {433A0B5F-C007-4788-90F2-08143D922599} (Windows::Data::Pdf::CPdfDocumentStatics)
+Class ID: “Windows.Data.Pdf.Internal.PdfStreamWrapper” (PdfInternal::PdfStreamWrapper) Activation Factory IID: {D140B2D5-F6BC-4A10-83A0-534A2898C132} (PdfInternal::PdfStreamWrapperStatics)
+Activation Factory IID: {D140B2D5-F6BC-4A10-83A0-534A2898C132} (PdfInternal::PdfStreamWrapperStatics)
+Class ID: “Windows.Data.Pdf.Internal.PdfControl” (PdfInternal::CPdfControl) Activation Factory IID: {18D31A9F-2E9A-4036-B464-958037CDEB3D} (PdfInternal::CPdfControlStatics)
+Activation Factory IID: {18D31A9F-2E9A-4036-B464-958037CDEB3D} (PdfInternal::CPdfControlStatics)
+Note that unlike COM class factories that are retrieved via CoGetClassObject(), WinRT activation factories are instead retrieved via a call to combase!RoGetActivationFactory().
+Also, in EdgeHTML, the edgehtml!IEWinRTUtil::GetActivationFactoryHelper() helper function is used as a wrapper for calling RoGetActivationFactory().
+Of the three WinRT PDF classes, only the Windows.Data.Pdf.PdfDocument class is documented.
+It is the main class that uses the PDF engine to load and parse the PDF file.
+Windows.Data.Pdf.Internal.PdfStreamWrapper is a thin wrapper used to pass a URL and a progress handler that will be used in the PDF loading operation.
+Windows.Data.Pdf.Internal.PdfControl is used for rendering the PDF and handling window messages destined to the rendered PDF, in addition to features such as PDF text searching and selection.
+On the EdgeHTML side, edgehtml!CPDFHelper additionally instantiates a few more classes: edgehtml!CPdfHost is used by WinRT PDF for sending messages to or retrieving information from EdgeHTML.
+Edgehtml!CPDFFlatPageElement acts as an internal HTML element that holds the rendered PDF, and if necessary, it relays the window messages it receives to Windows.Data.Pdf.Internal.PdfControl.
+Finally, edgehtml!CPDFFindEngine is instantiated when performing text search operations.
+It uses Windows.Data.Pdf.Internal.PdfControl for the actual search operation.
+WinRT PDF moved into the spotlight with Windows 10 because it was used by the Edge browser for rendering PDFs.
+From an attacker’s perspective, the direct accessibility of WinRT PDF via Edge means that vulnerabilities can now be used in drive-by attacks against users.
+As an example, a JavaScript code in the Web page shown below injected a 25×25 embed element that references a PDF file.
+The referenced PDF file is rendered by WinRT PDF, which is then manifested by the small 25×25 square block below the text:
+If the PDF file contains an exploit for a WinRT PDF vulnerability, the user is unlikely to notice that the drive-by attack is occurring.
+Furthermore, since Edge is also the default PDF reader in Windows 10, additional attack vectors for exploitation such as email attachments would also apply.
+PDF rendering using WinRT PDF is enabled by default in Edge, and as of this writing, there is no option to disable it in the user interface.
+Furthermore, since WinRT PDF is a library, other applications that use it for PDF rendering are also potential vectors for exploitation.
+A major factor that will affect when and how often we see in-the-wild exploits for WinRT PDF vulnerabilities depends on how difficult it is to exploit them.
+In Edge, WinRT PDF runs in the context of the Edge content process; this means that mitigations applied to the Edge content process such as ASLR (with high entropy and force ASLR enabled), DEP and the AppContainer process isolation mechanism also apply to WinRT PDF.
+On 64-bit Windows installations, WinRT PDF also runs in the context of a 64-bit process where ASLR is more effective.
+Furthermore, WinRT PDF is compiled with Control Flow Guard enabled — a recently introduced exploit mitigation that breaks common exploitation techniques.
+The combination of these mitigations makes the development of exploits for WinRT PDF vulnerabilities time-consuming and therefore costly for an attacker.
+WinRT PDF opens up an additional attack surface that can be leveraged to attack the Edge browser.
+But for now, exploiting WinRT PDF via Edge is expensive because of the combined exploit mitigations in place.
+Interest in WinRT PDF and the development of new exploitation techniques will determine when an Edge drive-by exploit leveraging a WinRT PDF vulnerability will be seen in the wild.

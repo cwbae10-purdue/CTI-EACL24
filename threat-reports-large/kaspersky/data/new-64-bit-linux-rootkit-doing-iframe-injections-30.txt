@@ -1,0 +1,27 @@
+A few days ago, an interesting piece of Linux malware came up on the Full Disclosure mailing-list.
+It’s an outstanding sample, not only because it targets 64-bit Linux platforms and uses advanced techniques to hide itself, but primarily because of the unusual functionality of infecting the websites hosted on attacked HTTP server – and therefore working as a part of drive-by download scenario.
+The malware module was specially designed for the kernel version 2.6.32-5-amd64, which happens to be the latest kernel used in 64-bit Debian Squeezy.
+The binary is more than 500k, but its size is due to the fact that it hasn’t been stripped (i.e.
+it was compiled with the debugging information).
+Perhaps it’s still in the development stage, because some of the functions dont seem to be fully working or they are not fully implemented yet.
+The malware ensures its startup by adding an entry to the /etc/rc.local script:
+insmod /lib/modules/2.6.32-5-amd64/kernel/sound/module_init.ko
+After loading into memory, the rootkit uses one of two methods to retrieve kernel symbols and write them to the /.kallsyms_tmp file:
+/bin/bash -c cat /proc/kallsyms > /.kallsyms_tmp
+/bin/bash -c cat /boot/System.map-uname -r > /.kallsyms_tmp
+Then it extracts the memory addresses of several kernel functions and variables and stores them in the memory for the later use.
+The temporary file is immediately deleted:
+rm /.kallsyms_tmp -f
+In order to hide files and the startup entry, the rootkit hooks the following kernel functions, either by inline hooking or by replacing their addresses in memory with pointers to its own malicious functions:
+vfs_readdir vfs_read filldir64 filldir
+Besides hiding its own module, the malware attempts to hide the following files and threads:
+zzzzzz_command_http_inject_for_module_init zzzzzz_write_command_in_file module_init.ko sysctl.conf /usr/local/hide/first_hide_file/* /ah34df94987sdfgDR6JH51J9a9rh191jq97811/*
+backconnect_command_thread_name new_backconnect_command_thread_name read_command_http_inject_thread_name write_startup_command_thread_name write_se_linux_command_thread_name get_http_inj_from_server_thread_name
+The iFrame injection mechanism is quite interesting: the malware substitutes the system function tcp_sendmsg – which is responsible for building TCP packets – with its own function, so the malicious iFrames are injected into the HTTP traffic by direct modification of the outgoing TCP packets.
+In order to obtain the actual injection payload, the malware connects to the C&C server using an encrypted password for authentication.
+We weren’t able to connect to the C&C on the port used by malware, but the malicious server is still active and it hosts other *NIX based tools, such as log cleaners (big thanks to my colleague David Jacoby for providing this information).
+So far, in most of the drive-by download scenarios an automated injection mechanism is implemented as a simple PHP script.
+In the case described above, we are dealing with something far more sophisticated – a kernel-mode binary component that uses advanced hooking techniques to ensure that the injection process is more transparent and low-level than ever before.
+This rootkit, though it’s still in the development stage, shows a new approach to the drive-by download schema and we can certainly expect more such malware in the future.
+An excellent, detailed analysis of this rootkit was recently posted on CrowdStrike blog
+Kaspersky Lab already detects this rootkit as: Rootkit.Linux.Snakso.a.

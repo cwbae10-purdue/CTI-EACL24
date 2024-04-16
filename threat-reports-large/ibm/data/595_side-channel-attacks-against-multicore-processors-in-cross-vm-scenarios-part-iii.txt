@@ -1,0 +1,41 @@
+Welcome to Part III of this series about side-channel attacks in infrastructure-as-a-service (IaaS) clouds, which use virtual machines (VMs) to provide isolation between customers, called tenants.
+In Part II, I reviewed two attacks — El Gamal and RSA encryption — against these scenarios.
+In this final post, I will cover a third attack as well as offer some final thoughts.
+The third attack is similar to last-level cache (LLC) side-channel attacks in nature, but it differs in both objective and set identification.
+The objective of the S$A attack is to obtain an advanced encryption standard (AES) key from the target VM.
+In order to avoid the requirement of probing the L3 cache looking for temporal access patterns, it assumes that the target VM is using small (4 KB) pages for the encryption process.
+If this is true, then many operating systems such as Linux will align their base addresses on a page boundary.
+The S$A attack also takes advantage of the typical scenario in which the lookup tables are cached consecutively.
+The technique furthermore assumes that the attacker knows the cipher text, a reasonable assumption as known-cipher text or chosen-cipher text attacks are fairly common.
+The attack attempts to recover the AES key used by OpenSSL version 1.01F, a reasonably recent version of the library, by attacking the last round of the encryption.
+Given the assumptions above, the attacker can find the lookup tables by probing sets belonging to the encrypting library.
+This reduces the number of required probes as compared to Prime+Probe attacks, which require probing the entire LLC.
+The cipher text can be evaluated one byte at a time to produce candidate keys.
+The correct key value is the candidate that appears in all cipher text evaluations.
+The authors of the S$A attack claim to be able to recover an AES key in three minutes in the XEN 4.1 hypervisor and in two minutes in VMware ESXi 5.5.
+This is an alarming claim to anyone who uses AES in a way that can be triggered by this attack.
+If it is indeed true, then key rotation must occur much faster than anyone thought would be required in the past.
+These three side-channel attacks are all limited in some way and require assumptions that may not be practical.
+The multicore FLUSH+RELOAD attack requires page deduplication across VMs, which has been strongly discouraged by virtual machine manager (VMM) authors and is rarely used.
+Recall that this is exactly the scenario that the platform-as-a-service (PaaS) clouds face due to their typical lack of VMs and VMMs.
+Therefore, the FLUSH+RELOAD attack is most definitely still relevant in those situations.
+The multicore Prime+Probe attack and the S$A attack require that the attacker VM use large memory pages.
+This means that the VMM must support large pages itself.
+Prime+Probe further requires the ability to probe the entire L3 cache looking for temporal localities to identify security-critical cache sets, and S$A requires that the victim use small memory pages for the encryption operation, which is reasonable in many target operating systems.
+However, S$A does not deal with the Intel hashing algorithm discussed in Prime+Probe, and this should complicate the attack.
+What can be done?
+Unfortunately, these attacks rely upon features of the CPU itself, which is why they can be so efficient.
+Various strategies have been proposed — such as using a kernel module or adding another VM to inject more noise into the timing of the cache —but these lower the performance of the tenants’ VMs and will probably not be tolerated.
+Other defenses have been contemplated, but every known direct defense against these attacks is in the research stage and therefore not obtainable by tenants.
+To prevent the S$A attack, you could use large pages within the application as a defense, but this would not be very memory-efficient.
+With every memory allocation a very large chunk of memory may be set aside when only a small amount is required.
+To prevent the multicore Prime+Probe attack, it might be possible to spread security operations around so that only partial sets are cached at any one time.
+However, this goes against not only modular programming, but also the recommendations for security sensitive code to prevent other attacks.
+Because of this, prefetching may load the data into the cache in larger quantities, making the probing of the last-level cache more efficient.
+One thing that could most definitely hamper these attacks is to cause the VMM to emulate the RDTSC instruction.
+Emulation can be done in Xen, though the deactivation of the default hybrid algorithm requires an explicit change in the tsc_mode parameter for each domain or VM.
+Without the accurate performance counter measurements, these attacks become impractical.
+This has the added benefit of making sure that legacy applications and operating systems do not have to deal with edge and corner cases possible through the native instruction, such as the possibility that time might appear to move backwards.
+However, for applications such as profilers and operating systems, which can deal with these cases and need more accurate performance counting, this becomes a burden due to the slow speed of the emulation.
+Unfortunately, defenses against these attacks are not simple or often even acceptable by the tenant.
+Until they are, these attacks will continue to be viable and dangerous.

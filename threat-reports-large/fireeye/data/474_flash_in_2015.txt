@@ -1,0 +1,156 @@
+In exploit development, the majority of the observable community (particularly the exploit kit and smash-and-grab APT groups) has longstanding favorite target products for remote exploits, but often there’s a cycle wherein a few will be the current favorites.
+There can be a number of reasons why the community will begin to favor a new target.
+Sometimes, one particularly effective attack will surface, and other exploit developers will realize that the application has a lot of undiscovered bugs, or that exploiting a bug in a given application is easier or more effective than usual.
+Other times, the existing favorite will be hardened, and exploit authors are forced to move to the next best thing.
+In the past few years, web exploits had three main targets: Internet Explorer, Java, and Flash.
+In 2013, the popularity of Java exploits peaked.
+Bug hunters became really good at finding Java bugs, and corrupting the security manager was a convenient exploitation technique.
+Multiple exploit campaigns used Java zero-days, and exploit kits (EK) universally adopted these exploits.
+In January of 2014, however, Oracle blocked the execution of unsigned applets by default, and exploit authors largely abandoned Java.
+The change left Internet Explorer and Adobe Flash as the next best targets.
+Both IE and Flash received attention from exploit developers, but in June of 2014, Microsoft began rolling out heap corruption mitigations such as an isolated heap and delayed frees for IE.
+Exploit developers again, needed to shift their focus.
+There was an intermittent period from late April until October of 2014 where no high profile Remote Code Execution (RCE) zero-day exploits were discovered.
+Following this period, we saw a flurry of creative exploits such as CVE-2014-4114 in Microsoft Office and CVE-2014-4148 in Windows True Type fonts.
+All the while, exploit kits began routinely incorporating exploits for recently patched vulnerabilities.
+In December, a watering hole attack exploited a new zero-day Flash vulnerability (CVE-2014-9163).
+By the end of the first month of 2015, we saw two more memory corruption vulnerabilities (CVE-2015-0311 and CVE-2015-0313) and one info leak (CVE-2015-0310).
+The shift to Flash was not surprising.
+Of the favorite browser targets, Java and IE both received security mitigations that fundamentally changed the application.
+For Java, their change made their platform less attractive to attack, since exploitation now required user interaction (or a new technique to bypass the prompt).
+For IE, the mitigations broke existing heap corruption techniques.
+Flash, however, did not change.
+The established techniques for exploiting bugs in Flash and bypassing ASLR remain valid.
+Although there are multiple ways to approach bypassing Address Space Layout Randomization (ASLR), the most common approach is Flash vector corruption (https://www.fireeye.com/blog/threat-research/2013/10/aslr-bypass-apocalypse-in-lately-zero-day-exploits.html for full details), which was seen in the wild as early as 2013.
+In this technique, the exploit developer corrupts the length field of a Flash vector object.
+Subsequent access of the corrupted vector from ActionScript (AS) results in access to memory outside of the vector’s original boundaries.
+This gives exploit developers the freedom to read and write arbitrary memory from AS, and is usually used to build a Return-Oriented Programming (ROP) chain dynamically, and corrupt a selected Flash object (such as a Sound object) to redirect execution to a pivot and consequently the ROP stage.
+This technique was used in Flash exploits, wherein the exploited memory corruption vulnerability resided within Flash, and in IE exploits where the vulnerability was instead exercised from AS with a call to ExternalInterface(), as seen below:
+1) Malicious webpage serves Flash file which runs its contained ActionScript 3 (AS3) code.
+2) AS3 calls Javascript (JS) via the ExternalInterface call, which triggers a bug in Internet Explorer (IE).
+In this scenario, the bug is used to corrupt the length of a Flash vector object that was allocated by AS3.
+3) AS3 uses the corrupted vector object to read and write outside of its original boundaries inside the process space to:
+a.
+Find the address of a loaded library (which is randomized by the ASLR mitigation), and optionally to dynamically search for specific sequences of x86 instructions (gadgets) within that.
+The gadgets are filled in to construct a Return-Oriented Programming (ROP) chain on the fly.
+b.
+Create a fake vtable with an entry pointing to a gadget that modifies the stack pointer, such as xchg eax, esp; ret (called a “pivot”).
+c. Corrupt a Flash object, such as a Sound object, by overwriting its vtable pointer with a pointer to the fake vtable created in b.
+4) AS3 uses the corrupted Flash object (Sound object, in this example), which transfers control to the attacker:
+a.
+The corrupted object uses its fake vtable, calling the pivot gadget.
+b.
+The pivot sets the stack pointer to point to the ROP chain and returns, thus engaging ROP.
+c. The ROP chain sets up the shellcode, usually by allocating new executable memory or marking existing memory as executable.
+d. The attacker’s shellcode now has full execution within the targeted process, and can move on to its next stage payload.
+To adapt to the new mitigations deployed in IE, exploit authors could shift any IE bug hunting to Flash, and they could continue to use existing ASLR/DEP bypass techniques with their exploits.
+Instead of exploiting a mix of Flash bugs from AS3 and IE use-after-frees (UAF) from AS3 ExternalInterface(), they just needed to focus on Flash bugs as seen below:
+Post-exploitation, APT-related samples tend to use backdoor/infostealer payloads to stage subsequent attacks.
+In contrast, exploit kit samples usually download ransomware for malvert campaigns, and is modularized to deploy other payloads as the campaign evolves.
+shared property UAF
+dynamically loaded from parameters
+Hanjuan Exploit Kit
+dynamically loaded from parameters
+Ransomware Malvert campaign
+dynamically loaded from parameters
+Ransomware Malvert campaign
+Stack buffer overflow
+embedded in binaryData, downloader
+Out of bounds RW of Shader component
+typical SC embedded in swf, downloader
+response body of logo.gif
+PlugX/Kaba, Poison Ivy
+1. dynamically loaded from parameters 2. typical SC embedded in swf, search/drop exe in docx
+We have analyzed a handful of samples related to each of these high profile vulnerabilities, and they are categorized into the following categories:
+Environmental Check Techniques – These are information gathering techniques that can serve a dual purpose of ensuring that your target will be able to be exploited before attempting, and requiring the analyst conform to the support environments.
+Obfuscation Techniques – The act of making it difficult for the analyst to figure out what is happening.
+Debugger check – this is called through ActionScript with Capabilities.isDebugger
+Browser type checks – Determining if the browser is Firefox, Chrome, IE, or other.
+This is determined with an ExternalInterface call to determine the HTTP User-Agent.
+Software version checks - Programs we have seen checked include Flash, JavaScript, and ActiveX.
+This is usually used to for a ROP chain containing version-specific offsets.
+OS language check – Again, used to determine the ROP chain to use.
+RC4 encryption – Commonly used in a variety of samples.
+For instance the last 3 high profile CVE’s used RC4 to decrypt the next layer of ActionScript from a Base64 string.
+Data segment hiding – This can include binary blobs or bitmaps, which are used to extract information from.
+Data in an external resource – Using loader.load(new URLRequest(FILENAME)), one can pull information from an external resource.
+Naming Obfuscation – While not used in every sample, a majority of them perform name mangling on function and variable names to prevent an analyst from knowing their functionality immediately.
+FlashVars – By passing parameters into the Flash file, some samples used this as a technique to inform the Flash file where to download the next stage.
+This could also be used to prevent analysis of subsequent stages, such as if a decryption key is passed in.
+Constant Unfolding – Using a series of calculations that reduce to a simple term.
+String Encryption – In one sample we previously blogged about, there was a custom encryption container based on RC4 for strings.
+String Construction – Such as (among other techniques):
+var str = "dIPKt8a4bf3RCx0YcjFVys5i6lQJpU_7HBhzk21-oNWnAZrwTMe9uOELqDXSvgGm"; var foo = str.indexOf(string.charAt((index)));
+There are two commercial Flash obfuscation tools commonly in use by exploit authors: DoSWF and SecureSWF.
+Historically, EK exploits are more heavily obfuscated than APT, but APT exploits have certainly been obfuscated with DoSWF before.
+2014-12-22 04:12:35 1/54
+2015-01-21 11:23:19 2/56
+2015-01-16 11:55:21 2/57
+2014-12-09 03:46:20 1/55
+No obfuscation, ZWS compressed
+2014-06-03 19:25:48 1/52
+No obfuscation, ZWS compressed
+CVE-2014-1776 (IE Bug)
+APT, Operation Clandestine Fox
+2014-05-20 11:33:07 6/52
+No obfuscation, CWS compressed
+APT, Operation GreedyWonk
+2014-02-14 16:34:30 1/47
+No obfuscation, CWS compressed
+CVE-2014-0322 (IE Bug)
+APT, Operation Snowman
+2014-01-20 05:42:17 0/48
+No obfuscation, CWS compressed.
+2014-05-07 11:49:15 1/52
+No obfuscation, ZWS compressed
+Given the recent focus on Flash exploits, overcoming these commercial obfuscation tools is going to be an important challenge for security professionals.
+While none of them are too difficult to extract manually, they do slow down the process.
+But the biggest challenge is for automated analyses.
+Packing and obfuscation can prevent automatic static analysis, and environmental checks can prevent the exploit from unpacking and running during dynamic analysis.
+Combining this with the dual use nature of commercial obfuscation for protecting IP (the makers of SecureSWF list plenty of huge legitimate customers) leaves security vendors with a tough problem from a detection standpoint.
+For recent high-profile Flash exploits (CVE 2014-0497, 2014-0502, 2014-0515, 2014-9163, 2015-0310, 2015-0311, and 2015-0313) and IE exploits with SWF components (CVE-2014-0322 and CVE-2014-1776), we took the earliest known sample exploiting the given vulnerability, and plotted the detection rates recorded by VirusTotal (VT) with respect to time in Figure A.
+The detection rate on the Y-axis is the percentage of detections in individual analyses on VT. For example, 25 detections from 50 products would result in 50% on the Y-axis.
+The X-axis is the date of each analysis run on VT.
+Ideally, we’d see curves that start with a high detection rate that climb steeply from day zero.
+In reality, the results are mixed, but a few patterns are obvious.
+To highlight the first days of a new attack’s lifetime, we plotted the first 20 days of each CVE in Figure B.
+Note that the Flash component of the CVE-2014-0322 did not have any detections during its first 20 days on VT, and therefore does not appear in Figure B.
+The results are concerning.
+Day zero on VT saw 1-2 out of 47-57 detections across every single high-profile Flash exploit in our sample set.
+Of course, detection ratios on VT are far from representative of detection ratios in actual attacks.
+For example, flashvars, filenames, and URLs are not present.
+Consequently, behavioral analysis won’t show much if the exploit aborts early when the environment and parameters don’t look right, or when second stage payloads have been taken down.
+Since these detection ratios are so low across the board it indicates that the industry has trouble detecting previously unknown Flash exploits.
+In Figure C, we changed day zero from the date of the first scan on VT to MAX (date of first VT scan, date publicized) to capture how quickly detection ratios changed after the sample was known.
+Series that begin before day zero were uploaded to VT before the issue was publically disclosed.
+A few points stick out.
+Detection rates for CVE-2014-0502 climbed briefly before the attack was publically announced, after which detection rose more sharply.
+This could be attributed to behind-the-scenes information sharing by security vendors or independent analysis of the attack.
+Additionally, the Flash component of CVE-2013-0322 was uploaded to VT well after the incident (Operation Snowman) was reported to the public, which explains the high detection rate on its first day.
+The sample exploiting CVE-2015-0313 followed a more unique trend.
+It was uploaded to VT on Dec. 22, 2014, and was publically disclosed on Feb. 2, 2015.
+However, by Jan. 16, detection on VT was already at 9/57.
+This was before CVE-2015-0310 and CVE-2013-0311.
+Could this be progress?
+Indeed, some of the detections were of the Flash obfuscation.
+However, the exploit did not only contain CVE-2015-0313.
+It was also bundled with CVE-2014-0515 verbatim from older exploits.
+This raises the question: How many detections would the sample have had if it did not include the old CVE-2014-0515 exploit?
+Because of this uncertainty, we can’t say for sure whether the Jan. 16 detections are indicative of stronger security products.
+CVE-2015-0313 was one of the exploits packed with RC4Decrypt(Base64Decode(giant_string)) in its first layer of obfuscation.
+Figure D shows detection rates between three different CVE-2015-0313 samples.
+The only differences between the first two samples are:
+The RC4 key used to decrypt the giant string (and consequently, the contents of the giant string)
+Some simple string concatenation to reach loader.LoadBytes
+The compile time of the stage-2 exploit
+The exploits are otherwise 100% identical, yet one is detected by almost twice as many products!
+This proves just how effective simple obfuscation (such as re-encryption with a different key) can have on detection rates.
+The only difference between the second and third samples are the fourth byte—the “version” byte in the Flash file header.
+We changed the version from the original 0x12 to 0x11, which should have no substantial impact on the rate at which the samples are detected.
+Despite this, modifying the file by one byte reduced the detection rate from ~60% to ~40%, most likely because it no longer kept the same hash.
+Following Microsoft’s introduction of heap corruption mitigations in IE, exploit authors shifted their focus to other attack surfaces.
+Unsurprisingly, the new focus in 2015 is Adobe Flash.
+Given the prevalence of standard exploitation methods for memory corruption bugs in Flash and IE+Flash, the increased focus on Flash exploits was predictable.
+Understandably, the security industry is responding to the shift in focus, but has yet to demonstrate marked improvement.
+Detection rates in early days of sample proliferation are universally low (well under 10%) as recorded by VirusTotal (VT).
+Detection rates on VT are an imperfect means of measuring industry readiness, but the statistics should not be ignored.

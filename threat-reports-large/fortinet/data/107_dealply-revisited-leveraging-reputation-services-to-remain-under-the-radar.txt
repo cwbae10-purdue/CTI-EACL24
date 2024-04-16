@@ -1,0 +1,128 @@
+Threat Analysis: This blog originally appeared on the enSilo website and is republished here for threat research purposes.
+enSilo was acquired by Fortinet in October 2019.
+Usually, Adware is not a particularly interesting research subject.
+However, when we detected a DealPly variant that evaded AV detection, we decided to dig deeper.
+Besides its modular code, machine fingerprinting, VM detection techniques, and robust C&C infrastructure, the most intriguing discovery was the way DealPly abuses Microsoft and McAfee reputation services to remain under the radar.
+Microsoft SmartScreen and McAfee WebAdvisor provide threat intelligence verdicts on files and URLs, and are free to use.
+With the data collected from these services, the life-span for the Adware’s installers and components can be prolonged as changes are required only once they are known to be blacklisted.
+Such techniques are not relevant solely to Adware, and may be adopted by malware authors as well.
+In this blog post we will briefly describe its execution flow, fingerprinting, VM detection capabilities and focus on its unique capability to harvest data from reputation services.
+One of the most common infection vectors used by DealPly operators is tempting users into downloading legitimate software installers bundled with their Adware through websites that offer free software downloads.
+The sample we analyzed is an installer that appears as a legitimate software called Fotor (a photo cropping software).
+When executed, it secretly runs DealPly as part of the installation process.
+It then copies itself to the user’s %AppData% directory and adds persistency by executing the following command:
+C:\Windows\system32\schtasks.exe /create /F /tn "{5D055606-F35B-577B-8F40-5DE1E36423A2}" /xml "C:\Users\JONNYB~1\AppData\Local\Temp\475671.xml"
+DealPly is then executed by the task scheduler every hour.
+Each time the task is invoked, DealPly will contact the C&C at cwnpu.com and send an encrypted request over HTTP, as shown in Figure 1.
+The decryption of the request body produces the data shown in Figure 2
+A lot of the parameters here, like “btry” and “lptp”, are really indications for the operators to determine if the infected machine is a VM or not.
+We will provide deeper information on this subject later in this blog.
+Once a valid request is sent to the server, it responds by redirecting the client to d1oz9ywjzmvfb5.cloudfront.net.
+This domain is pointing at one of Amazon’s S3 servers.
+The response contains instructions as well as the main module to be executed.
+The name of this module is WB_CH33.dll
+DealPly is divided into different modules that work together in order to achieve its goal.
+While each module is responsible for a different role, all modules have a similar structure and some similar functions, such as a string decryption routines.
+The author’s purpose is to avoid detection and decrease its footprint by deploying only the components needed for the specific target.
+From the DealPly modules we analyzed, the module “WB_CH33.dll” contains the main functionality.
+It is worth mentioning that all modules are reflectively loaded and executed by the main module itself, or by different command line tools such as wscript, powershell, etc.
+The module “WB_CH33.dll” performs a geo-location check using “http://www.geoplugin.net/json.gp” service and saves the country code for later use.
+The sbrg.dll and WebAdvisorDll.dll modules are used by “WB_CH33.dll” to query reputation services, and will be described in detail.
+As shown in the previous section in Figure 2, DealPly sends information back to its C&C.
+This information contains indicators for detecting whether the running host is a virtual machine, as well as other details about the machine.
+In this section we will detail some of these indicators.
+HOST FINGERPRINTING
+As can be seen in Figure 2, the decrypted message to the C&C contains the parameters UID and UID2.
+These parameters contain fingerprinting information about the host.
+The value of UID consist of the host MAC address, together with the second half of the host main drive serial number.
+The value of UID2 is the volume serial number, together with a calculated value that represents the computer name of the host.
+SLEEP BUTTON INDICATION
+In virtual machines there is no physical sleep button.
+This variant uses the function “GetPwrCapabilities” to determine if a physical sleep button exist.
+The function “GetPwrCapabilities” is defined as:
+It will return a struct called PSYSTEM_POWER_CAPABILITIES.
+In this struct, DealPly will check to see if the “SleepButtonPresent” variable is either true or false.
+If it is true, there is a physical system sleep button and it is probably not a virtual machine.
+BATTERY INDICATION
+The variant will also check to see if the host is connected to a physical AC power outlet.
+This is done by calling the function “GetSystemPowerStatus”, which is defined as
+The structure SYSTEM_POWER_STATUS returned from the above function contains the “ACLineStatus” flag.
+This flag determines the AC power status, which is used to determine if the computer battery is connected.
+If the battery is not connected to the host, it might be a laptop, and therefore not a virtual machine.
+MAC ADDRESS INDICATION
+To determine whether the MAC address belongs to a physical or a virtual machine, the variant checks to see if the host MAC address belongs to one of the following vendors: Microsoft Azure, VMware, Parallels, Oracle Virtualbox, Amazon EC2, and Xensource.
+An Interesting fact about this check is that the authors of DealPly put a serious effort into detecting hosts running on popular cloud services such as Amazon EC2 as well as Microsoft Azure.
+The reason behind this is likely that hosts running a Windows operating system with a cloud-related network adapter are probably part of a sandbox.
+We suspect that the reason why DealPly leverages reputation services is to check which of its variants and download sites are compromised and won’t be effective for future infections.
+Querying these services from multiple servers is valuable because known proxies such as Tor make the malware easy to identify and blacklist, potentially exposing a DealPly operation.
+Therefore, there’s a clear advantage in using a distributed network of machines for harvesting this data.
+Some reputation modules are only used for certain countries.
+The country codes are divided into two groups, and for each group a different module is executed.
+A SmartScreen reputation module is used only on hosts located in the countries listed in Group A (listed in the Appendix, below) and the McAfee WebAdvisor reputation module is only applied to hosts located in the countries listed in Group B in case it is installed.
+It should be noted that some countries are part of both groups.
+We don’t know the exact reason for this behavior, but it may be related to McAfee popularity in these countries.
+SmartScreen is a Microsoft Windows service that has been integrated into the Windows operating system since Windows 8, and its purpose is to serve as another layer of protection.
+The official Microsoft definition is as follows:
+“Windows Defender SmartScreen helps to protect your employees if they try to visit sites previously reported as phishing or malware websites, or if an employee tries to download potentially malicious files.” (Microsoft docs)
+Upon initial execution of the Sbrg.dll module, an empty request will be sent to its C&C.
+The server will reply with an XML-formatted message containing information such as hashes/urls to be queried using the SmartScreen reputation server.
+Next, DealPly will invoke a request to the SmartScreen API that will use the instructions from the C&C.
+In Figure 9 we can see the JSON body that it is sent to – hxxps://urs.smartscreen.Microsoft.com/windows/browser/edge/service/navigate
+In order for a request to be handled by the SmartScreen servers, it must supply an Authorization header that is responsible for hardening the requests from unwanted alterations.
+The Authorization appears similar to the following:
+The authorization is a Base64 shell, which contains the json in figure 11.
+It contains three variables: The hash, which is a Base64 envelope containing the binary MD5 of the request body.
+The key is yet another proprietary checksum/scrumber mechanism that takes both the MD5 as well as the request body into calculations.
+And the authId is a constant value that is most likely taken from the original SmartScreen agent.
+As can be seen in Figure 12, the response from the SmartScreen server is:
+DealPly will then try to match one of the following values -
+String
+Meaning
+UNKN
+Unknown URL/File
+MLWR
+Malware related URL/File
+PHSH
+Phishing related URL/File
+Next, DealPly will send another query to a different API to determine whether the file hash is detected.
+Finally, DealPly will report back to its C&C with the data it harvested from SmartScreen.
+SMARTSCREEN VERSIONS SUPPORT
+In figure 13, we can see part of the initialization routine of an object that’s responsible for communicating with the SmartScreen API.
+This function selects a class to handle the queries, in accordance to the Windows release.
+For example, the call to redstone_only invokes a class called “_7SmscUtils2ndEd” that contains functions that are used for the redstone 1 and 2 versions of Windows 10 (Build numbers: 14393, 15063).
+A significant change that was made to the SmartScreen service in newer versions is in the query structure.
+In older versions of Windows, XML was used to build the SmartScreen query.
+This was later changed in the Redstone first release to use JSON type queries.
+It is important to note that the SmartScreen API is undocumented.
+This means the author has put a lot of effort into reverse engineering the inner workings of the SmartScreen mechanism\feature.
+WebAdvisor is a tool that adds an extra layer of protection to web browsers by alerting its users when they may be downloading or visiting websites that may contain malicious content.
+This service was previously known as “SiteAdvisor”, until it was recently changed to “WebAdvisor”.
+It is important to note that the DealPly variant we analyzed only works on new versions of WebAdvisor.
+The official McAfee definition of WebAdvisor is as follows:
+“Blocks dangerous websites, checks for active antivirus and firewall protection, scans downloads, monitors passwords and helps users make smarter decisions while using the internet.
+McAfee’s advanced web protection software, McAfee WebAdvisor, puts color-coded icons next to search results to let users know before they click which sites are safe and which sites may install malicious code, phish for a user’s identity or send spam.“
+The variant starts by checking to see if a specific version of WebAdvisor is installed.
+If those conditions are met, then the sample will try querying the WebAdvisor reputation service.
+All requests to the McAfee reputation service are being sent to the following URL -
+https://webadvisorc.rest.gti.mcafee.com/1
+Figure 14 shows a request to the reputation service that contains the URL to be queried.
+The request contains a parameter called “op”, which represents the type of the query.
+This is in addition to it also containing a parameter called cliid, which is calculated using a value taken from a WebAdvisor registry key.
+We assume that this value is used for authentication/authorization and is required by each request to the API.
+As can be seen in figure 15, the response from the reputation service will contain the request id and the reputation of the URL.
+The flow presented in figure 16 shows the meaning of each reputation value.
+As stated in the beginning of this section, “McAfee WebAdvisor puts color-coded icons next to search results.” The value returned in the “rep” parameter falls into one of the following categories: “red”, “yellow”.
+and “default”.
+Red is for malicious, yellow is for risky or spam websites, and default is for unknown/safe.
+Finally, after the module finishes the query, it will report back to the DealPly C&C with the results.
+In this blog, we presented an innovative technique adopted by DealPly operators to automate its evasion from AV products.
+By constantly querying reputation services, it is able to automatically assess their AV detection rate and generate new samples when needed.
+This technique enables DealPly to always stay ahead of security solutions.
+This technique was initially observed when analyzing DealPly adware, yet we believe that it is only a matter of time before advanced malware operations will follow this trend.
+The FortiEDR platform is capable of blocking the threat at pre-execution leveraging AI/ML as well as on post execution activities.
+2540E4D34C4D8F494FC4EDDA67737B7209EE6CEFB0EC74028B6ABCD3911EC338 (Fotor3_3.4.1 - official.exe ) B7030B145D4B61655E694441BFE43E8C2BF1BB4D7FF96811F1DC3FCE774C5E70 (Updater.exe) FC2352A81FEDAD3CBB86DCB0E6B97AD023FE318D468FBB94602FB95F11EB8040 (SBRG.dll) 25CE28FBF32026FCC8DB23A1B3F6C9D78A10CED8D0D32126C044CBEF6AE4E9C9 (WebAdvisorDll.dll) DF536CA20E421E2E5F4643870355BD39ADC6FB29C96A715BF3CC94B4C371FAB1 (Palikan)
+tuwoqol.com wugulaf.com cwnpu.com bdubnium.com pydac.com dabfd.com fodfr.com codfs.com qaofd.com ziuet.com pocxc.com uyvsa.com bxvdc.com adofd.com
+https://im-mf.s3.amazonaws.com/WA_WrUp.dat http://pxl-nw-svr-981333793.us-east-1.elb.amazonaws.com/pxl/ http://dwrfiab3y6c09.cloudfront.net/sbrg.dat
+Algeria Argentina Bangladesh Chile Colombia Ecuador Egypt India Indonesia Iran Malaysia Mexico Morocco Pakistan Peru Philippines Saudi Arabia Serbia South Africa Taiwan Thailand Tunisia Turkey Ukraine United Arab Emirates Venezuela Vietnam
+Argentina Australia Austria Belgium Brazil Canada Chile Colombia Denmark Finland France Germany Hong Kong India Indonesia Ireland Italy Japan Luxembourg Malaysia Mexico Netherlands New Zealand Norway Peru Philippines Singapore Spain Sweden Switzerland Taiwan Thailand United Kingdom United States Venezuela Viet Nam
+Find out about the FortiGuard Security Services portfolio and sign up for our weekly FortiGuard Threat Brief.

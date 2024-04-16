@@ -1,0 +1,70 @@
+During an investigation, the FLARE team came across an interesting Python malware sample (MD5: 61a9f80612d3f7566db5bdf37bbf22cf ) that is packaged using py2exe.
+Py2exe is a popular way to compile and package Python scripts into executables.
+When we encounter this type of malware we typically just decompile and read the Python source code.
+However, this malware was different, it had its bytecode manipulated to prevent it from being decompiled easily!
+In this blog we’ll analyze the malware and show how we removed the obfuscation, which allowed us to produce a clean decompile.
+Here we release source code to our bytecode_graph module to help you analyze obfuscated Python bytecode (https://github.com/fireeye/flare-bytecode_graph).
+This module allows you to remove instructions from a bytecode stream, refactor offsets and generate a new code object that can be further analyzed.
+Py2exe is a utility that turns a Python script into an executable, which allows it to run on a system without a Python interpreter installed.
+Analyzing a Py2exe binary is generally a straightforward process that starts with extracting the Python bytecode followed by decompiling the code object with a module such as meta or uncompyle2.
+Appendix A contains an example script that demonstrates how to extract a code object from a Py2exe binary.
+When attempting to decompile this sample using uncompyle2, the exception shown in Figure 1 is generated.
+The exception suggests the bytecode stream contains code sequences that the decompiler is not expecting.
+Figure 1: Uncompyle2 exception trace
+To understand why the decompiler is failing, we first need to take a closer look at the bytecode disassembly.
+A simple method to disassemble Python bytecode is to use the built-in module dis.
+When using the dis module, it is important to use the same version of Python as the bytecode to get an accurate disassembly.
+Figure 2 contains an example interactive session that disassembles the script “import sys”.
+Each line in the disassembly output contains an optional line number, followed by the bytecode offset and finally the bytecode instruction mnemonic and any arguments.
+Figure 2: Example bytecode disassembly
+Using the example script from Appendix A, we can view the disassembly of the code object to get a better idea what is causing the decompiler to fail.
+Figure 3 contains a portion of the disassembly produced by running script on this sample.
+Figure 3: Bytecode disassembly
+Looking closer at the disassembly, notice there are several unnecessary bytecode sequences that have no effect on the logic of the code.
+This suggests that a standard compiler did not produce the bytecode.
+The first surprising bytecode construct is the use of NOPs, for example, found at bytecode offset 0.
+The NOP instruction is not typically included in compiled Python code because the interpreter does not have to deal with pipelining issues.
+The second surprising bytecode construct is the series of ROT_TWO and ROT_THREE instructions.
+The ROT_TWO instruction rotates the top two stack items and the ROT_THREE rotates the top three stack items.
+By calling two successive ROT_TWO or three ROT_THREE instructions, the stack is returned to the same state as before the instruction sequence.
+So, these sequences have no effect on the logic of the code, but may confuse decompilers.
+Lastly, the LOAD_CONST and POP_TOP combinations are unnecessary.
+The LOAD_CONST instruction pushes a constant onto the stack while the POP_TOP removes it.
+This again leaves the stack in its original state.
+These unnecessary code sequences prevent decompiling bytecode using modules such as meta and uncompyle2.
+Many of the ROT_TWO and ROT_THREE sequences operate on an empty stack that generates errors when inspected because both modules use a Python List object to simulate the runtime stack.
+A pop operation on the empty list generates exceptions that halt the decompilation process.
+In contrast, when Python interpreter executes the bytecode, no checks are made on the stack before performing operations on it.
+Take for example ROT_TWO from ceval.c in Figure 4.
+Figure 4: ROT_TWO source
+Looking at the macro definitions for TOP, SECOND, SET_TOP and SET_SECOND from ceval.c in Figure 5, the lack of sanity checks allow these code sequences to execute without stopping.
+Figure 5: Macro definitions
+The NOPs and LOAD_CONST/POP_TOP sequences stop the decompilation process in situations where the next or previous instructions are expected to be a specific value.
+An example debug trace for uncompyle2 is shown in Figure 6 where the previous instruction is expected to be a jump or a return.
+Now that the types of obfuscation have been identified, the next step is to clean the bytecode in hopes of getting a successful decompile.
+The opmap dictionary from the dis module is very helpful when manipulating bytecode streams.
+When using opmap, instructions can be referenced by name rather than a specific bytecode value.
+For example, the NOP bytecode binary value is available with dis.opmap[‘NOP’].
+Appendix B contains an example script that replaces the ROT_TWO, ROT_THREE and LOAD_CONST/POP_TOP sequences with NOP instructions and creates a new code object.
+The disassembly produced from running the script in Appendix A on the malware is shown in Figure 6.
+Figure 6: Clean disassembly
+At this point, the disassembly is somewhat easier to read with the unnecessary instruction sequences replaced with NOPs, but the bytecode still fails to decompile.
+The failure is due how uncompyle2 and meta deal with exceptions.
+The problem is demonstrated in Figure 7 with a simple script that includes an exception handler.
+Figure 7: Exception handler
+In Figure 7, the exception handler is created using the SETUP_EXCEPT instruction at offset 0 with the handler code beginning at offset 13 with the three POP_TOP instructions.
+Both the meta and uncompyle2 modules inspect the instruction prior to the exception handler to verify it is a jump instruction.
+If the instruction isn’t a jump, the decompile process is halted.
+In the case of this malware, the instruction is a NOP because of the obfuscation instructions were removed.
+At this point, to get a successful decompile, we have two options.
+First, we can reorder instructions to make sure they are where the decompiler expects them.
+Alternatively, we can remove all the NOP instructions.
+Both strategies can be complicated and tedious because absolute and relative addresses for any jump instructions need to also be updated.
+This is where the bytecode_graph module comes in.
+Using the bytecode_graph module, it’s easy to replace and remove instructions from a bytecode stream and generate a new stream with offsets automatically updated accordingly.
+Figure 8 shows an example function that uses the bytecode_graph module to remove all NOP instructions from a code object.
+Figure 8: Example bytecode_graph removing NOP instructions
+In this blog I’ve demonstrated how to remove a simple obfuscation from a Python code object using the bytecode_graph module.
+I think you’ll find it easy to use and a perfect tool for dealing with tricky py2exe samples.
+You can download bytecode_graph via pip (pip install bytecode-graph) or from the FLARE team’s Github page: https://github.com/fireeye/flare-bytecode_graph.
+An example script that removes the obfuscation discussed in this blog can be found here: https://github.com/fireeye/flare-bytecode_graph/blob/master/examples/bytecode_deobf_blog.py.Hashes identified that implement this bytecode obfuscation:

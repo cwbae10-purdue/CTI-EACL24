@@ -1,0 +1,203 @@
+In the past few weeks there have been many rumors about Rustock.C: many people have talked how hard it is to process, and many people have also complained about the uselessness of a replicant sample made publicly available (MD5 00430470e6754f082b6c2c19d022caea).
+Actually, I can definitely say that this sample is… very useful.
+With deep analysis we
+In the past few weeks there have been many rumors about Rustock.C: many people have talked how hard it is to process, and many people have also complained about the uselessness of a replicant sample made publicly available (MD5 00430470e6754f082b6c2c19d022caea).
+Actually, I can definitely say that this sample is… very useful.
+With deep analysis we can obtain the proper decryption key within a few hours.
+In this short article I’ll try to describe the whole protector:
+encryption
+compression
+imports rebuilding
+relocations handling
+anti-debug tricks
+The Very first layer (L0) is rather easy, just a simple (probably polymorphic) decryptor without any magic ;-)
+The proper protection layer (L1) starts immediately after the first decryptor.
+We can see complex flow obfuscation and the instructions are also obfuscated.
+It would be rather difficult to analyse it (statically or dynamically) without some kind of deobfuscation tool.
+I’ve started to write such a tool, and in fact it can handle the whole loader.
+Unfortunately, it is property of my company and it will stay private.
+The protected driver doesn’t have an imports table: the functions required to obtain the base address of ntoskrnl.exe and to obtain addresses of imported functions are implemented by the author of the protector.
+The following code is responsible for finding ntoskrnl in memory (a well known trick used by ring 3 packers).
+seg000:00000261 mov eax, dword ptr fs:38
+seg000:00000267 mov eax, [eax+4]
+seg000:0000026D xor al, al
+seg000:0000026F loc_26F:
+seg000:0000026F sub eax, 100h
+seg000:00000275 cmp word ptr [eax], ‘ZM’
+seg000:0000027A jnz loc_26F
+seg000:00000280 mov bx, [eax+3Ch]
+seg000:00000284
+seg000:00000284 loc_284:
+seg000:00000284 and ebx, 0FFFFh
+seg000:0000028A cmp dword ptr [eax+ebx], ‘EP’
+seg000:00000291 jnz loc_26F
+Imported functions are recognized by checksum value (another well known technique used by ring 3 packers).
+A checksum is calculated for each function with this simple algorithm:
+DWORD importCRC(char* impName)
+{
+int i = 0;
+DWORD res = 0;
+while (impName[i])
+{
+res ^= impName[i];
+res = ROL(res, impName[i]);
+i++;
+}
+return res;
+}
+In fact, layer L1 uses two functions:
+CRC – Function Name
+————————————–
+9530E67B – NtQuerySystemInformation
+E84C9117 – ExAllocatePoolWithQuotaTag
+NtQuerySystemInformation is used with SystemModuleInformation to obtain the base of the second module on the ModuleList (this value will be used during imports rebuilding):
+seg000:000002B5 lea esi, [ebp+var_400]
+seg000:000002BB push 0
+seg000:000002C0 push 400h
+seg000:000002C5 push esi
+seg000:000002C6 push 0Bh ; SystemModuleInformation
+seg000:000002CB call eax ; NtQuerySystemInformation
+seg000:000002CD mov eax, [esi+128h]
+Layer L1 is responsible only for searching the kernel in memory, allocating new memory and copying almost the entire body of the rootkit to the new memory buffer.
+This is the last layer, it is responsible for decryption, decompression, imports rebuilding and relocation handling.
+The whole protection scheme is based on this encrypted structure:
+0.
+335CB51A -> 6604D5BF -> 00000000 – third part of encryption key
+1.
+37E5B20D -> 660095BF -> 00044000 – size of module in memory
+2.
+18CC8110 -> 6604D5BA -> 00000005 – number of sections
+3.
+8C0C7587 -> 6604D5EF -> 00000050 – relative address of relocations
+4.
+4FAEFB07 -> 7ECA0C70 -> 18CED9CF – relocations encryption key
+5.
+988E29AD -> 6604F403 -> 000021BC – number of relocations
+6.
+3701ACDF -> 660452FF -> 00008740 – relative address of imports
+7.
+35EE9C52 -> 72E26C3B -> 14E6B984 – imports encryption key
+8.
+88003930 -> 6604D5C8 -> 00000077 – number of imported functions
+9.
+6A47721F -> 6605D434 -> 0001018B – original driver entry point
+10.
+F89490DA -> 6604C5BF -> 00001000 – relative address of first section (in new buffer)
+11.
+FAED6BA6 -> 66045ED0 -> 00008B6F – address of encrypted and packed first section data
+12.
+A8ECFD9A -> 6604F5BF -> 00002000
+13.
+A64AE790 -> 66045EC7 -> 00008B78 / 2nd section
+14.
+6E24D95A -> 6604E5BF -> 00003000
+15.
+57C6BEA1 -> 66045E5D -> 00008BE2 / 3rd section
+16.
+6C3C441A -> 660495BF -> 00004000
+17.
+69CA0D61 -> 66045884 -> 00008D3B / 4th section
+18.
+A11CB31A -> 660455BF -> 00008000
+19.
+98E85CEE -> 66046BBD -> 0000BE02 / 5th section
+Firstly, we can see a memory allocation of 0x44000 bytes (step 1).
+The next important step will be to calculate the decryption key.
+Our key is constructed from three dwords: the first two dwords are collected from the PCI bus, and the third dword, 0x6604D5BF we already have step 0).
+Data gathered from PCI bus can be identified as the DeviceID and VendorID for two devices.
+seg000:00000808 cmp eax, 60000h
+…
+{ 0x06, 0x00, 0x00, “Bridge Device”, “Host/PCI”, “” }
+So the first value is Host/PCI Bridge:
+seg000:00000852 cmp eax, 60100h
+seg000:00000857 jz loc_875
+seg000:0000085D cmp eax, 68000h
+seg000:00000862 jz loc_875
+…
+{ 0x06, 0x01, 0x00, “Bridge Device”, “PCI/ISA”, “” }
+{ 0x06, 0x80, 0x00, “Bridge Device”, “Other”, “” }
+The second value is PCI/ISA Bridge or any other bridge if we don’t have PCI/ISA.
+The full decryption key will have the following format:
+0xDDDDVVVV 0xDDDDVVVV 0x6604D5BF
+DDDD – Device ID
+VVVV – Vendor ID
+We can use brute force to get those values, because the list of VendorID (popular) is very short.
+Ok, but how ?
+Ripping obfuscated code is not a good idea.
+With a deobfuscator it is much easier, because after deobfuscation I recognized the encryption and compression algorithms.
+Data are encrypted with RC4 and compressed with aPlib.
+Essentially, decompression/decryption looks like this:
+RC4_Init(key);
+for (int j = 0; j < 111; j++) RC4_round(); //”empty” rounds
+DWORD futureKey = 0;
+for (int j = 0; j < 4; j++)
+{
+futureKey <<= 8;
+futureKey |= rc4_round();
+}
+RC4_Decrypt(encryptedData);
+aP_decompress(encryptedData);
+There are 111 “empty” RC4 rounds, probably to slow a brute force analysis.
+As you probably noticed, I’m calculating the futureKey dword: this dword will be used to decrypt the relocations table and imports table.
+Full brute force will require calling aP_decompress for every combination, which is not such a pleasant idea, since aP_decompress can be returned without error but the stream will not be uncompressed correctly.
+I’ll tell you later why we don’t even need to touch decompression.
+Relocations
+The relocation table is represented as a table of offsets.
+Each dword represents one relocation.
+Decryption of the relocation table looks like this:
+seg000:0000064B mov eax, [edx] ; ebx = 18CED9CF (pos 4.)
+seg000:0000064B ; dr3 = futureKey
+seg000:0000064B ; edx = input table address
+seg000:0000064B ; edi = destination addr
+seg000:0000064D xor eax, ebx
+seg000:0000064F add [eax+edi], edi
+seg000:00000652 add ebx, 9E72DEBFh
+seg000:00000658 mov eax, dr3
+seg000:0000065B add ebx, eax
+seg000:0000065D add edx, 4
+seg000:00000663 sub ecx, 1
+seg000:00000669 jnz loc_64B
+We need the real futureKey to decrypt relocations.
+Basically, this is the weakness that we are looking for by brute force, because we can initially guess just futureKey and check which futureKey will gave us the proper relocation table.
+Now, using RC4 brute force analysis we can simply check futureKey and call just aPlib for the proper futureKey value.
+Imports
+Imports are encrypted in a similar way to relocations.
+Each imported function is represented as a 9 byte structure:
+struct import
+{
+DWORD relativeAddress;
+DWORD checksum;
+BYTE unknown;
+}
+decryption algorithm:
+DWORD iKey = 0x14E6B984; //pos 7.
+for (int i = 0; i < importsNum; i++)
+{
+DWORD crc = (imps[i].relativeAddress ^ iKey);
+DWORD addr = (imps[i].checksum ^ iKey);
+BYTE ch = imps[i].unknown ^ iKey ^ 0x4A;
+iKey += 0x33013EAB;
+iKey += futureKey;
+}
+To rebuild the imports table we need to match checksum values with the names of functions.
+For example:
+ADDR: 0000301C CRC: 60AEF620, ch: 00 : ZwClose
+ADDR: 00003020 CRC: FCBFB9EE, ch: 00 : IoFreeIrp
+ADDR: 00003024 CRC: AB5B52D1, ch: 00 : ObfDereferenceObject
+ADDR: 00003028 CRC: 4D509D0A, ch: 00 : SeDeleteAccessState
+ADDR: 0000302C CRC: 74CBCD2E, ch: 00 : RtlCopyUnicodeString
+ADDR: 00003030 CRC: 55C959AD, ch: 00 : SeSetAccessStateGenericMapping
+ADDR: 00003034 CRC: 2A65D334, ch: 00 : RtlMapGenericMask
+ADDR: 00003038 CRC: 8C07F30E, ch: 00 : SeCreateAccessState
+ADDR: 0000303C CRC: 1F8A8321, ch: 00 : KeGetCurrentThread
+ADDR: 00003040 CRC: 76A48118, ch: 00 : ObfReferenceObject
+Because almost the entire analysis was done statically, I missed some “tricks” during the rebuilding of the imports.
+clearing debug registers
+seg000:000000E2 mov eax, 0
+seg000:000000E7 mov dr1, eax
+seg000:000000EA mov dr2, eax
+seg000:000000ED mov dr3, eax
+seg000:000000F0 mov dr7, eax
+IDT modification – this looks like a way of detecting a virtual machine (I don’t know exactly how it works, because I don’t usually work in ring 0)
+That’s it.
+I won’t present the original decryption key, but brute-forcing those values is rather easily done and at most 10 hours (if we strike lucky during VendorID selection, it can be done in 4 hours).

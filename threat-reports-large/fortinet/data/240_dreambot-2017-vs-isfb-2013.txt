@@ -1,0 +1,125 @@
+We recently received a malware sample that had been packed and compiled on Tue Feb 06 2018.
+After unpacking it, we found that it contained a version of the Dreambot/Ursnif trojan, which had a compilation date of Tue Oct 10 2017, suggesting that existing versions of Dreambot are now being packaged with brand-new droppers.
+Over the last few years, several leaks of the source codes for major botnets such as Gozi, ISFB, and Mirai have provided insight into the evolution of some of the present-day botnets that branched off from one of those predecessors listed above.
+Dreambot is an offshoot of ISFB, which was a descendant of Gozi (first observed in 2006), which in turn had used code taken from Urnsif in 2000.
+Some of the code shared between these families was created almost two decades ago.
+Most of that code is being reused, with large swaths of it only undergoing minor changes.
+The ISFB 2013 leak was incredibly comprehensive -- complete with documentation on how to build and configure the botnet, along with source code for most components, including the dropper and bot DLLs.
+The leak has a readme.txt (written in Russian) detailing in broad strokes the capabilities of ISFB.
+According to that documentation, ISFB is a bot designed to sniff and manipulate HTTP traffic on a victim's computer.
+The bot does three major things: request to receive configs, request commands, and send data and files back to a CnC.
+The configs received configure the bot to perform one of the following actions: "NEWGRAB", "SCREENSHOT", "PROCESS", "FILE", "HIDDEN", "POST", and "VIDEO".
+For example:
+"NEWGRAB" - Replaces specified text on a web page with another.
+"SCREENSHOT" - Takes a screenshot of a specified page.
+"PROCESS" - Requests another page when a victim has requested a configured page, e.g., requests for visiting a certain Twitter user's page are redirected to a different Twitter user's page.
+The details of each config can be found in the Format.txt file, which was also included in the leaked source codes.
+As mentioned above, the bot also requests commands.
+These commands include:
+GET_CERTS - Exports and sends certificates installed in the Windows system store.
+GET_COOKIES - Collects cookies from Firefox, Internet Explorer, and Flash SOL files, packages them along with their directory structures, and sends to the server.
+CLR_COOKIES - Deletes cookies from Firefox, Internet Explorer, and Flash SOL files.
+The full listing of these commands are in the readme.txt file.
+In addition to ISFB’s major functionalities mentioned above, Dreambot introduced the hosting of CnC's over the TOR network.
+It also made some changes to some of the URL data requests when it requests configs, which we will compare later.
+The ISFB bot code base consists of two major parts: the dropper, and the bot client DLL for 32-bit and 64-bit machines.
+The dropper, which is the file Crm.exe that was included with the leaked source code, contains the packed DLL images.
+It is designed to copy these DLLs into system folders, register them with the AppCertDLLs registry key or an autorun registry key, and then inject them into explorer.exe and all running web browsers.
+The bot client DLL is also injected by the dropper into explorer.exe and any running targeted browser, such as Chrome, IE, and Firefox.
+According to readme.txt, the responsibilities of the bot DLL are logically split into two parts -- the "Parser" and the "Server."
+The “Parser” is the code that runs in the infected browser.
+It performs HTTP interception and manipulation, and the sending and requesting of commands, configs, and data.
+The "Server" executes in explorer.exe, and is responsible for operations that require privileges, such as file operations, launching programs, and updating.
+To build the ISFB bot DLLs and pack them into the dropper, the malware authors used a utility called FJ.exe.
+It “joins” files together by first packing them with apLib (optionally) and then appending it to the files.
+The instructions for building ISFB shows that the client32.dll and client64.dll files are configured to join a public.key and a client.ini in order to output client/32/64.dll.
+Crm.exe is then joined with these client32.dll and client64.dll files to output installer.exe.
+ISFB uses "joined files" (or “FJ”), which are structures to extend content much like an extra resource.
+These “FJ” _ADDON_DESCRIPTORs are inserted just after the PE header, after all the remaining PE section headers, leaving a gap of 0x28 bytes, which is the value of sizeof(IMAGE_SECTION_HEADER), or the size of one PE section header.
+The leaked Gozi-ISFB source from 2013 shows this _ADDON_DESCRIPTOR structure and ADDON_MAGIC like so:
+#define ADDON_MAGIC 'FJ'
+typedef struct _ADDON_DESCRIPTOR
+{
+USHORT Magic; // ADDON_MAGIC value
+USHORT NumberHashes; // number of name hashes in the Hash array
+ULONG ImageRva; // RVA of the packed image
+ULONG ImageSize; // size of the packed image
+ULONG ImageId; // any ID of the packed image (typicaly image name CRC32 hash)
+ULONG Flags; // addon flags
+ULONG Hash[0];
+} ADDON_DESCRIPTOR, *PADDON_DESCRIPTOR;
+To retrieve a pointer to the joined data, you simply add the ImageRVA to the image base of the malware.
+The joined data is appended to the end of the files.
+Dreambot's architecture remains largely the same, complete with all of ISFB’s responsibilities.
+However, after code has been injected, explorer.exe, can now also make requests to the CnC.
+Another change is that this new dropper drops a copy of itself to %AppData% in a randomly named folder.
+The bot DLLs are never dropped, but injected directly into memory.
+Dreambot uses a new ‘join’ utility that uses the magic 'J1' instead of ‘FJ’, and the following structure:
+typedef struct {
+DWORD j1_magic;
+DWORD flags; // can be aPLib packed
+DWORD crc32_name;
+DWORD addr;
+DWORD size;
+} isfb_fj_elem ;
+The structure is very similar to the ‘FJ’ _ADDON_DESCRIPTOR, however the fields are swapped in some places.
+Parsing it is still very similar to getting the FJ addon data, although the new structure is taken into account.
+Maciej Kotowicz’s paper ISFB, Still Live and Kicking goes into great detail about how this new structure, along with the joined INI that he mentions as a static config, is parsed by a sample from 2016.
+This is still done in Dreambot 2017.
+His appendix includes decompiled pseudo code for the parsing.
+The basis of the ISFB request parameters can be found in the file cschar.h found in the leaked source code.
+For example:
+#define szRequestFmt_src
+_T("soft=1&version=%u&user=%08x%08x%08x%08x&server=%u&id=%u&crc=%x")
+Parameter
+Values
+Soft
+Always 1
+Version
+Version number of the malware (XYYZZZ, where: X.YY - version, ZZZ - assembly)
+User
+Unique user ID (client) - configured in client.ini
+CRC
+Used only on requests to get configs.
+If the CRC of the previously sent config is different from the currently available config, the new config is served.
+Server
+Unique server ID – configured in client.ini
+Id
+Group number of the bot - configured in client.ini
+Dreambot has made a few additions to some of its request strings that leak info regarding the victim’s system.
+Parameter
+Values
+Uptime
+Victim uptime calculated by: QueryPerfomanceFrequency(&Frequency), QueryPerfomanceCounter(&PerformanceCount)
+PerformanceCount.QuadPart / Frequency.QuadPart
+Ip
+Victim public IP
+Os
+OSMajorVersion.OSMinorVersion_BuildNumber_x86, e.g.
+5.1_3_2600_x86
+Tor
+Set to 1 when configured to use TOR for CnC communication
+Soft
+Always 1
+Version
+Version number of the malware (XYYZZZ, where: X.YY - version, ZZZ - assembly).
+This sample was version 2.14 assembly 963
+User
+Unique user ID (client) - configured in client.ini
+CRC
+Used only on requests to get configs.
+If the CRC of the previously sent config is different from the currently available config, the new config is served.
+Server
+Unique server ID – configured in client.ini
+Id
+Group number of the bot - configured in client.ini
+I believe this botnet kit platform is likely to remain popular, with its code base continuing to be incorporated into more families with only minor variations and add-ons.
+The trend for continuing to use this framework for malicious campaigns will only deepen our toolset, allowing us to develop better counter-measures and signatures, and refine our ability to track and disable this botnet and any of its spawn.
+Thank you, Margarette Joven, for tracking this sample and the additional research on the droppers and packers.
+The malware versions described and compared in this blog are from 2013 (ISFB) and 2017 (Dreambot).
+FortiGuard and FortiClient solutions were updated at the time of their discovery.
+· Dreambot: We currently detect the Dreambot sample as W32/Ursnif.AO!tr
+· ISFB: We currently detect several Ursnif/ISFB variants as W32/Ursnif.PFR!tr, W32/Ursnif.X!tr, and W32/Ursnif.AD!tr.
+As always, to best protect your organization make sure that your FortiGate/FortiClient system is using the latest AV database and IPS signatures.
+87dec0ca98327e49b326c2d44bc35e5b5ecc5a733cdbb16aeca7cba9471a098e
+Sign up for our weekly FortiGuard intel briefs or to be a part of our open beta of Fortinet’s FortiGuard Threat Intelligence Service.

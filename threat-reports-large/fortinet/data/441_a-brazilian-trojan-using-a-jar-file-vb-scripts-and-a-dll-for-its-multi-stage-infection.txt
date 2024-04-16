@@ -1,0 +1,245 @@
+As part of Fortinet’s continued efforts to protect its customers, we carry out a variety of tests to improve the detection of malicious content, whether it’s file or network related.
+While checking out some HTTPS phishing websites last month, one URL stood out.
+It wasn’t a phishing site, but it downloaded a file called BR52357896253ex.zip (which is detected as “Java/Banload.BD!tr” by Fortinet AntiVirus service) from a file sharing website.
+The compressed file also contained a Jar that downloaded additional files, created Visual Basic scripts and a schedule task, and executed a malicious DLL that injected itself into a legitimate process to steal the login credentials typed by the user on specific websites.
+This sample will not execute unless the system has an updated version of Java installed (Java SE 8 = 52).
+The Jar file contains only one class that includes the necessary functions to:
+Create a Visual Basic script that deletes itself after executing and kills the java.exe process.
+Copy a file.
+Decode strings.
+Check the contents in %APPDATA%/Microsoft/.
+If the file is an executable, it uses taskkill to terminate it in case it is executing.
+If the file has an extension different from “ini” and “xml”, it gets deleted.
+Download a compressed file from a remote server.
+Check whether a file already exists.
+Check the computer’s architecture to determine which file should be executed next.
+Determine the OS running in the machine to find the Startup folder.
+Create a schedule task through an XML file to execute a malicious DLL called Windows32.dll.
+Generate a random string for a filename.
+Create, execute, and delete another Visual Basic script to run the Jar file with elevated privileges.
+Create a third Visual Basic script to execute the malicious DLL Windows32.dll during startup.
+Create a file with REG extension in AppData.
+Decompress the downloaded zip file.
+Figure 1.
+Structure of the Jar file
+Once the Jar is executed, it creates or copies several files into the infected system, some of which are deleted afterwards, as shown on the table below:
+File
+Action
+Deleted
+C:\Users\\AppData\Roaming\.vbs
+Created
+Yes
+C:\Users\\AppData\Roaming\Microsoft\.zip (FILE.zip)
+Created
+Yes
+C:\Users\\AppData\Local\Temp\UAC.YES
+Created
+Yes
+C:\Users\\AppData\Local\Temp\Reg32.xml
+Created
+Yes
+C:\Users\\AppData\Local\Temp\ .vbs
+Created
+Yes
+C:\Users\\AppData\Roaming\< RandomString() >.vbs
+Created
+Yes
+C:\Program Files\Internet Explorer\Windows32.dll
+Copied from zip
+No
+C:\Windows\System32\Tasks\
+Created
+No
+C:\Windows\System32\Windows32.dll
+Copied from zip
+No
+C:\Users\\AppData\Roaming\Microsoft\Windows.app
+Copied from zip
+No
+C:\Users\\AppData\Roaming\Microsoft\Windows.cur
+Copied from zip
+No
+C:\Users\\AppData\Roaming\Microsoft\Windows.snd
+Copied from zip
+No
+C:\Users\\AppData\Roaming\Microsoft\Windows.win
+Copied from zip
+No
+C:\Users\\AppData\Roaming\Microsoft\windows32.dll
+Copied from zip
+No
+C:\Users\\AppData\Roaming\.REG
+Created
+No
+Figure 2.
+Method to create one of the Visual Basic scripts
+The Jar file (and also Windows32.dll, but more on this later) contains strings encoded with the algorithm shown in Figure 4.
+Figure 3.
+Encoded strings in the Jar file
+Figure 4.
+Method with the algorithm used to encode important strings
+Several files are downloaded from remote servers.
+However, FILE.zip is particularly important because it contains the main part of the infection, Windows32.dll.
+After this compressed file is downloaded, the sample attempts to download another file from different Google Sites URLs.
+This second file seems to contain encrypted data, despite its “zip” extension.
+The full list of the downloaded files, including their hashes and the URLs is included at the end of this report.
+This compressed file contains five elements, including the Windows32.dll that the Jar file attempts to execute in different ways.
+Figure 5.
+Contents of FILE.zip
+Despite the extensions, these files are not what they appear to be, as noted by the lack of headers.
+In fact, the content of the files seems to be encrypted.
+The purpose of Windows.app, Windows.cur, Windows.snd and Windows.win is still under investigation.
+Figure 6.
+Extracts of the other files contained in FILE.zip
+When Windows32.dll is executed it starts two processes called wuauclt.exe, which is a legitimate Windows utility that allows the user to perform some functions related to the Windows Update Services.
+However, further analysis of their strings and API calls revealed that, despite the name, it was Windows32.dll executing instead of the real wuauclt.exe.
+Each of the trojanized wuauclt.exe processes seems to monitor different websites.
+Figure 7.
+Memory dump of the malicious payload
+The first one focuses on four email services:
+hxxps://gmail.com
+hxxps://hotmail.com
+hxxp://www.bol.uol.com.br
+hxxp://www.uol.com.br
+Whereas the second one focuses on Brazilian banking websites, as noted by the following strings found in its memory dump:
+021|wwws.banestes.com.br
+037|ib.banpara.b.br
+041|banrisul.com.br
+047|ib.banese.com.br
+070|banknet.brb
+342|com.br/itaubba-pt
+399|wwws3.hsbc.com.br
+399|wwws5.hsbc.com.br
+422|safranet.com.br
+611|ibk.bancopaulista.com.br
+745|citibank.com.br
+389|https://www.mercantildobrasil.com.br
+079|ibpj.original.com.br
+246|ws.abcbrasil
+025|wws.alfanet.com
+740|https://bank.barclays.co.uk
+107|bbmonline.bancobbm.com
+752|w3.bnpparibas.com
+208|portal.btgpactual.com
+456|cms1.br.bk.mufg.jp
+707|https://ecode.daycoval
+224|netbank.bancofibra
+626|netbanking.ficsa
+612|https://www.bancoguanabara
+604|https://www.edivan.com.br
+083|https://www3.br.ccb.com
+083|https://www2.br.ccb.com
+653|https://ibanking.bip.b.br
+After the process injection, the sample downloads two more files: config.zip and one with HTML code.
+Figure 8.
+Files downloaded by Windows32.dll
+The first one, config.zip, is decrypted at runtime to create Hmalware.ini, which contains what seems to be an email subject, HTML code, a malicious URL, and the name of the downloaded HTML file.
+Figure 9.
+Content of Hmalware.ini
+Those strings are also encoded with the same algorithm mentioned above.
+The decoded strings are in Portuguese.
+The suggested translation is shown below in blue.
+Assunto = Boleto Atualizado as [HORA].
+Subject = Invoice updated at [HOUR]
+HTML = Segue anexo um novo boleto com um ótimo descontó aproveite.
+Att, Financeiro
+[RANDOMM5][RANDOMN5][RANDOMM5]
+Attached is a new invoice with a great discount.
+Take advantage of it.
+Sincerely, Financial (Department)
+Linkdown = http://bit.ly/[removed]?d1=1
+Nome = Boleto_Atualiza.html
+MSG_ID = NO
+The second file, BOL1[1].html, is decrypted at runtime to create an HTML file that contains what seems to be a phishing email message.
+The first URL hxxp://bit.ly/2czwVsL?dl=1 redirects to a download link in SugarSync, a website to store files.
+The name and the content of both files vary.
+Figure 10.
+HTML of a fake banking message
+The second link redirects to a picture of what may appear to be a document from the Brazilian bank Bradesco, but is actually a counterfeit.
+Figure 11.
+Thumbnail of a fake Bradesco document
+So far, we have identified four different phishing emails, but it is highly likely there are more versions because a different HTML is downloaded from another URL every time Windows32.dll is executed, i.e.
+every time the system starts because of the schedule task it created.
+And the links in these messages redirect to other websites that download different zip files, each with a malicious Jar inside.
+If the user tries to open one of the monitored email websites in Chrome, the infected process wuauclt.exe kills chrome.exe using its PID and opens Internet Explorer.
+After logging in, the credentials and the emails of the user’s contacts are sent to a remote server through a POST request with this format:
+name=StolenEmail.txt&content=StolenEmail|StolenPassword,\r\nEmailsOfContacts\r\nStolenEmail\r\n
+Figure 12.
+POST request with the stolen email data
+The sample contains API calls associated with keylogging functionalities (GetAsyncKeyState) and clipboard snooping (SetClipboardData, GetClipboardData, etc.)
+However, the email data is intercepted by hooking the GetMessage, TranslateMessage, and DispatchMessage API calls.
+The messages that come from keyboard events are extracted from the queue with GetMessage.
+TranslateMessage turns virtual-key messages into character messages, and DispatchMessage redirects those messages to the window procedure that will process them.
+Figure 13.
+Credentials obtained from the thread’s message queue
+After this, three more files are created: malware.ini that contains the stolen email information, and two XML files that contain the same string, which, when decoded, displays the account and the emails of the contacts.
+Next, the trojan deletes the browsing history.
+Figure 14.
+Coded email information
+Figure 15.
+XML files with coded email and contacts
+On the remote server, the authors keep track of the stolen email credentials using counters.
+Interestingly, there seems to be two users (“Usuários”) involved, each with their own count.
+Figure 16.
+Counters of the stolen credentials
+The URLs of these logs were also coded with the same algorithm mentioned previously.
+Figure 17.
+Encoded URLs of the malicious servers
+Figure 18.
+Decoded URLs of the malicious servers
+An interesting feature of this trojan triggers when the user attempts to open a document using programs such as Notepad, Wordpad, Notepad++, Word, or PowerPoint.
+Instead of opening the window to choose the file, the program automatically opens a file called Comp_Ted_832129.html that contains a message in Portuguese about an alleged banking transfer and a link to check the “bank receipt”.
+This behavior presents only when trying to open files and not when creating new ones.
+The file Comp_Ted_832129.html is also downloaded and saved in C:\Users\\AppData\Roaming\Microsoft\.
+Figure 19.
+Message displayed when the user tries to open a document
+Some of the anti-debugging tricks used by the malware include:
+The typical IsDebuggerPresent
+A combination of GetWindowThreadProcessId and GetCurrentProcessId to compare the process id of the thread that created the specified window, in this case the debugger, and of the malicious sample in execution.
+If the ids are different, the process ends.
+Use of GetTickCount to obtain the milliseconds since the system was started to detect whether the sample is executing in a virtual machine.
+Use of CreateToolhelp32Snapshot, Process32First, Process32Next, Module32First, and Module32Next to retrieve information about the processes and the modules associated with them.
+This is done in order to detect the execution of programs such as Process Monitor.
+Brazilian banking trojans are versatile and are constantly evolving, adopting new techniques to keep their illegal business lucrative.
+The sample in this report is an example of this.
+First it uses a Jar, which is a cross-platfom file type; then performs some actions using temporary Visual Basic Scripts and finally injects a malicious DLL into a legitimate Windows process.
+All these infection stages make it harder for administrators to identify and remove this threat, hence the importance of having an effective security protection to prevent the infection in the first place.
+e6ff55bd8162360e83e4eb318f65b44f37491fadf9cfec489235a1fa9131a3a0 --- BR52357896253ex.zip
+9f24b59b6413dacfbcb1a6b0522603239927282b599c324494b40c3ba3ac9939 --- BR52357896253ex.jar
+421d02862312f3df5c8db0081d2e65c149a7d360c43f327fe7902bcea209bf75 --- Windows32.dll
+d12bfc60f9109f4e6f672f367720f2888b75e7c3b0ba67031c2ca144a45fc853 --- Windows.app
+5c7ab9e90b05804d07e9d803f85462bc1a44d0726256bad28219984ee2b5772f --- Windows.cur
+2dcd5062a167325090f74bbca3621e44be56f0c6a7ec69f6c19aafcf592ac792 --- Windows.snd
+b65ae83129618e2ca41db99fe7fa9184c47092788eb1ba7ef1a46fe61153cb00 --- Windows.win
+3260e25b9ffb9611a804c652bd5effb47994ccb971a754e290d2058325148137 --- 4843c6c1568.zip
+3260e25b9ffb9611a804c652bd5effb47994ccb971a754e290d2058325148137 --- f9e882eba68.zip
+3260e25b9ffb9611a804c652bd5effb47994ccb971a754e290d2058325148137 --- 5f34f5565d2.zip
+aa5dbb4cd7748c2561e4c14ebd614819457fbc0b3d6c027fce4ac42e65b54da6 --- 2dcX1PH
+f49716bbd0cbf00b58ea861665131cc22d656b53cdd4aea2511cc997498d6e73 --- config.zip
+68810e7a85e7b61d807584134d7d27bbed1c7ff2c08dc826886a733d17225bb2 --- 04023492342839423974rf8df6676327643r78fgghg67tr5r5er6tfhvubuer6.zip
+390c28a145a9511f60f15447775b099a65e8bda7f43363d37df18163572a6fde --- 04023492342839423974rf8df6676327643r78fgghg67tr5r5er6tfhvubuer6.jar
+3599e6c7867b52dd9ef27b35d3ab34b9dcad9608b49678757fa5ff30d81cd114 --- 8409234892384943218741230432438759840543573487594hfh4734.jar
+hxxps://limaoncloud.egnyte.com/dd/hUiElB98DI
+hxxp://trasporteuniao.com.br/FILE.zip
+hxxp://sites.google.com/site/4843c6c1568/4843c6c1568.zip (down at the time of analysis)
+hxxp://sites.google.com/site/f9e882eba68/f9e882eba68.zip
+hxxp://sites.google.com/site/5f34f5565d2/5f34f5565d2.zip
+hxxp://sites.google.com/site/ws15092016/ws15092016.zip (down at the time of analysis)
+hxxp://sites.google.com/site/ws09201609/ws09201609.zip (down at the time of analysis)
+hxxp://sites.google.com/site/ws20162016/ws20162016.zip (down at the time of analysis)
+hxxp://sites.google.com/site/4f22f98ff6d/4f22f98ff6d.zip (down at the time of analysis)
+hxxp://sites.google.com/site/ws24092016/ws24092016.zip (down at the time of analysis)
+hxxps://sites.google.com/site/d34as4up/config.zip
+hxxp://bit.ly/2czwVsL?dl=1 (redirects to hxxps://www.sugarsync.com/pf/D3218110_07217734_66517?directDownload=true)
+hxxp://bit.ly/2dcX1PH?dl=1 (redirects to hxxps://www.sugarsync.com/pf/D3218110_07217734_70708?directDownload=true)
+hxxp://bit.ly/2d6HFQB?d1=1 (redirects to
+hxxps://www.sugarsync.com/pf/D3218110_07217734_66524?directDownload=true)
+hxxp://rogeriosocalor.ddbs.net (redirects to
+hxxp://192.99.73.134/fotos/04023492342839423974rf8df6676327643r78fgghg67tr5r5er6tfhvubuer6.zip)
+hxxp://contrastejeans.com.br/novo/config/logs/HSM/index.php
+hxxp://200.98.175.45/upload.zip.exe (down at the time of analysis)
+hxxp://contrastejeans.com.br/novo/config/logs/ADM/index.php (down at the time of analysis)
+hxxps://sites.google.com/site/dbroot2016/config.zip
+hxxp://contrastejeans.com.br/novo/config/logs/GAS/index.php
+hxxps://sites.google.com/site/dbfilesmanager/config.zip
+hxxp://contrastejeans.com.br/novo/config/logs/SLC/index.php

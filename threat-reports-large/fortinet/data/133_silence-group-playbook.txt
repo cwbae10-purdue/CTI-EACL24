@@ -1,0 +1,88 @@
+Adversary Playbook: The FortiGuard SE Team is releasing this new playbook on the threat actor group known as Silence Group as part of our role in the Cyber Threat Alliance.
+For more information regarding this series of adversary playbooks being created by CTA members, please visit the Cyber Threat Alliance Playbook Whitepaper.
+Active since 2016, Silence Group is a cybercriminal organization that targets banks, specifically stealing information used in the payment card industry.
+There has been ample coverage [1] [2] of this group over the years that highlights their TTPs (Techniques, Tactics, and Procedures) [3].
+The aim of this playbook is to provide first responders with relevant, up-to-date analysis, samples, and indicators of compromise which should help security professionals better protect their infrastructures.
+The modus operandi of the Silence Group is simple.
+It is to make as much money as possible by compromising targets, in this case banks, via a spear phishing strategy, which will then lead to exfiltrating financial data as well as also allow the attackers to “Jackpot” ATMs to withdraw money.
+To achieve these goals, the Silence Group is known to utilize publicly available tools that they repurpose, as well as use a technique that the cybersecurity industry refers to as “living off the land.” What this essentially means is that they attempt to operate as long as possible using the preexisting tools or commands built into the operating system of their target to effectively maximize the time they are able to spend within the target environment.
+This strategy has two benefits: first, using locally available tools helps them better evade detection, and second, it helps them establish a deeper and stronger foothold.
+However, the group does not exclusively rely on publicly available tools.
+They are also known to write their own sets of modular, custom tools.
+As the motivations and various TTPs of their living-off-the-land strategy have been documented previously, this blog will focus on the details of those custom tools developed exclusively by this group.
+Like most attacks, the typical Silence Group threat begins with a spear phishing email with malicious attachments.
+The attachments may be in the form of a weaponized Microsoft Word document or a Microsoft-compiled html help (CHM) file sent to banks to entice their users to click on the attachments.
+These malicious emails generally contain infected Word documents or weaponized help files.
+For example, the following is a help file sent to a user:
+[1] https://securelist.com/the-silence/83009/ [2] https://www.group-ib.com/blog/silence [3] https://reaqta.com/2019/01/silence-group-targeting-russian-banks/
+While this screenshot may seem innocuous, when a user inadvertently executes the file’s malicious script it contacts a server in the background.
+The script then initiates the second-stage of this attack by downloading and executing a file from that server to the user's machine.
+This obfuscated VBS file is then executed within the context of a browser window inside the help files, where it then deobfuscates itself and executes a PowerShell command.
+Unbeknownst to the user, this new PowerShell command calls out to another server to retrieve a binary file, which it then decrypts into a third-stage downloader.
+This last downloader is designed to acquire the actual Silence payload that consists of several different modules, depending on which phase of the overall attack the group is currently in.
+Some modules we describe in the playbook include a proxy, a monitoring agent, an ATM module, and the actual main Silence module itself.
+The downloader stage of this attack strategy has functionally stayed the same throughout the few years this group has been active.
+For persistence purposes, the registry key the module sets usually tries to mimic a well-known product to avoid detection.
+The same can be said for the filename it attempts to rename itself.
+The downloader itself accepts three distinct commands.
+The downloader contacts a separate C&C server to get a command.
+If the command contains the string 'http', then this module will parse the command and download the specified file.
+This new file will also be given a seemingly benign name, such as “conhost” or “igfxpers_”, with a string appended to it based on the username or a randomly-generated guid value before being executed.
+The main module of Silence allows the group to handle the different aspects of their attack.
+While one set of proxy modules was developed in Delphi, another set was built using the .Net framework.
+This lends credence to the theory proposed by Group-IB that the Silence group likes to modify existing tools for their own purposes.
+[1]
+The proxy module can be used as a springboard to other networks, or in this case, to dive deeper into the internal bank network.
+Looking closer at the .Net proxy modules, for example, one can see that the Smart Assembly obfuscator was used to try and hide the module's payload.
+[1] https://www.group-ib.com/blog/silence
+Figure 1.
+Screenshot of Proxy Module
+Debugging the module leads to a configuration file being loaded.
+The connection details can be seen in the screenshot above using a password of “password”.
+The monitor module has one function.
+It gives the authors the capability to spy on the infected machines.
+Screenshots are taken and interprocess communications are used to transfer the data to the main module.
+In this way, it is able to function similarly to a video stream.
+The crux of this operation revolves around the ATM module, also known as Atmosphere.
+It makes it possible for the authors to remotely cash out ATM machines.
+Once on an infected computer, this module searches all running processes for a legitimate one called "atmapp.exe", which is proprietary ATM software.
+Figure 2.
+ATM module
+Once "atmapp.exe" is found, the Atmosphere module will take the dll it was storing in its resources and inject it into the running process.
+Some of the functionality included in the dll may have been based on an existing GitHub project (https://github.com/TsudaKageyu/minhook) (to learn more about the open source malware development and how adversaries are taking advantage of it, please see our Q4 Threat Landscape Report).
+Once the injection process has been completed, the malicious dll will run in the ATM process space, thereby effectively gaining control of the ATM, a process known as “Jackpotting.”
+Figure 3.
+Strings for ATM module
+From this point on, threat researchers assume that the authors hire money mules to pick up cash from infected ATMs while moving on to their next target.
+Distribution for the various samples used by the Silence Group is not restricted to one current geographical location.
+As shown in the example below, we can see that distribution includes the following countries (based off geo-ip information):
+Australia, Canada, France, Ireland, Latvia, The Netherlands, Poland, Spain, Sweden, and The United States.
+Figure 4.
+Geographic distribution of command and control and download sites used by Silence Group
+We have observed samples distributed in various global locations, with a concentration in the EMEA region.
+One IP address in France (137.74.224.142) was the primary download site or command and control for over 15 samples.
+Another interesting observation is that The Netherlands has had over 10 different unique IP addresses that were either used as download sites or as command and control servers.
+An interesting Silence Group correlation
+During our investigation, we noticed some anomalous behavior with certain IP addresses, specifically Canadian IP addresses.
+Although they are different in scope, we decided to see if there was any correlation to known actors, bulletproof hosts, or webhosts.
+Due to time constraints, and to keep the blog succinct, we will not go into too much detail for the purposes of this playbook.
+However, after cursory analysis, a peculiar detail stood out for the following IP addresses:
+144.217.14.173 (Montreal, QC, Canada)
+158.69.218.119 (Montreal, QC, Canada)
+144.217.162.168 (Montreal, QC, Canada
+These addresses were all associated with a single webhosting organization.
+When we decided to investigate a little further, we discovered additional connections to netblocks from this same webhosting organization in the following countries: Australia, Canada , France, The Netherlands, Spain, and Ireland.
+Figure 5.
+Global sites
+Remarkably this list constitutes a whopping 60% of the countries we identified in our initial analysis.
+Please note, however, that this correlation does not construe or interpret that this organization is in any way involved or even aware of the situation.
+This is likely either entirely coincidental, the result of Silence Group actors simply being familiar with the publicly available services of a well-known hosting service, or due to the efforts of another bad actor, such as a bulletproof downstream host that is reselling those services.
+Although many IP addresses with multiple country connections to this hosting company have been observed, it remains unclear as to how they are connected to each other, or if this is possibly even simply due to circumstance (automatic assignment by the webhost, etc.)
+For further information regarding the samples used in our research, including indicators of compromise that have been analyzed and mapped according to the specifications of the MITRE ATT&CK framework, please refer to our latest playbook on the Silence Group here.
+Note: MITRE ATT&CK™ is a globally-accessible knowledge base of adversary tactics and techniques based on real-world observations.
+The ATT&CK knowledge base is used as a foundation for the development of specific threat models and methodologies in the private sector, in government, and in the cybersecurity product and service community.
+Learn more about FortiGuard Labs and the FortiGuard Security Services portfolio.
+Sign up for our weekly FortiGuard Threat Brief.
+Know your vulnerabilities – get the facts about your network security.
+A Fortinet Cyber Threat Assessment can help you better understand: Security and Threat Prevention, User Productivity, and Network Utilization and Performance.
+Read about the FortiGuard Security Rating Service, which provides security audits and best practices.

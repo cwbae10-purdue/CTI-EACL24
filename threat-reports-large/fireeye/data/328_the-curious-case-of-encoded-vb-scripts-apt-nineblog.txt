@@ -1,0 +1,58 @@
+We came across a rather peculiar TTP (Tools, Techniques, and Procedures) in a targeted attack we found recently.
+This targeted attack uses simpler techniques but still remains effective in infiltrating the target.
+The weaponized document that was part of this attack was intended for a victim in India as evident from the contents of the decoy document presented post exploitation.
+The main modules of this attack are implemented in encoded VB scripts as also recently seen with Janicab, however we do not see any connections between the two.
+It also employs encrypted callback communications over HTTPS.
+[caption id="attachment_2705" align="alignnone" width="654"] Figure 1 - Infection cycle[/caption]
+The weaponized document (7a385b08f09f02658f80381ed837ef98) uses CVE-2012-0158 to drop and launch the payload and decoy document.
+The decoy document contains a recent news article copied from the Hindustan Times detailing an unfortunate and tragic event that occurred recently in India.
+[caption id="attachment_2706" align="alignnone" width="581"] Figure 2 - Decoy document[/caption]
+The payload dw20.exe has a simple function, which is to drop two VB scripts and launch them using Windows script host (wscript.exe).
+The following two files are created
+%Temp%\232n9q4.vbs - It deletes the initial payload dw20.exe and itself.
+%AppData%\checker.vbe - This is the main encoded payload and contains data gathering as well as command and control (CnC) functions.
+The VB payload checker.vbe is encoded using Microsoft's script encoder [1] as shown in Figure 3.
+This method is meant to provide protection to the code and also maintain integrity, as even changing a single character in the encoded script will render it inoperable.
+While it may be somewhat effective at evading signature matching engines, it is a substitution cipher and is trivial to decode [2].
+[caption id="attachment_2707" align="alignnone" width="709"] Figure 3 - Encoded VB script[/caption]
+Once decoded it is clear that the main functionality is implemented in this script.
+The script initializes the CnC URL variable as shown in Figure 4.
+It also uses the ID "ent-V4.0" possibly as an identifier for this attack campaign.
+[caption id="attachment_2708" align="alignnone" width="375"] Figure 4 - Hardcoded C2 server and campaign code[/caption]
+The scripts also creates copies of itself with misleading names and creates a scheduled task as well as a startup run entry for persistence of infection.
+It creates the scheduled task by running the command below.
+(Note the misspelled word "Experance" and incorrect grammar indicating that the attacker is not a native English speaker.)
+The script also has a function to gather system information.
+Here the Netbios name as well as the username is acquired and stored in the "name" variable.
+It also enumerates all running processes using Winmgmt WMI service and creates a tab separated list in the variable "all" as follows:
+[caption id="attachment_2709" align="alignnone" width="973"] Figure 5 - Data gathering function[/caption]
+The function that performs the CnC communication is shown below.
+The function takes a URL as an argument and data to include in the POST header.
+The communication is done over HTTPS (https://ent.wikaba.com/9blog/client.php).
+[caption id="attachment_2710" align="alignnone" width="787"] Figure 6 - Functions performing POST to remote server[/caption]
+[caption id="attachment_2711" align="alignnone" width="450"] Figure 7 - Command and control behavior[/caption]
+The CnC communication behavior is shown in Figure 7 and is summarized below:
+It beacons with the POST stub parameter "&req=login" repeatedly in a loop with incremental Sleep.
+The loop is an exponential decay function where the sleep counter is increased by a multiplication factor of two.
+It continues to make this request until it receives "Success login " in response.
+It uses the hardcoded password "wincli" for this request.
+The request over the wire is intercepted using the man-in-the-middle technique is as shown below:
+POST /9blog/client.php HTTP/1.1
+User-Agent: Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.2; Trident/6.0)
+Success login : Win_{Hostname}--{Username}
+Once login succeeds, it then beacons with the POST stub parameter "&req=cmd" with the list of processes stored in the "all" variable.
+It repeatedly makes these requests until it receives "On Error Resume Next " in response.
+The fact that it checks for this string indicates that it expect another VB script in response to this request.
+The intercepted communication over HTTPS is shown below:
+POST /9blog/client.php HTTP/1.1
+User-Agent: Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.2; Trident/6.0)
+Date: Tue, 30 Jul 2013 16:23:21 GMT
+Server: Apache/2.4.3 (Unix) OpenSSL/1.0.1c PHP/5.4.7
+Keep-Alive: timeout=5, max=100
+Once the secondary VB script is received, it executes it.
+The CnC server was not responding with the correct response at the time of analysis and we were unable to obtain the secondary script.
+At the time of analysis the CnC server ent.wikaba.com was resolving to 122.10.10.184.
+[caption id="attachment_2712" align="alignnone" width="731"] Figure 8 - Location of resolved IP address[/caption]
+This case demonstrates that even simple techniques can be quite effective.
+In addition to the use of encoded VB scripts, this malware uses HTTPS/TLS to encrypt its command and control communications.
+The encoded VB scripts are not usually detected by anti-virus signatures and the encrypted network traffic evades network-based detection.

@@ -1,0 +1,59 @@
+Cloud computing has become ubiquitous as more and more companies move their infrastructure to the cloud, run software from the cloud on local thin clients and use the cloud for Web services.
+Customers — called tenants — realize cost savings over maintaining their own computing setup, making the cloud a very tempting alternative.
+Infrastructure-as-a-service (IaaS) clouds allow tenants to scale the number of computing resources they have available based upon current demand.
+These clouds use virtual machines to provide this scalability, allowing tenants only to pay for what they need at any given time.
+Software-as-a-service (SaaS) clouds allow a tenant to provide very thin clients to its users such that it can utilize software on the cloud through a Web-based interface in most cases.
+Platform-as-a-service (PaaS) clouds are a sort of hybrid.
+They allow multiple tenants to share one environment, isolated occasionally by virtual machines, but more typically using technologies such as Linux Containers.
+Linux Containers provides a weaker level of isolation as compared to virtual machines because it shares the same operating system kernel; however, it does provide strong isolation among users.
+Linux Containers is often considered strong enough for the PaaS cloud, where the users all share one setup or environment, with the Containers isolating particular instances of that environment.
+For example, all tenants share a single PHP executable, a single Ruby on Rails instance and other programs utilized in Web servers.
+They often have the ability to run custom programs from within their Container in order to provide custom CGI scripts.
+It is this sharing of executables and the fact that Containers shares one kernel and one hardware compute node, which gives rise to some very sophisticated side-channel attacks.
+Side-channel attacks typically occur when hardware leaks information to a potential attacker.
+This data can be very valuable, as we will discuss.
+It should be noted that side-channel attacks exist for all three cloud types, but we will be focusing on a research paper regarding PaaS cloud side-channels.
+In November 2014 at the ACM Conference on Computer and Communications Security, Y. Zhang, A. Juels, M.K.
+Reiter and T. Ristenpart presented their report, “Cross-Tenant Side-Channel Attacks in PaaS Clouds.” In this work, the authors construct a framework for the exploration of side-channels based on the shared CPU cache.
+They also conduct three successful attacks.
+Firstly, they use a cross-site request (a more general attack than cross-site scripting, though that would certainly work, too) to determine how many items the target has in a popular e-commerce product’s shopping cart.
+Then, they use a flaw in the PHP random number generator to hijack a user account on a target website by requesting a password reset.
+Finally, they demonstrate an attack on an open-source SAML provider, which allows one to defeat the XML encryption in order to impersonate a user.
+The authors first build a framework based on a nondeterministic finite automaton (NFA), which uses the executable’s control flow graph to determine which sections of memory are of interest to the attacker.
+The attacker can construct a partial control flow graph from the compiled executable and only monitor those interesting control paths, but this requires some reverse engineering of the application.
+However, with the PaaS cloud, the software used is often open-source, which means the source code is available to the attacker.
+At this point, the attacker can build a thorough control flow graph by using compiler-style static analysis.
+Note that to be entirely accurate, the attacker should know with which options the program was compiled.
+Also, there will be dynamic code in the executable, such as indirect jumps, which will foil most types of static analysis.
+Having source code minimizes these difficulties.
+See section 3.3.1 of the report for a detailed description of how control flow graphs are created and monitored.
+An NFA is essentially a finite automaton (FA) that at some point uses an arbitrary choice to transition from one state to the next.
+An FA uses a graph (in this case, a control flow graph) to advance from one state to the next.
+It can be thought of as a state machine in which each node of the graph can transition to a finite set of edges to reach the next state.
+This is intuitively what happens during the execution of a program as its flow proceeds from one basic block to the next.
+The attack NFA is set to monitor these chunks of memory looking for changes.
+It becomes nondeterministic when there are too many possible states (based on the monitored memory chunks) to make a correct decision as to the next state.
+At this point, an arbitrary state is chosen.
+See section 3.2 of the paper to get a thorough definition of the attack NFA.
+The construction of the NFA is a largely manual process no matter how well the control flow graph is constructed.
+This is one limitation of the attack, but if the attacker has a particular target in mind, the construction of the automaton may be well worth the time and effort.
+The NFA uses the control flow graph to monitor specific chunks of memory by way of the FLUSH+RELOAD cache side-channel attack, as described in Y. Yarom and K. Falkner’s “FLUSH+RELOAD: A High Resolution, Low Noise, L3 Cache Side-Channel Attack,” presented at USENIX Security 2014.
+This attack relies on the typical behavior of operating systems’ deduplication of shared memory pages — that is, shared objects (such as libraries) are loaded only once and then are mapped into each process that requests them.
+This saves memory, and since the pages are write-protected, the CPU and the OS kernel make sure that no process can change them — even privileged processes.
+This deduplication is critical for the FLUSH+RELOAD attack.
+There are other attacks that do not rely upon this feature, but this attack typically has less noise and a finer resolution.
+Even though the FLUSH+RELOAD attack is relatively clean of noise (a phenomenon that causes false negatives or false positives), there are still significant challenges to overcome.
+Section 3.3.2 offers a description of sources of noise and the methods the authors use to overcome them.
+Four methods are used to do this:
+Choose an appropriate FLUSH+RELOAD interval.
+Too short and there will be race conditions in the cache side-channel; too long will result in unobserved duplicates.
+The authors found that one microsecond was a good value.
+Avoid frequently accessed chunks.
+For example, a library call may be accessed many more times than the matching access from the procedure linkage table or the global offset table of other shared objects that call the wrapper functions.
+When a chunk has overlapping functions, do not monitor it due to false positives.
+Use the time interval to rule out false positives.
+A requirement for the attack to succeed is the collocation of the attacker processes and target processes on the same CPU (not core, but physical CPU).
+This can be done by launching several instances of the attacker setup and then checking for collocation with the target.
+The authors do this by sending Web requests to the target and monitoring with the FLUSH+RELOAD attack to see if the target follows the correct control path.
+Section 4 of the report provides the details of collocation detection.
+For more information read part two of this series, which discusses the three attacks mounted by the authors in more detail and describes the general form and steps of each attack.

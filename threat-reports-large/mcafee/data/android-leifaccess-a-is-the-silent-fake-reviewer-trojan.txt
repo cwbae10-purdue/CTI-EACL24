@@ -1,0 +1,140 @@
+The McAfee Mobile Research team has identified an Android malware family dubbed Android/LeifAccess.A that has been active since May 2019.
+This trojan was discovered globally with localized versions but has a much higher prevalence in the USA and Brazil.
+As part of the payload, this trojan can abuse OAuth leveraging accessibility services to automatically create accounts in the name of a victim’s legitimate email in multiple third-party apps.
+Using the same approach, it can create fake reviews on the Google Play store to manipulate app rankings, perform ad-fraud (clicker functionality), update itself and execute arbitrary remote code, among other functionalities.
+Meanwhile, many targeted apps affected for fake reviews are on Google Play.
+This malware has not been identified in the official Android store so some of the potential distribution methods that we identified are related to social media, gaming platforms, malvertising and the direct download of the APK files from the Command and Control (C&C) Server.
+Once installed, Android/LeifAccess.A does not show any icon or shortcut.
+It runs in the background and may ask victims to activate accessibility services to perform most of its malicious activities by displaying a toast notification, simulating a system warning as shown below:
+Accessibility services were designed to assist users with disabilities, or while they were otherwise unable to fully interact with the device.
+However, as we have observed in banking trojans and other mobile threats, the accessibility services could also be abused by malware authors to perform malicious activities without user interaction.
+In recent versions of Android, Google limited the number of apps with accessibility services permission on Google Play and moved some functionality to other newly created APIs to minimize the abuse, but cyber criminals are still trying to exploit it, convincing users to activate this critical permission.
+If accessibility permissions are granted, the trojan can fully perform its malicious activities; if it is not granted, it will still perform part of the possible commands such as ad-fraud, install short-cuts and update itself, opening the door to new payloads.
+Based on the static analysis of the de-obfuscated second stage dex file (fields.css) it is possible to conclude that Android/LeifAccess can post fake reviews on Google Play by abusing the accessibility services:
+Figure 3.
+De-obfuscated list of strings used as full qualified resource name of the view id access to perform fake reviews abusing accessibility services
+Android/LeifAccess will try to download and install the target app because a user account only can write reviews of apps that have previously been installed.
+It will try to download through Google Play but there is also an implementation to download apps from an alternative market store (APKPure), as well as direct links.
+As a real-world example of this malicious behavior it is possible to find reviews on Google Play that match with the parameters received from the C&C and stored in the de-obfuscated SharedPreferences XML files.
+For instance, the app ‘Super Clean-Phone Booster, Junk Cleaner & CPU Cooler’ is ranked with 4.5 stars average and more than 7k reviews, many of which are fake as they feature duplicated phrases copied from the Trojan’s command parameters.
+Some of the fake comments contain multiple likes that could be associated to other commands performed by this malware which is able to find this text content and gives them a like:
+Figure 6.
+Command “rate_words” that are used to vote for fraudulent reviews
+Android/LeifAccess.A stores a Hashtable map, in a SharedPreferences XML format, where the key is the function name and the value is the parameter used by the commands.
+To avoid detection, the real function names (plain text) and parameters are obfuscated, encrypted, salted and/or one-way hashed (md5 or sha-1).
+Values are stored as obfuscated strings using data compression with zip.deflater and base64.enconde as defense evasion techniques.
+Some strings are obfuscated more than one time with the same algorithm.
+Each key is calculated using an md5 digest checksum of the byte array produced by a custom base64 of the string resulting from a custom operation over ‘function names’ and ‘package name’ of the sample.
+There are hundreds of different variants of this family, each one with a different package name, so malware authors take advantage of this uniqueness in the string of the package name to use it as a salt for hashing the key values.
+In figure 5 the xml <String> element contains the reviews sent by the C&C while the attribute “name” represents the hash table key.
+In this example the key “FF69BA5F448E26DDBE8DAE70F55738F6” is associated to the command “rate_p_words”:
+MD5 is a one-way function so it is not possible to decrypt the string but, based on the static analysis, it is possible to recalculate the hash for all the decoded strings found on the second stage DEX file and then associate it with the hash-table.
+Recalculation of this particular hash was possible by invoking the hash function with rate_p_words and com.services.ibgpe.hflbsqqjrmlfej as arguments.
+In the same hash table other parameters are stored, such as the self-update server URL using the same encryption/obfuscation technique:
+Figure 7.
+Obfuscated HashMap
+This key F09EA69449BA00AA9A240518E501B745 and the embedded value can be interpreted as follows:
+Figure 8.
+HashMap as plain text
+Other commands are detailed in the table of commands in the appendix which includes shortcut creation and frequency of updates.
+Furthermore, received commands may also be stored locally in an SQLite DB that logs part of the action performed by the malware.
+LeifAccess tries to navigate through the target app using AccessibilityNodeInfo by view-id resource name.
+For example, for Google Play Protect, the package is embedded on the Google Play app with package name ‘com.android.vending’ and it will try to access the view id ‘play_protect_settings:’ as defined on string g. The full qualified resource id is “com.android.vending:id/play_protect_settings” as shown in the deobfuscated code below.
+Then it will locate the ‘android:id/switch_widget’ to try to deactivate the scan device option.
+Figure 9.
+List of view-id resources strings abused by LeifAccess
+Another monetization technique used by this family is the creation of accounts in the name of real user identities and accounts registered on the infected device.
+This is achieved by abusing the accessibility services to perform an account creation and login with the Google Sign-In OAuth 2.0 that many legitimate services integrate in their apps.
+Android/LeifAccess can download and install the target app to later set up an account without user interaction.
+The deobfuscated code below shows how Android/LeifAccess uses AccesibilityEvent to navigate into a dating app to create an account using the Google login option.
+Figure 10.
+AccessibilityEvent used to create fake accounts
+Below are some examples of other application package names that are targeted by this malware to perform fake account creation, mostly related to categories such as shopping, dating and social.
+zalora.android
+tiket.gits
+b2w.submarino
+zzkko
+phrendly
+newchic.client
+com.netshoes.app
+makemytrip
+like
+lazada.android
+joom
+jabong.android
+startv.hotstar
+banggood.client
+alibaba.intl.android.apps.poseidon
+alibaba.aliexpresshd
+airyrooms.android
+Clicker functionality is also implemented so advertisement traffic is requested by the infected device without showing a single ad in the interface.
+Specific user-agent headers are sent from C&C to perform ad-fraud.
+Figure 11.
+Specific User-Agent
+The ID for the ad network is updated via the C&C Server:
+Figure 12.
+ID used to monetize the ads
+Normally, the apps that run ads integrate one or more ad network SDKs (usually distributed as JAR libraries) into it to properly request the ad content gathering location, device type or even some user data.
+However, this malware does not integrate any SDK packages into the source code to access the ads.
+Android/LeifAccess can load ads using the proper ad-network format via direct links for Ad Clicks or Ad Impressions (IMPR) that the C&C server pre-builds and sends to it in JSON format.
+This means that the infected device will be able to request a URL with the full parameters required to simulate a legitimate click coming from a user clicking a banner in the context of a legitimate application, evading the SDK integration which also contributes to keep a relatively small file size.
+The adware JSON structure includes:
+Furthermore, this malware can show real ads in full screen out of the context of any app after unlocking the device if it receives the proper commands, or based on a certain frequency defined by the C&C.
+Also, it can show an overlay icon redirecting to ads as a floating overlay.
+Arbitrary shortcuts can be created in the home screen based on the parameters received:
+To gain accessibility services or to request the deactivation of an OS security option that has not been granted yet, the malware is able to launch toast messages to try to convince victims to perform certain actions.
+Below is a list of fake notifications, including title and content, in JSON format used by the malware inside the “dialog” attribute which is executed as a toast notification in the intervals of the parameter “notifi_inter” (28800000 milliseconds, which equals 8 hours).
+Figure 13.
+List of dialogs used as fake notifications
+The ‘deactivate’ and ‘activate’ string is internationalized to match with the OS language:
+To avoid detection, or as a ‘defense evasion’ technique, the original installed application is just a wrapper that, once executed, can decrypt a JAR from the asset file from path ‘assets/fields.css’ which is dynamically loaded using reflection into the main application.
+System API calls strings are also obfuscated using a custom base64 implementation.
+Figure 14.
+Overview of the malware unpacking
+Reversing the decrypted jar file requires deobfuscation of the strings used by Android/LeifAccess.A which are all custom encoded:
+Figure 15.
+Deobfuscated strings using function et.a
+The command and control servers are also used for malware distribution and payload updates.
+The domain names contain words that can make people think they belong to a legitimate advertisement network or a Content Delivery Network (CDN):
+hxxp://api.adsnativeXXX.com
+hxxp://cdn.leadcdnbXXX.com/
+The samples are available in the C&C hosted as direct APK links but also may be distributed in social media or as a malvertising campaign that tries to convince users to install a critical security update.
+This variant label is SystemSecurityUpdates and the package name starts with ‘com.services.xxxx’, pretending to be a system update.
+Variants of Android/LeifAccess.A were found hosted and distributed through the Discord game chat platform.
+Some malicious APK variants were available in the following URL scheme:
+hxxps://cdn.discordapp.com/attachments/XXXXXXXXX/XXXXXX
+Infection requires the user to download and install the malicious APK; this means that a social engineering component is used for initial access.
+Scaring people about potential threats using ads, or luring gamers that want to add a “hidden feature” makes them more willing to follow the instructions of untrusted installation flows described by attackers on posts or videos, even if they must dismiss security notifications or deactivate security measures to allow aggressive permissions or activate accessibility services.
+The ability to install apps and then post fake reviews on Google Play in the name of a victim, create fake accounts on third party services plus the self-update mechanism, in conjunction with multiple obfuscation and encryption techniques used as self-defense, makes this piece of malware unique and allowed it to stay under the radar for victims without AV protection.
+The main functions of this Trojan can be described as:
+Download Apps from Google Play or APK Pure
+Deactivate Google Play Protect
+Create Fake Accounts with OAuth abusing accessibility
+Post fake reviews on Google Play
+Create short cuts on the main screen
+Display Ads in the background and in full screen
+Self-Update
+Android/LeifAccess implements multiple techniques for self-defense to encrypt and obfuscate the malicious behavior and to try to avoid AV detection.
+Due to the high volume of unique samples we can infer that a considerable amount of resources are destined to infrastructure and automation for sample generation in a server-side polymorphic way.
+New variants are constantly deployed to keep this mobile botnet of fake reviewers alive.
+This kind of malware not only damages users, it also affects App Market credibility and adversaries/ad-networks that paid for banners that nobody views.
+It also suggests that a market exists for the fraudulent improvement of app reputation, and services such as this must be performed with a monetization objective very similar to what happens on social media where services exist to buy followers or likes.
+These publications violate the guidelines of the Google Play Store mainly because reviews and rankings are key to helping users to select appropriate and safe apps – fake ones can ruin users’ trust.
+However, this ranking manipulation is a challenge to identify and remove as these kinds of fake review are not produced by fake accounts and most anti-spam methods are designed to find content created by untrusted or unverified accounts rather than legitimate users.
+This same technique could be used for social media or any other platform distribution of arbitrary messages.
+If you think you could be affected by this family then you can view or edit the reviews that you have written on your Google account at https://aboutme.google.com/.
+Newer implementations of this malware are also identified and detected by McAfee Mobile Security as Android/LeifAccess.A and Android/LeifAccess.B.
+6032c1a8b54f3daf9697a49fdd398d3ebe35f3fec3d945d6d8e9588043332969
+com.services.ibgpe.hflbsqqjrmlfej
+032184204b50f0634ad360a2090ea9904c012cb839b5a0364a53bf261ce8414e
+com.services.kxyiqc.zzwkzckzfiojjzpw
+0a95e9cce637a6eb71e4c663e207146fe9cde0573265d4d93433e1242189a35c
+com.services.jifat.qaxtitmumdd
+533a395ed16143bbe6f258f3146ea0ea3c56f71e889ace81039800803d0b1e18
+com.services.xvpyv.tteawsribdsvi
+6755f708d75a6b8b034eae9bcb6176679d23f2dc6eb00b8656d00f8ee0ec26c1
+com.services.myzmuexri.nrphcanr
+adsnative123.com
+Myapkcdn.in
+adsv123.com
+https://android-developers.googleblog.com/2018/12/in-reviews-we-trust-making-google-play.html

@@ -1,0 +1,56 @@
+At the end of September, Palo Alto released a report on Unit42 activity where they – among other things – talked about PYLOT malware.
+We have been detecting attacks that have employed the use of this backdoor since at least 2015 and refer to it as Travle.
+Coincidentally, KL was recently involved in an investigation of a successful attack where Travle was detected, during which we conducted a deep analysis of this malware.
+So, with this intelligence ready we are sharing our findings in this blog to supplement Palo Alto’s research with additional details.
+The Travle sample found during our investigation was a DLL with a single exported function (MSOProtect).
+The malware name Travle was chosen given a string found in early samples of this family: “Travle Path Failed!”.
+This typo was replaced with correct word “Travel” in newer releases.
+We believe that Travle could be a successor to the NetTraveler family.
+First of all, we detected numerous malicious documents being used in spear-phishing attacks with file names suggesting Russian-speaking targets with executables maintained in encrypted form:
+This encryption method has been well known for a long time – it was first used in exploit documents to conceal Enfal, then we discovered this backdoor – Travle.
+Later documents with such encryption started maintaining another one APT family – Microcin.
+Travle C2 domains often overlap with those of Enfal.
+In regard to NetTraveler, at some point Enfal samples started using the same encryption method for maintaining the C2 URL as was used in NetTraveler:
+Enfal sample with NetTraveler-like C2 string encryption
+So, clearly these backdoors – Enfal, NetTraveler, Travle and Microcin – are all related to each other and are believed to have Chinese-speaking origins.
+And after finding the string “Travel path failed!” we believe that the Travle backdoor could be intended as a successor to the NetTraveler malware.
+The malware starts by initializing the following variables:
+%TEMP%\KB287640\ – local malware drop-zone %TEMP%\KB887209\ – plugins storage <malware install path>\~KB178495.DAT – configuration file path
+Surprisingly, these paths remain the same in all samples of this family.
+If no configuration file is found, Travle reads the default settings from its resource “RAW_DATA“.
+Settings are maintained in an encrypted form.
+Here is the code for decryption:
+for (i = size – 1; i > 1; –i) buf[i] ^= buf[i – 2]
+The storage format for the configuration block is as follows:
+The described sample maintains the following configuration data:
+The Travle backdoor starts its communication with the C2 by sending gathered information about the target operating system in an HTTP POST request to a URL built using the C2 domain and the path specified in the settings.
+The information sent includes the following data:
+UserID – based on the computer name and IP-address
+Computer name
+Keyboard layout
+OS version
+IP-addresses
+MAC-address
+Once the C2 receives the first packet, it responds with a block of data containing the following information:
+URL path for receiving commands
+URL path for reporting on command execution results
+URL path for downloading files from C2
+URL path for uploading files to C2
+C2 second RC4 key
+C2 first RC4 key
+C2 ID
+After this packet has been received, Travle waits for additional commands from the server.
+The ciphering algorithm depends on the type of transmitted object.
+There are three possible variants:
+Data Data is ciphered with Base64 The resulting string is appended to the header with a size of 0x58 bytes The resulting buffer is ciphered by RC4 with the C2 first RC4 key The resulting buffer is ciphered with Base64
+Data is ciphered with Base64
+The resulting string is appended to the header with a size of 0x58 bytes
+The resulting buffer is ciphered by RC4 with the C2 first RC4 key
+The resulting buffer is ciphered with Base64
+List of strings
+Each line is ciphered by RC4 with the C2 second RC4 key
+The resulting buffer is ciphered with Base64
+All the previously Base64-ciphered strings are merged in one delimited with \r\n”
+The resulting string is appended to the header with a size of 0x54 bytes
+The resulting buffer is ciphered by RC4 with the C2 first RC4 key
+The resulting buffer is ciphered with Base64

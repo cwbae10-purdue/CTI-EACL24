@@ -1,0 +1,52 @@
+Recently, a variant of Mirai hit a German telco, forcing 900,000 customers off the Internet.
+Interestingly, the intent of the malware was not to crash these routers, but to enroll them in a botnet using a malicious TR-069 message, but a coding error in the malware caused some modems to fail rather than run the exploit code.
+The FortiGuard team has issued an AV signature for this Mirai variant, named Linux/Mirai.B!worm.
+Several binaries were found in the wild for different architectures.
+I'll examine the one for ARM here, as that's the variant I'm the most familiar with.
+A look at the strings in the binary reveals the following:
+Many encrypted strings
+A command meant to close port 7547
+A string /bin/sh
+Encrypted Strings
+The encrypted strings look familiar to anybody who read Linux/Mirai's source code
+In scanner.c, we see:
+where "504D4D56" is "PMMV," just like the first encrypted string we noticed.
+"544B585A54" is familiar too, and corresponds to "TKXZT".
+So, it probably uses the same "encryption."
+The function add_auth_entry calls deobf, and deobf performs an XOR with 0xDE, then 0xAD, then 0xBE, then 0xEF.
+In the code, I spotted the decryption function:
+and zoomed in:
+The XOR with 0xDEADBEEF is equivalent to XOR with 0x22.
+I consequently wrote a very basic IDA Pro script to apply to a given address.
+In the images below you can see the differences between the code before the script is applied and after.
+Before the script is applied
+After the script is applied, the strings appear in clear text
+Here we see some typical username/password pairs the worm will try to brute force: root/xc3511, root vizxv, root/admin.
+We also see names of remote hosts such as rep.securityupdate.us (beware, this one is still currently active,) and ntp.timeserver.host (which is no longer responding.)
+We can also see the strings for various other malware that Mirai kills in order to 'sanitize' the device:
+.anime: to detect Anime malware
+REPORT %s:%s and HTTPFLOOD: to detect QBot
+LOLNOGTFO and GETLOCALIP: to detect infection from LizardSquad botnet
+We also spotted the string TSource Engine Query, which relates to indirect Denial of Service attacks using online gaming servers that use the Valve Software protocol.
+The idea is to query a game server and have it send unsolicited information to the party the attacker wants to DoS.
+Where is the SOAP?
+Mirai.B exploits a vulnerability on some routers or modems which use the TR-069 protocol.
+As I explained in the description of Linux/Mirai.B, this protocol is used to manage routers and modems.
+In particular, you can POST to it XML SOAP to specify a new NTP server to use and automatically synchronize time with.
+Unfortunately, the implementation of this command is vulnerable in some cases, and allows for code execution.
+Instead of specifying the name of a new NTP server, Linux/Mirai.B specifies a command line, such as:
+Where is this in our binary?
+It's in the decrypted strings!
+In the case of our binary, the command is:
+or
+The first command downloads x.sh from a remote host using wget (HTTP,) sets executable rights, and executes x.sh.
+The second commands does the same, but using TFTP.
+The files x.sh or y.sh turn out to be binaries, such as the one I analyzed.
+Sanitizing itself
+The disassembly of the binary shows a routine which executes a given command calling /bin/sh -c
+Inspecting cross references, this routine is called with the string busybox iptables -A INPUT -p tcp --destination-port 7547 -j DROP.
+This command modifies the host's firewall to block incoming connections on port 7547, which corresponds to the TR-069 protocol.
+In other words, the malware ensures its host cannot be re-infected twice.
+Enjoy,
+-- the Crypto Girl
+sha256 sum of the sample in this blog post: 1fce697993690d41f75e0e6ed522df49d73a038f7e02733ec239c835579c40bf

@@ -1,0 +1,114 @@
+This blog post originally appeared as an article in M-Trends 2019.
+FireEye Mandiant red team consultants perform objectives-based assessments that emulate real cyber attacks by advanced and nation state attackers across the entire attack lifecycle by blending into environments and observing how employees interact with their workstations and applications.
+Assessments like this help organizations identify weaknesses in their current detection and response procedures so they can update their existing security programs to better deal with modern threats.
+A financial services firm engaged a Mandiant red team to evaluate the effectiveness of its information security team’s detection, prevention and response capabilities.
+The key objectives of this engagement were to accomplish the following actions without detection:
+Compromise Active Directory (AD): Gain domain administrator privileges within the client’s Microsoft Windows AD environment.
+Access financial applications: Gain access to applications and servers containing financial transfer data and account management functionality.
+Bypass RSA Multi-Factor Authentication (MFA): Bypass MFA to access sensitive applications, such as the client’s payment management system.
+Access ATM environment: Identify and access ATMs in a segmented portion of the internal network.
+Based on Mandiant’s investigative experience, social engineering has become the most common and efficient initial attack vector used by advanced attackers.
+For this engagement, the red team used a phone-based social engineering scenario to circumvent email detection capabilities and avoid the residual evidence that is often left behind by a phishing email.
+While performing Open-source intelligence (OSINT) reconnaissance of the client’s Internet-facing infrastructure, the red team discovered an Outlook Web App login portal hosted at https://owa.customer.example.
+The red team registered a look-alike domain (https://owacustomer.example) and cloned the client’s login portal (Figure 1).
+Figure 1: Cloned Outlook Web Portal
+After the OWA portal was cloned, the red team identified IT helpdesk and employee phone numbers through further OSINT.
+Once these phone numbers were gathered, the red team used a publicly available online service to call the employees while spoofing the phone number of the IT helpdesk.
+Mandiant consultants posed as helpdesk technicians and informed employees that their email inboxes had been migrated to a new company server.
+To complete the “migration,” the employee would have to log into the cloned OWA portal.
+To avoid suspicion, employees were immediately redirected to the legitimate OWA portal once they authenticated.
+Using this campaign, the red team captured credentials from eight employees which could be used to establish a foothold in the client’s internal network.
+Although the client’s virtual private network (VPN) and Citrix web portals implemented MFA that required users to provide a password and RSA token code, the red team found a singlefactor bring-your-own-device (BYOD) portal (Figure 2).
+Figure 2: Single factor mobile device management portal
+Using stolen domain credentials, the red team logged into the BYOD web portal to attempt enrollment of an Android phone for CUSTOMER\user0.
+While the red team could view user settings, they were unable to add a new device.
+To bypass this restriction, the consultants downloaded the IBM MaaS360 Android app and logged in via their phone.
+The device configuration process installed the client’s VPN certificate (Fig.
+13), which was automatically imported to the Cisco AnyConnect app—also installed on the phone.
+Figure 3: Setting up mobile device management
+After launching the AnyConnect app, the red team confirmed the phone received an IP address on the client’s VPN.
+Using a generic tethering app from the Google Play store, the red team then tethered a laptop to the phone to access the client’s internal network.
+Once connected to the internal network, the red team used the Windows “runas” command to launch PowerShell as CUSTOMER\user0 and perform a “Kerberoast” attack.
+Kerberoasting abuses legitimate features of Active Directory to retrieve service accounts’ ticketgranting service (TGS) tickets and brute-force accounts with weak passwords.
+To perform the attack, the red team queried an Active Directory domain controller for all accounts with a service principal name (SPN).
+The typical Kerberoast attack would then request a TGS for the SPN of the associated user account.
+While Kerberos ticket requests are common, the default Kerberoast attack tool generates an increased volume of requests, which is anomalous and could be identified as suspicious.
+Using a keyword search for terms such as “Admin”, “SVC” and “SQL,” the consultants identified 18 potentially high-value accounts.
+To avoid detection, the red team retrieved tickets for this targeted subset of accounts and inserted random delays between each request.
+The Kerberos tickets for these accounts were then uploaded to a Mandiant password-cracking server which successfully brute-forced the passwords of 4 out of 18 accounts within 2.5 hours.
+The red team then compiled a list of Active Directory group memberships for the cracked accounts, uncovering several groups that followed the naming scheme of {ComputerName}_Administrators.
+The red team confirmed the accounts possessed local administrator privileges to the specified computers by performing a remote directory listing of \\ {ComputerName}\C$.
+The red team also executed commands on the system using PowerShell Remoting to gain information about logged on users and running software.
+After reviewing this data, the red team identified an endpoint detection and response (EDR) agent which had the capability to perform in-memory detections that were likely to identify and alert on the execution of suspicious command line arguments and parent/ child process heuristics associated with credential theft.
+To avoid detection, the red team created LSASS process memory dumps by using a custom utility executed via WMI.
+The red team retrieved the LSASS dump files over SMB and extracted cleartext passwords and NTLM hashes using Mimikatz.
+The red team performed this process on 10 unique systems identified to potentially have active privileged user sessions.
+From one of these 10 systems, the red team successfully obtained credentials for a member of the Domain Administrators group.
+With access to this Domain Administrator account, the red team gained full administrative rights for all systems and users in the customer’s domain.
+This privileged account was then used to focus on accessing several high-priority applications and network segments to demonstrate the risk of such an attack on critical customer assets.
+For this phase, the client identified their RSA MFA systems, ATM network and high-value financial applications as three critical objectives for the Mandiant red team to target.
+The red team began this phase by querying Active Directory data for hostnames related to the objectives and found multiple servers and databases that included references to their key financial application.
+The red team reviewed the files and documentation on financial application web servers and found an authentication og indicating the following users accessed the financial application:
+The red team navigated to the financial application’s web interface (Figure 4) and found that authentication required an “RSA passcode,” clearly indicating access required an MFA token.
+Figure 4: Financial application login portal
+The red team targeted the client’s RSA MFA implementation by searching network file shares for configuration files and IT documentation.
+In one file share (Figure 5), the red team discovered software migration log files that revealed the hostnames of three RSA servers.
+Figure 5: RSA migration logs from \\ CUSTOMER-FS01\ Software
+Next, the red team focused on identifying the user who installed the RSA authentication module.
+The red team performed a directory listing of the C:\Users and C:\ data folders of the RSA servers, finding CUSTOMER\ CUSTOMER_ADMIN10 had logged in the same day the RSA agent installer was downloaded.
+Using these indicators, the red team targeted CUSTOMER\ CUSTOMER_ADMIN10 as a potential RSA administrator.
+Figure 6: Directory listing output
+By reviewing user details, the red team identified the CUSTOMER\CUSTOMER_ADMIN10 account was actually the privileged account for the corresponding standard user account CUSTOMER\user103.
+The red team then used PowerView, an open source PowerShell tool, to identify systems in the environment where CUSTOMER\user103 was or had recently logged in (Figure 7).
+Figure 7: Running the PowerView Invoke-UserHunter command
+The red team harvested credentials from the LSASS memory of 10.1.33.133 and successfully obtained the cleartext password for CUSTOMER\user103 (Figure 8).
+Figure 8: Mimikatz output
+The red team used the credential for CUSTOMER\user103 to login, without MFA, to the web front-end of the RSA security console with administrative rights (Figure 9).
+Figure 9: RSA console
+Many organizations have audit procedures to monitor for the creation of new RSA tokens, so the red team decided the stealthiest approach would be to provision an emergency tokencode.
+However, since the client was using software tokens, the emergency tokens still required a user’s RSA SecurID PIN.
+The red team decided to target individual users of the financial application and attempt to discover an RSA PIN stored on their workstation.
+While the red team knew which users could access the financial application, they did not know the system assigned to each user.
+To identify these systems, the red team targeted the users through their inboxes.
+The red team set a malicious Outlook homepage for the financial application user CUSTOMER\user1 through MAPI over HTTP using the Ruler11 utility.
+This ensured that whenever the user reopened Outlook on their system, a backdoor would launch.
+Once CUSTOMER\user1 had re-launched Outlook and their workstation was compromised, the red team began enumerating installed programs on the system and identified that the target user used KeePass, a common password vaulting solution.
+The red team performed an attack against KeePass to retrieve the contents of the file without having the master password by adding a malicious event trigger to the KeePass configuration file (Figure 10).
+With this trigger, the next time the user opened KeePass a comma-separated values (CSV) file was created with all passwords in the KeePass database, and the red team was able to retrieve the export from the user’s roaming profile.
+Figure 10: Malicious configuration file
+One of the entries in the resulting CSV file was login credentials for the financial application, which included not only the application password, but also the user’s RSA SecurID PIN.
+With this information the red team possessed all the credentials needed to access the financial application.
+The red team logged into the RSA Security Console as CUSTOMER\user103 and navigated to the user record for CUSTOMER\user1.
+The red team then generated an online emergency access token (Figure 11).
+The token was configured so that the next time CUSTOMER\ user1 authenticated with their legitimate RSA SecurID PIN + tokencode, the emergency access code would be disabled.
+This was done to remain covert and mitigate any impact to the user’s ability to conduct business.
+Figure 11: Emergency access token
+The red team then successfully authenticated to the financial application with the emergency access token (Figure 12).
+Figure 12: Financial application accessed with emergency access token
+The red team’s final objective was to access the ATM environment, located on a separate network segment from the primary corporate domain.
+First, the red team prepared a list of high-value users by querying the member list of potentially relevant groups such as ATM_ Administrators.
+The red team then searched all accessible systems for recent logins by these targeted accounts and dumped their passwords from memory.
+After obtaining a password for ATM administrator CUSTOMER\ADMIN02, the red team logged into the client’s internal Citrix portal to access the employee’s desktop.
+The red team reviewed the administrator’s documentation and determined the client’s ATMs could be accessed through a server named JUMPHOST01, which connected the corporate and ATM network segments.
+The red team also found a bookmark saved in Internet Explorer for “ATM Management.” While this link could not be accessed directly from the Citrix desktop, the red team determined it would likely be accessible from JUMPHOST01.
+The jump server enforced MFA for users attempting to RDP into the system, so the red team used a previously compromised domain administrator account, CUSTOMER\ ADMIN01, to execute a payload on JUMPHOST01 through WMI.
+WMI does not support MFA, so the red team was able to establish a connection between JUMPHOST01 and the red team’s CnC server, create a SOCKS proxy, and access the ATM Management application without an RSA pin.
+The red team successfully authenticated to the ATM Management application and could then dispense money, add local administrators, install new software and execute commands with SYSTEM privileges on all ATM machines (Figure 13).
+Figure 13: Executing commands on ATMs as SYSTEM
+Mandiant experts have seen a significant uptick in the number of clients securing their VPN or remote access infrastructure with MFA.
+However, there is frequently a lack of MFA for applications being accessed from within the internal corporate network.
+Therefore, FireEye recommends that customers enforce MFA for all externally accessible login portals and for any sensitive internal applications.
+During this engagement, the red team compromised four privileged service accounts due to the use of weak passwords which could be quickly brute forced.
+FireEye recommends that customers enforce strong password practices for all accounts.
+Customers should enforce a minimum of 20-character passwords for service accounts.
+When possible, customers should also use Microsoft Managed Service Accounts (MSAs) or enterprise password vaulting solutions to manage privileged users.
+Once the red team obtained initial access to the environment, they were able to escalate privileges in the domain quickly due to a lack of account segmentation.
+FireEye recommends customers follow the “principle of least-privilege” when provisioning accounts.
+Accounts should be separated by role so normal users, administrative users and domain administrators are all unique accounts even if a single employee needs one of each.
+Normal user accounts should not be given local administrator access without a documented business requirement.
+Workstation administrators should not be allowed to log in to servers and vice versa.
+Finally, domain administrators should only be permitted to log in to domain controllers, and server administrators should not have access to those systems.
+By segmenting accounts in this way, customers can greatly increase the difficulty of an attacker escalating privileges or moving laterally from a single compromised account.
+As demonstrated in this case study, the Mandiant red team was able to gain a foothold in the client’s environment, obtain full administrative control of the company domain and compromise all critical business applications without any software or operating system exploits.
+Instead, the red team focused on identifying system misconfigurations, conducting social engineering attacks and using the client’s internal tools and documentation.
+The red team was able to achieve their objectives due to the configuration of the client’s MFA, service account password policy and account segmentation.

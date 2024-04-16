@@ -1,0 +1,88 @@
+Top-tier financial malware like Dridex, Neverquest and Gozi offer a wide range of malicious capabilities, such as form-grabbing, screen capture, webinjections and more.
+One notable capability is the hidden virtual network computing (hVNC) module, which allows attackers to gain user-grade access to an infected PC.
+It’s no secret that banking Trojans contain remote control capabilities, but how exactly they operate them is not well-known.
+Hidden virtual network computing is a tactical means for malware to control a machine without the victim’s knowledge.
+To illustrate, we will use our detailed technical analysis of the Gozi Trojan’s hVNC module.
+To understand how hidden VNC works, let’s look at an abstract of the VNC model.
+A VNC connection is composed of two parts: a server and a client.
+In this case, the server is the victim’s computer and the client is the attacker.
+Figure 1: Basic VNC connection scheme
+Over the VNC connection, the server sends the client screen captures that reflect the state of the controlled endpoint’s desktop.
+During that session, the client provides the controller’s keystrokes, mouse movements and mouse clicks.
+The victim’s endpoint performs the actions dictated by the attacker and the changes on the screen are reflected back to the attacker via the continuous stream of screen captures.
+This enables the actor to remotely control events on the infected device.
+In a regular VNC connection, the victim can see everything the attacker is doing.
+Obviously, that doesn’t suit fraudsters.
+Enter hidden VNC.
+VNC remote control is not inherently malicious.
+It is used in many scenarios as a legitimate remote support tool.
+Cybercriminals simply abuse the remote user-grade access VNC affords them.
+VNC is commonly added to financial malware to bypass fraud protections.
+In the past, fraudsters used proxies to fake their IP addresses.
+As protections improved, however, they had to devise ways to fake entire device fingerprints.
+That’s where VNC comes in.
+If a transaction originates from a known user device, it is more likely to succeed.
+To make fraudulent transactions appear legitimate to a victim’s bank, fraudsters previously had to access the account from the victim’s own machine without leaving a trace.
+If they were to use standard remote-control software, such as regular VNC, the user would see the cursor moving on its own and become suspicious.
+Cybercriminals devised hidden VNC to address this problem.
+Instead of controlling a victim’s desktop, an attacker can open a hidden instance in the shape of a virtual desktop and control it invisibly behind the scenes, even as the unwitting victim continues using his or her computer.
+To wipe away any trace of the endpoint having been controlled remotely, the hVNC creates a new Windows desktop.
+This virtual desktop has its own corresponding explorer.exe process, and victims cannot see processes opened in the context of the new desktop.
+Figure 2: Additional explorer.exe with a browser controlled by hVNC
+During a session, the victim can only see his or her desktop.
+The attacker, who can only see and control his or her own version of the desktop, cannot see the victim’s screen.
+When it comes to online banking fraud, cybercriminals use webinjection configurations to control their financial malware.
+That is how they configure the malware to take screenshots when visiting target webpages and inject malicious code into other targeted pages.
+Interestingly, this is also where some fraudsters, such as those behind the Gozi Trojan, store the download URLs for their hVNC modules.
+According to IBM X-Force research, the Gozi Trojan is controlled by a small number of organized cybercrime groups.
+Its operators use the hVNC module in their fraud attacks all over the world.
+For these reasons, we will use Gozi as an example for the purpose of analyzing its hNVC module.
+Gozi’s stores the hVNC module on a remote server and fetches it once the server is installed on a newly infected endpoint.
+The downloaded hVNC module is initially encrypted, but by understanding how the malware decrypts its hVNC module, we were able to trace its steps back and decipher it on our own.
+The encryption process at hand has two phases.
+First, the module is encrypted using the Serpent cipher with a randomly generated key, which is appended to the encrypted module.
+Next, the encrypted module and the Serpent key are encrypted using an RSA cipher.
+To decrypt the downloaded hVNC module, Gozi begins by decoding the RSA layer using a key hidden in its own binary.
+The malware then obtains the Serpent key and uses it to decrypt the first layer of encryption.
+What’s left is the decrypted hVNC module.
+Next, Gozi injects the hVNC module into a new explorer.exe any new process it creates.
+Figure 3: hVNC’s image within explorer.exe
+The code injection technique is the same one the Gozi malware uses.
+The top-level flow is as follows:
+CreateProcess Windows APIsare hooked to have new processes created in suspended state.
+The malware sends the main thread into an infinite loop at the entry point by modifying the code at the entry point to jmp 0.
+This EBFE opcode represents the JMP $ instruction.
+The main thread is resumed, thus entering the infinite loop.
+The malware uses its own LoadLibrary function to load itself into the new process.
+The main thread is suspended once more and the original code at the entry point is restored.
+Finally, the main thread is resumed and the process starts as usual, only this time with malicious code.
+Once deployed via the target explorer.exe process, the hVNC module starts communication with a remote server.
+The server’s address is hardcoded into its binary.
+The communication begins with the client sending a globally unique identifier (GUID), which identifies the victim’s machine.
+Figure 4: The client sending the victim’s GUID
+Following that first communication, the client attempts to access the server over port 443 and begins the VNC session using the remote frame buffer (RFB) protocol.
+Figure 5: The victim initiating the RFB session
+From here on, a standard VNC session takes place — if you can call stealing money from unsuspecting victims standard, that is.
+To completely understand how things work when an attacker deploys the hVNC module, we simulated the attack scenario in our lab, where we control both the attacking and the victimized machine.
+To do this, we used the hVNC module we obtained from Gozi, which assumes the role of a VNC server.
+The client can be any free VNC viewer that supports listening mode.
+We need to perform the following to set up an attack:
+Obtain and decrypt the hVNC module.
+Inject the hVNC module into explorer.exe the same way Gozi does.
+Direct the hVNC module to communicate with our attacking machine instead of the one originally hardcoded into the binary.
+Overcome the protocol differences between Gozi’s hVNC and standard RFB.
+We kicked off by injecting the hVNC module into explorer.exe using a standard dynamic link library (DLL) injection technique.
+Next, to enable the hVNC to communicate with our attacking machine, we commanded it to use our IP instead of its hardcoded one.
+As for overcoming the protocol differences, we already know that hVNC sends an additional message to identify the victim before starting the VNC session from the initial communication and sending a GUID to the attacker.
+Standard VNC viewers aren’t designed to handle that message, so the session will break before it even begins.
+To resolve this problem, we had to drop the first message the client sent.
+After applying the changes, we used a preconfigured VNC viewer in listening mode on the attacking machine.
+The victim machine initiated the connection and we were able to completely control the victim without anything suspicious showing on the screen.
+Hidden VNC is one of many hallmarks of financial malware.
+Although not new, it is still popular and common in online banking fraud today.
+Cybercriminals use remote control in a variety of fraud scenarios, with and without actual malware on the victim’s endpoint.
+We plan to explain more about this hVNC capability and show a demo of it in upcoming security conferences.
+In the meantime, banks and financial organizations can protect customers from remote control-enabled fraud with tools such as IBM Security Trusteer Rapport and about IBM Security Trusteer Pinpoint Detect.
+MD5 of the VNC module we analyzed: c24800a5d619b555f93e42845417a5e5
+Relevant Gozi Trojan MD5: 3CDA89FB87EC5CC6DFE7099A71612B8F
+Read the white paper: How to outsmart Fraudsters with Cognitive Fraud Detection

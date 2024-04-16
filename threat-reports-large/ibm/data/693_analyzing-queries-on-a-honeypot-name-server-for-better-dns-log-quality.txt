@@ -1,0 +1,98 @@
+Honeypots are an easy and popular way to get statistics on the “Internet noise.” Getting more knowledge on Internet noise gives you more insight into what is out there and is one of the sources that helps in getting better security analytics.
+I was curious what kind of traffic a honeypot name server receives in a public cloud; my research follows.
+The machine was a default Ubuntu 14.04.1 LTS placed in the Frankfurt EC Amazon cloud.
+It had one IPv4 address configured (I did not look at IPv6 data).
+Neither the IP address nor the Domain Name Server (DNS) service was published on any public channels.
+Any request coming in can be considered suspicious.
+I have not looked into the effects of reused IP addresses of cloud providers.
+The server also had a number of other honeypots: dionaea, Glastopf, Conpot, SNMP, NTP and Kippo.
+Kippo is a SSH honeypot that can help to attract attackers and improve security.
+The setup and data gathering (via ELK) is available via a repository at Github.
+I used one of the most popular name servers, BIND, with a fairly default setup.
+Recursion, IPv6 and forwarders were disabled, logging was enabled, a custom server version number was set and the server had one zone file.
+A zone file is a file that describes what mappings of IP addresses and hosts/domain names are available in a subdomain.
+This zone file contains one record that points to the same host.
+So, anyone querying the honeypot name server will get a reply with the IP address of the honeypot server (“a.b.c.d”).
+The first set of statistics represents the findings of the raw data from the log file.
+If we map the queries based on the date, we can observe a spike between Jan. 15 and Jan. 20 and then a number of spikes along the end of January and beginning of February.
+Further investigation of these spikes show us that they are caused by a single IP belonging to Ruhr-Universität Bochum in Germany, which has a website explaining the Amplification DDoS Tracker Project.
+It uses the obtained scan data to warn network owners of possible problems.
+Two IP addresses were seen doing these scans: one from Ruhr-Universität Bochum and one from Universität des Saarlandes, also in Germany.
+We’ll observe later that a lot of the queries were systems scanning for open DNS resolvers.
+I extracted the IPs from the logs and then used the IP to the autonomous system number (ASN) mapping service of Team Cymru to get the country and ASN data.
+An autonomous system (AS), tells us to what network block the IP address belongs.
+The script can also be found on Github.
+The majority of the scans came from Germany, the U.S. and China.
+The AS of DFN (Germany) and Chinanet-Hunan caused the bulk of the queries.
+More than half of the queries originate from Europe (RIPE).
+These results are not surprising considering the large set of requests coming from the Ruhr-Universität Bochum.
+Most of the request types were DNS queries for an A record.
+More than 18 percent of the queries were for ANY records.
+The TXT requests were mostly intended to retrieve the DNS server version.
+The queries asked for records of Google, Shadowserver or the version of the Bind name server.
+It is not much of a surprise that the most popular TLDs are .com and .org.
+A carefully chosen domain name and TLD are something you should consider when setting up your business.
+More interesting in this data are the presence of .ru and .cn TLDs.
+As mentioned above, a lot of the requests were done by scans for open resolvers.
+As a matter of fact, around 56 percent of the queries came from organizations that are scanning for open resolvers.
+That is a lot, but they are fairly easy to spot in the logs:
+The high amount of probes for open resolvers can be annoying and a real log polluter.
+If you do not filter these requests from entering your log monitoring system, it will be hard to spot abuse.
+Applying the proper filters to remove the Internet noise before processing the logs, blocking their requests or asking them nicely to stop scanning you is one of the things you’ll absolutely have to do if you want to keep an eye on your DNS infrastructure.
+It will also greatly increase the results you get from your log-monitoring or SIEM solution.
+There might also be a legal issues with this scanning.
+Most of the queries for open resolvers are done with good intent, but it’s not difficult to imagine that someone who’s not familiar with these organizations consider these scans to be malicious.
+Andrew Cormack covers some of the legal issues in his paper “Scanning for Vulnerabilities: Is It Lawful?“.
+The results below are the logged queries without the open resolver scans:
+There’s no real noticeable spike in time.
+Most of the queries originate from the U.S. and China.
+The queries are equally spread amongst the RIRs Ripe, Arin and Apnic.
+The request types in this category are either queries for an A record or the ANY resources.
+Most queries were for the Google domain.
+Having the data sets without the open resolver hosts also reveals the behavior of two particular hosts: one from China (AS 63835) and one from Russia (AS 2848).
+The Chinese host does regular queries for the Bind server version and then looks up the A record of www.google.it and www.google.com:
+The Russian host does only regular queries for com:
+About half of the requests were an “ANY” request.
+Typically, this is an attempt for a DNS amplification attack with spoofed queries.
+All of these queries had the recursive () flag set, indicating it comes from a client or a server that is forwarding the queries.
+A very small number of hosts requested () to have DNSSEC support in the reply.
+Besides the Google and ISC domains, we also observe some more “exotic” domains that were used to at least test for DNS amplification attack possibilities.
+These domains were all already observed as being used for attacks:
+globe.gov
+ohhr.ru
+gransy.com
+uzuzuu.ru
+sema.cz
+vlch.net
+DNS Amplification Attacks Observer has an overview of the domains used in attacks, and it provides an iptables ruleset to blacklist these domains.
+So, why would anyone use these requests?
+There’s no particular reason for sending these requests in normal Internet behavior.
+It becomes more obvious if you look at the replies you get for some of the queried domains.
+You can test this yourself with:
+Some of the replies exceeded sizes of 6,000 bytes.
+For regular use (except for the example for zone transfers), DNS uses the UDP protocol on port 53.
+DNS packets are almost always relatively small in size (512 bytes, not considering different headers).
+Note that DNSSEC often requires larger packets.
+DNS can handle larger packets via the use of EDNS0 while sticking to UDP.
+There’s still a limit of the packet size with EDNS0 (maybe because the server simply does not support EDNS0), and then these large packets have the DNS request fallback to TCP.
+The output of dig shows this with:
+In summary: You have a small request over a simple protocol that requires few resources turned into a large reply on a more complex protocol that requires substantially more resources.
+One of the differences between UDP and TCP is that with UDP, there is no handshake.
+You send the request and you forget about it; it is a “stateless” protocol.
+With TCP, there is a handshake that requires substantially more computer resources.
+Additionally, it is also fairly easy to spoof the source IP address.
+Combining these two makes a great attack vector for conducting an amplification attack against specific targets.
+The folks at OpenDNS have described how these DNS amplification attacks work.
+The same patterns have been observed by CloudFlare.
+Protection against these types of attacks requires a multilayered approach.
+DNS administrators should ensure that their recursive name servers are not open resolvers by limiting the list of clients that can do a recursive query.
+For authoritative name servers you should implement response rate limiting response rate limiting (RRL).
+Network administrators can help by only allowing known network prefixes to leave their network (implementing BCP 38).
+This helps fight all UDP based DDoS amplification attacks (DNS, SNMP, NTP, etc.
+).
+A random DNS server quickly receives a lot of queries for open resolver tests.
+This internet noise will polute the logs, which makes it harder for you to detect attacks on your DNS infrastructrue.
+A honeypot DNS server is one of the tools that allows you to capture this Internet noise.
+With the use of a few scripts, you can easily filter out the top scanners from the honeypot dataset.
+You can then use this white list to filter them from your real DNS logs and put more value in your log-monitoring or SIEM solution.
+Some kind of manual verification of the white list is still necessary, though, to prevent genuine attackers from ending up on your white list.

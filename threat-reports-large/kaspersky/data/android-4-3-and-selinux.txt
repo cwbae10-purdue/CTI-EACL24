@@ -1,0 +1,42 @@
+Not many weeks ago Google released a new revision of its flagship mobile operating system, Android 4.3.
+Although some say that this time updates have been quite scarce, from a security perspective there have been some undeniable improvements (among others, the “MasterKey” vulnerability has been finally patched).
+One of the most prominent is SELinux.
+Many cheered the event as a long-awaited move, while others criticized its implementation.
+Personally, I think that the impact is not that easy to assess, especially if we were to question the benefits for end-users.
+In order to shed some light we can’t help but analyze a bit more what SELinux is, and what is its threat model.
+Android JellyBean 4.3 logo.
+Let’s start from the basics: the security of any Linux-based system is built upon the concept of Discretionary Access Control (DAC), meaning that each user decides which of his own files is accessed (read, written, or executed) by other users.
+The system itself is protected from tampering by having all system files owned by the administrative user ‘root’.
+Android is based on the very same concepts, but with a small but compelling addition: each app is assigned a different user ID (some exceptions are possible though), thereby isolating and protecting the application data from all other applications.
+This is the reason why on un-rooted devices it is quite difficult, if not impossible, for a legit application to steal the private data used by another application (unless, obviously, that data is set world-readable).
+DAC means that access to file and resources is defined in terms user and file/directory modes.
+SELinux builds on top of that (and on 15 years of NSA’s OS security research), and introduces another security layer termed Mandatory Access Control (MAC).
+This layer, configured by system-wide policies, further regulates how users (and thus apps on Android devices) access both their and the system-provided data, all this in a transparent manner.
+In more technical terms, it is possible to design policies that are able to specify the types of interactions a process configured to be part of a security context can and can not do.
+A simple, but yet effective, example is the case of a system log daemon running with root privileges (ouch).
+With SELinux we can configure the entire system such that the process can not access anything but the log file: we would simply need to assign a specific label to the log file, and write a policy allowing the log daemon to access only those files so-labeled (as always, consider that things are a bit more complex than that :)).
+Note the two advantages coming from this mindset: (1) the policy is something that can be enforced system-wide (and even root has to abide by it); (2) the permissions are much much more fine-grained than those possibly enforced by the DAC.
+The ability of limiting what the super-user can do (regardless of its privileges) is pivotal to protect the system from privilege escalation attacks.
+This is in fact where SELinux excels.
+Let’s take the case of Gingerbreak, a wide-spread exploit to root Gingerbread-based devices.
+The exploit sends a carefully crafted netlink message to the volume daemon (vold) running as root.
+Due to some missing bound-checks that message can lead to successful code injection and execution.
+Since the process runs as root, it is in fact trivial to spawn a setuid-root shell and from there taking control of the device.
+SELinux would have stopped that exploit by denying the very same message: the default policy (at least in the original patch-set) denies opening that type of socket, so problem solved.
+If that was not enough, execution of non-system binaries through that daemon process can be further denied by another SELinux policy.
+Awesome, right?
+Unfortunately, reality is still quite far from that.
+The SELinux implementation that is currently deployed on stock Android 4.3 images is missing several important features.
+First off, SELinux is configured in Permissive mode only, meaning that policies are not enforced, and violations are just being logged (not that useful but for testing).
+Also, as shown above, the OTA update does not label the system partition correctly (my testing device left me puzzled for quite a while till I found that the researcher Pau Oliva published the exact same finding at DEF CON 21), meaning that a stock-restore is mandatory if a developer is to test it.
+Finally, besides the fact that the provided policies are anything but restrictive, no MAC is available for the Android middleware (a feature instead part of the NSA’s patch-set).
+What does it mean to the end-user then?
+Unfortunately, as of now, not much.
+SELinux as deployed on Android 4.3 can only be tested and policies developed.
+There is also no safe way to enforce it.
+Now it is in fact OEM vendors’ time.
+Google is strongly encouraging the development of SELinux implementations (BYOD anyone?)
+based on stock functionalities rather than on poorly assembled add-ons (see again the talk given at DEFCON 21 for a comprehensive explanation of what “implementation issues” might mean).
+Developers, on the other hand, are strongly encouraged to get accustomed with the default set of policies, and test their apps for breakage.
+Will we ever see an Android release with SELinux set to enforce mode?
+That we can only hope 🙂

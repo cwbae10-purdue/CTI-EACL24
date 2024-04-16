@@ -1,0 +1,107 @@
+In many cases Red Team tools are not written because someone feels like writing a tool, or wakes up one morning thinking, “I want to write a tool today”.
+Red Teamers generally identify tedious tasks in their methodology and then create tools that automate these tasks for current and future assessments.
+As my boss likes to say, jokingly: laziness breeds ingenuity!
+At Mandiant, we’ve developed (or significantly contributed to) a fair number of tools and scripts to make our lives easier.
+In order to ensure the broader security community is aware of these tools and where to download them from, we’re going to start releasing a “tool roundup” blog post on a semi-regular basis.
+The intent of these blog posts is to highlight newly developed tools, or major changes to existing tools.
+We also make this a fun read by including some case studies to demonstrate tool use.
+Our Red Team is frequently introduced to diverse networks, technologies, defenses, and organizational structures.
+Each network presents new challenges that must be overcome, and with all clients, there is overlap with infrastructure and configuration.
+Existing public tools might not scale properly in larger environments or might not help the Red Team address specific phases of an attack life cycle.
+The tools being discussed have all been revised or developed in some form or fashion over the last couple of months.
+We hope they make your engagements easier and bring awareness to the community.
+Tool: ADEnumerator (https://github.com/chango77747/AdEnumerator)
+Domain enumeration is an essential task during the reconnaissance phase of the attack life cycle.
+When you compromise a domain-joined system, it is fairly simple to enumerate objects from the domain using Active Directory Service Interfaces (ADSI) or the Windows “net” commands.
+ADSI works well from non-domain joined systems using the “runas” command with the “netonly” switch, as shown in Figure 1.
+It can be a hassle to craft detailed LDAP queries for ADSI to perform domain enumeration, so we automated this processing using raw LDAP queries in a tool called ADEnumerator.
+Figure 1.
+Using PowerShell and ADSI for domain enumeration
+ADEnumerator is a PowerShell module designed to query Active Directory servers from non-domain systems.
+The following use cases apply to ADEnumerator:
+You harvest domain credentials from a printer, via NBNS spoofing, etc., and want to start performing domain enumeration.
+Note: Any domain user credential can query LDAP.
+You want to gather more information about an account you harvested.
+Group naming conventions often reveal where you can use those credentials (for example, group name {systemName}_localAdmin).
+You are provided with credentials to start an internal penetration test from a known compromise perspective, but not a domain-joined system.
+You want to perform Active Directory enumeration from the command line so you can chain commands together.
+Figure 2 demonstrates importing the ADEnumerator.psm1 module, establishing an LDAP connection to a domain controller, and executing various domain enumeration methods.
+There are plenty of additional methods within ADEnumerator – see the header of the script for a full list of methods.
+Figure 2.
+ADEnumertor.psm1 import and enumeration
+Alternatively, you can install Remote Server Administration Tools on your attack platform and use “runas” to execute “mmc” and add the Active Directory snap-in.
+Then you can change the domain to your target domain and view the entire Active Directory structure in a GUI, as shown in Figure 3.
+Figure 3.
+Active Directory snap-in running as different user
+Tools: CredNinja (https://github.com/Raikia/CredNinja) & WMIOps (https://github.com/ChrisTruncer/WMIOps)
+Have you been in a situation where you have a list of more than 100 credentials, but you are not sure which credentials are valid?
+Or, you’re not sure which credentials have administrative rights to a target system?
+CredNinja was created for just that (and it can do more!).
+Use cases and general functionality are as follows:
+Leverages SMB access (TCP port 445)
+Attempts to mount C$ of all provided systems, returns:
+o Logon Failure – Invalid credentials (protection against locking out accounts included) o Access Denied – Not local admin o File listing – Local admin!
+Multi-threaded – so you can scale properly in those large environments
+Fingerprints target operating system version and domain membership
+If “–users” flag is enabled, it will perform a directory listing of “C:\Users” (or C:\Documents and Settings if its XP), look at the timestamp of all the home folders, and print out the users that have a home folder modified timestamp of within 100 days (this value is customizable, but the default is 100 days).
+o Provides a quick user-hunting functionality to identify active users on the targeted system.
+CredNinja is very useful when performing privilege escalation and lateral movement because you can identify systems for which your credentials have elevated privileges, and continue dumping credentials on those systems.
+Figure 4 demonstrates the power of CredNinja by identifying various systems where the domain credentials have local administrator rights, and whether or not credentials are invalid.
+CredNinja can also be run against a single system to clean up your credential list by removing invalid credentials.
+Figure 4.
+CredNinja run against various systems using credential list
+Windows Management Instrumentation (WMI) is the new hotness in terms of offensive capabilities.
+WMIOps is a PowerShell script that uses WMI to perform a variety of actions on hosts, local or remote, within a Windows environment.
+It was designed primarily for use on penetration tests or Red Team engagements.
+Some existing tools use WMI for offensive tasks; WMIOps was built to combine these techniques into a single tool to accomplish various tasks in the attack life cycle.
+Figure 5 shows the Get-ProcessOwnersWMI method in WMIOps to get a list of users from target system Win7-Client02.
+User “Dick.Grayson” had local administrator privileges on Win7-Client02 and was authorized to execute arbitrary WMI commands.
+User “Bruce.Wayne” had running processes on Win7-Client02, which indicates that the user potentially has clear text credentials stored in Local Security Authority Subsystem Service (LSASS).
+To obtain credentials for “Bruce.Wayne”, WMIOps method Invoke-RemoteScriptWithOutput is used in Figure 6 to execute a remote PowerShell process that issues command “Invoke-Expression” to download and execute the “Invoke-Mimikatz” script over HTTPS.
+The command also instructs the output to be sent to web server 10.181.73.210 listening on HTTPS.
+Mimikatz output was sent to the web server, as shown in Figure 7.
+Figure 5.
+Get-ProcessOwnersWMI method in WMIOps to get a list of users with running processes
+Figure 6.
+Invoke-RemoteScriptWithOutput method to call Invoke-Mimikatz and send output to the "callbacksite"
+Figure 7.
+Mimikatz output sent from the command executed in Figure 4
+Tool: EyeWitness (https://github.com/ChrisTruncer/EyeWitness)
+One of the most common initial vectors into a network is default credentials to known web administrative portals such as Jboss, Apache Tomcat, Jenkins, etc.
+EyeWitness is known to scale networks by taking screenshots of the web page of each web server identified in your reconnaissance phase.
+We added an “active-scan” module to EyeWitness that provides the following functionalities:
+Signature authentication – Checks if the host has a known default credential signature and attempts to login using default credentials stored in a data file.
+Check for login – Checks to see if the root path is a web login form, or is HTTP basic authentication, and attempts to authenticate to the web application using username and password combinations stored in a data file.
+Append URLs to check for logins – Appends a list of common login pages to the web root directory.
+Examples of these pages are “admin”, “login”, “login.php” and more.
+The list of pages is stored in a data file so that it is easily customizable; feel free to add more and contribute!
+o If a page receives a HTTP 200 response code, it will check to see if it’s a login form.
+o EyeWitness will attempt to login to the form using username and password combinations stored in a data file.
+The “active-scan” Boolean flag is shown in Figure 8.
+Example report and console output is shown in Figure 9 and Figure 10.
+An additional category called “Identified Logins” is also added to the report if EyeWitness identified a login, but was not able to authenticate to it.
+If you want to learn more about this module, a full blog post on this module was written here: https://www.christophertruncer.com/eyewitness-and-active-account-enumeration/.
+Figure 8.
+Active-scan flag in EyeWitness
+Figure 9.
+Successful authentication using the active-scan module
+Figure 10.
+EyeWitness report output
+Tool: Egress-Assess (https://github.com/ChrisTruncer/Egress-Assess)
+The combined capabilities of Mandiant, FireEye, and iSIGHT Partners brings unparalleled threat intelligence and technology to every engagement.
+Clients regularly ask us to identify threat actors targeting their industry specifically and to emulate their TTPs to assess the organization’s current detection capabilities.
+Egress-Assess is a Python tool that was created to emulate known attacker TTPs, such as IP addresses and Fully Qualified Domain Names (FQDNs) connecting to the Internet.
+Egress-Assess is publicly available; however, Mandiant maintains a proprietary version of Egress-Assess that contains known network-based indicators (NBIs) that replicate real threat groups.
+Egress-Assess modifies the host value in the HTTP(s) header request to be a known-bad IP address or FQDN, and generates web requests to known-bad URIs.
+Furthermore, the tool can generate fake PII, PHI, or PCI data to emulate data theft.
+We use Egress-Assess to assess our client’s detection capabilities by emulating real threat group indicators and/or data theft.
+A list of supported threat actor groups available in the public version of Egress-Assess is shown in Figure 11.
+If you want to learn more about this Egress-Assess, a full blog post on this module was written here: https://www.christophertruncer.com/egress-assess-testing-egress-data-detection-capabilities/.
+Figure 11.
+List of threat actors available in Egress-Assess
+These are just a handful of tools and practical examples of using those tools for Red Team operations.
+We encourage you to play with these tools and start using them on your assessments or in your labs.
+We want to reemphasize that each tool was created or modified as the need was identified.
+It can be very exciting to identify a need and develop tools and techniques to automate a task or accomplish an objective.
+Some tools introduce new techniques to accomplish a goal, while other tools simply automate existing tools and techniques to scale better.
+Whatever your motive, introducing new tools and techniques is an excellent way to provide awareness in our industry and generate higher quality security.

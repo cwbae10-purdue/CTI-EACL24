@@ -1,0 +1,78 @@
+On Dec. 5, 2019, Unit 42 researchers discovered a new variant of the Muhstik botnet that adds a scanner to now attack Tomato routers for the first time by web authentication brute forcing.
+Tomato is an open source alternative firmware for routers.
+Thanks to its stable, Linux-based, non-proprietary firmware, with VPN-passthrough capability and advanced quality of service (QoS) control, Tomato firmware is commonly installed by multiple router vendors and also installed manually by end users.
+By our investigation on Shodan, there are more than 4,600 Tomato routers exposed on the Internet.
+The Muhstik botnet has been alive since March 2018, with a wormlike self-propagating capability to infect Linux servers and IoT devices.
+Muhstik uses multiple vulnerability exploits to infect Linux services, such as Weblogic, WordPress and Drupal.
+It also compromises IoT routers, such as the GPON home router and DD-WRT router.
+This new variant expands the botnet by infecting Tomato routers.
+We have not found further malicious activities in Tomato routers after the Muhstik botnet harvests vulnerable routers, but from our understanding of the Muhstik botnet, Muhstik mainly launches cryptocurrency mining and DDoS attacks in IoT bots to earn profit.
+We will keep monitoring its Command and Control (C2) IRC channel.
+In the following part, we have a detailed analysis of Muhstik botnet.
+The new Muhstik variant scans Tomato routers on TCP port 8080 and bypasses the admin web authentication by default credentials bruteforcing.
+In Tomato routers, the default credentials are “admin:admin” and “root:admin”.
+We captured the Tomato router web authentication brute forcing traffic, in Figure 1.
+Figure 1.
+Tomato router web authentication bruteforcing
+To estimate the infected volume, we searched for fingerprints of Tomato routers in Shodan.
+As noted in Figure 2, there are about 4,600 potential victims on the Internet in total.
+This total is derived by including the number of TomatoUSB devices, which is used as a NAS server by combining the Tomato router and a USB drive.
+Figure 2.
+Exposed Tomato & TomatoUSB routers on the Internet
+The first module is a scanner to identify WordPress installed on a server.
+To perform the scanning, it sends a GET request to port 80/tcp or 8080/tcp, which are typical HTTP ports.
+Figure 3.
+WordPress scanner used by daymon
+The second module is a scanner to identify Webuzo solutions installed on a server.
+To accomplish the scanning, it sends a GET request to port 2004/tcp, which is Webuzo’s default port for administration.
+The request uses the path /install.php since it is the Webuzo installer file and by default a server running Webuzo will respond successfully to that request.
+The third module abuses a deserialization vulnerability present in Oracle WebLogic Server that leads to a Remote Code Execution.
+This vulnerability can be exploited remotely and without previous authentication.
+This exploit is sent to port 7001/tcp since its WebLogic Server’s default port.
+We think that this URL hxxp://165.227.78.159/wl.php is used for the reporting purpose.
+Because, the same IP address 165.227.78.159 was previously used by Mushtik botnet as a reporting server to collect information of bots as we mentioned in a previous analysis of another Muhstik variant.
+Figure 3 below shows the execution flow used by the updated Muhstik variant.
+Figure 4 shows this Muhstik botnet variant combining the modules to scan Linux servers running WordPress and Webuzo.
+Additionally, it implements modules to compromise WebLogic servers and Wi-Fi routers running Tomato firmware.
+Figure 4.
+Muhstik infrastructure
+Figure 5.
+Detailed scanning and exploiting behavior
+We discovered a malicious binary called tty0.
+Since tty0 targets Tomato routers, it includes bash commands that can be executed in those systems (and other systems such as DD-WRT):
+The first command is used to download a binary called nvr from http://y.fd6fq54s6df541q23sdxfg.eu/nvr
+It also applies anti-analysis techniques by killing the strace and tcpdump process running in the system.
+The nvr binary contains commands to download four additional binaries.
+These four binaries are IRC botnet variants, which work on ARM and MIPS architectures.
+We focused our analysis on binary Pty5, since it drops a binary called daymon, which is a scanner containing the new module targeting Tomato routers.
+daymon was encrypted using Mirai’s encryption method, the table key is 0xEFBEADDE.
+Once a device is compromised, it will send a connect command to an IRC server.
+The connect command includes a nickname (NICK) for the device in order to join the channel.
+This nickname contains the node hostname of the infected device that was previously obtained, shown in Figure 5.
+Figure 6.
+Hostname harvesting
+In Figure 6, it adds a username to the connect command.
+The server responds with a PING command followed by a BotnetID.
+The infected device replies with a PONG followed by the BotnetID.
+Once a nickname has been crafted and assigned to the infected client, the IRC server accepts the bot as a client in the main channel.
+Then, the server sends a MOTD (Message of the Day) to the client.
+Consequently, the victim device will send a command to join a channel called ea, where the commands are sent to the clients that have joined the botnet.
+The botnet will harvest information of the infected device such as the public IP address in order to register the device into the botnet.
+Figure 7.
+Joining the IRC channel
+The new Muhstik botnet variant demonstrates that IoT botnet keeps expanding the botnet size by adding new scanners and exploits to harvest new IoT devices.
+Botnet developers are increasingly compromising IoT devices installed with the open source firmware, which often lack the security updates and maintenance patches necessary to keep devices safeguarded.
+End users should be cautious when installing open source firmware and must follow the security guidelines in the firmware manual.
+Palo Alto Networks customers are protected from the Muhstik botnet by the following platform protections:
+Threat Prevention Signatures: 55570 that identifies the Weblogic (CVE-2019-2725) exploit.
+PAN-DB and DNS Security: blocks attackers’ C2 server URL and domain.
+WildFire and Antivirus: identifies and blocks Muhstik malware.
+46.149.233.35
+68.66.253.100
+185.61.149.22
+hxxp://y.fd6fq54s6df541q23sdxfg.eu/nvr
+hxxp://159.89.156.190/.y/pty1
+hxxp://159.89.156.190/.y/pty3
+hxxp://159.89.156.190/.y/pty5
+hxxp://159.89.156.190/.y/pty6
+s.shadow.mods.net

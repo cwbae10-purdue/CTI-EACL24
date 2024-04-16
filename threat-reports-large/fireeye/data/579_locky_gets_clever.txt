@@ -1,0 +1,48 @@
+As discussed in an earlier FireEye blog, we have seen Locky ransomware rise to fame in recent months.
+Locky is aggressively distributed via a JavaScript-based downloader sent as an attachment in spam emails, and may have overshadowed the Dridex banking Trojan as the top spam contributor.
+FireEye Labs recently observed a new development in the way this ransomware communicates with its control server.
+Recent samples of Locky are once again being delivered via “Invoice”-related email campaigns, as seen in Figure 1.
+When the user runs the attached JavaScript, the JavaScript will attempt to download and execute the Locky ransomware payload from hxxp:// banketcentr.ru/v8usja.
+Figure 1.
+Locky email campaigns
+This new Locky variant was observed to be highly evasive in its network communication.
+It uses both symmetric and asymmetric encryption – unlike previous versions that use custom encoding – to communicate with its control server.
+To start encrypting the victim files, Locky obtains a public key from the control server.
+The POST data before encryption appears as:
+To encrypt the request, Locky performs the following actions:
+1.
+Generate a single random byte using CryptGenRandom() API.
+This byte decides how many NULL bytes are added to the plaintext request before encryption.
+2.
+Generate a random binary blob of size 32, again using the CryptGenRandom() API.
+These bytes serve a dual purpose, as they are used as the key for both AES encryption and HMAC hash calculation.
+3.
+Append NULL bytes to the plaintext request depending on the random byte generated in step 1.
+4.
+Encrypt the (plaintext request + NULL bytes) with AES encryption using the random 32 bytes calculated in step 2 as the key.
+5.
+Obtain a public key (RSA 1024 bits) from a decoded binary blob embedded inside the binary.
+6.
+Create a PUBLICKEYSTRUCT blob header, add the random bytes generated in step 2, and then call the CryptImportKey() API to create an RC2 key HANDLE that is used for HMAC calculation.
+7.
+Calculate the HMAC of (plaintext request + NULL bytes) using the key generated in step 6.
+8.
+Using the RSA public key from step 5, encrypt (32-byte AES key [step 2] + random byte [step 1] + HMAC [step 7])
+9.
+Combine the data from step 4 and step 8 and send it through the POST request.
+See Figure 2 for an example of the POST request and Figure 3 for the format of the encrypted POST data.
+Figure 2.
+Example POST request
+Figure 3.
+POST data encryption overview
+Interestingly, this Locky variant uses the AES-NI extended instruction set – as opposed to software implementation – to generate the encryption round keys and encrypt the text.
+Locky uses the opcode instruction aeskeygenassist for AES round key generation, as seen in Figure 4.
+Figure 4. AES encryption using AES ENC and AES ENC LAST hardware instructions
+A total of 14 encryption rounds are used to encrypt the plaintext, which amounts to the use of a 256 bit key.
+Each round is carried by aesenc instruction and the last round is done by aesenclast, as seen in Figure 5.
+Figure 5. AES round keys generation from primary key
+Crimeware authors are constantly improving their malware.
+In this case, we see them evolving to protect their malware while maximizing its infection potential.
+Locky has moved from using simple encoding to obfuscate its network traffic to a complex encryption algorithm using hardware instructions that are very hard to crack.
+These types of advancements highlight the importance of remaining vigilant against suspicious emails and using advanced technologies to prevent infections.
+Zip downloader 638f70d173f10b2e8c9313fe20d6a440

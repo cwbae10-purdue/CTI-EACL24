@@ -1,0 +1,135 @@
+When I was a kid, my mom would give my brothers and me a weekly allowance to buy candy.
+It was about the equivalent of $2, and if used prudently was just about enough to buy an ice cream bar and a few gummy bears.
+Some weeks, I’d go for packets of gum.
+On others, chocolate coins and so on.
+But no matter what my loot was, I had to face the challenge of keeping it hidden from my thieving brothers.
+Being the youngest brother, brute force and intimidation wasn’t an option, so I had to use stealth and clever tricks to keep my candy out of sight.
+Simple methods, such hiding it under the couch, were short lived, as my brothers had a keen nose for candy.
+I had to come up with more sophisticated hiding places, such as the bottom of a cereal box or beneath the vegetable tray, to overcome the rising challenge.
+There were moments when I grew tired of this endless race, but nowadays I can fully appreciate it as the perfect preparation for my work as a malware researcher.
+The only difference is that now I’m the one looking for the candy that malware authors do their best to hide, encrypt and disguise.
+That brings me to one interesting and familiar project: Dridex.
+This infamous banking Trojan plagues consumers and businesses all over the world, potentially grossing its cybergang billions of dollars a year.
+When it comes to hiding candy, Dridex goes to great lengths to hide some vital secrets regarding its malicious code — most notably the API calls and string constants it uses.
+Why are these such precious snacks?
+How are they being protected?
+How do we go about finding them?
+What’s changed in recent Dridex releases?
+Let’s have a look.
+It is well-known in security circles that financial malware most often comes in packed form.
+The binary within these packages is encrypted, thus seemingly inaccessible.
+With some packers, unpacking can be a real challenge.
+With others, it’s a simple matter of commanding them to unpack themselves, then extracting the code from memory.
+The latter case applies to most financial malware, including Dridex, making it fairly easy to unpack.
+Unfortunately, the parts of the code that are most valuable to researchers come with extra layers of obfuscation beyond the packing routine.
+Two of Dridex’s better protected soft spots are the API calls and its string constants.
+Read the white paper: Accelerating growth and digital adoption with seamless identity trust
+Here’s an example from the candy store, taken from Dridex build number 0x300c3/v3.195.
+Take a look at this code — can you tell what it does?
+Notice the calls to registers.
+These are calls to Windows API functions.
+As part of the obfuscation, the addresses are passed via registers, making it difficult to know which API functions are called by performing static analysis.
+Quite mysterious, isn’t it?
+Now look below at the same code with comments showing which API functions are being called:
+The purpose of this code is much clearer once we know what arguments this API functions receive.
+We can thus rename variables in the code to the following result:
+Much better now, isn’t it?
+But what about that mystery_function?
+Notice that it is called twice — once before each API call.
+We can see that it returns the address of the API function that will be called (on EAX) and that it receives an integer as a parameter (on EAX as well), in this case 0x17 and then 0x78.
+This function is an API resolver.
+Its job is to dynamically return the address of the API function that is to be used.
+It has to receive some index that dictates which API function it would resolve without making it easy for prying researcher eyes to associate index with API function.
+For this reason, the names of API functions are kept encrypted.
+The resolver decrypts and returns the right function according to the index.
+With this information, we can now fully understand the code we inspected:
+Almost as important are Dridex’s string constants.
+Complex software, such as financial malware, uses many string constants, like file paths and registry keys.
+Dridex hides those as well, keeping them encrypted and only decrypting them right before they are used.
+Just like the resolve_api, there are functions responsible for decrypting strings according to a given index.
+Take a look at this code:
+Note that we added the comment, outlook_contact_list.
+That’s the string being resolved by resolve_string.
+We can get a good idea of what this string does just by looking at how it’s used in the function.
+Turns out, it’s accessing information about Outlook profiles on the infected endpoint.
+This code is likely part of Dridex’s capability to steal email information, which was added to the malware in late 2015, possibly to be used in business email compromise (BEC) fraud scenarios.
+Before the most recent Dridex versions were released in 2016, those APIs and strings were protected by simple XOR encryption.
+They were kept in long tables in the binary’s PE .rdata section, with the XOR key appearing at the start of each table.
+The index given to the resolving function was, at the time, the actual index number of the string or API in the table, which the resolver would un-XOR and return.
+Dridex’s authors recently stepped up their API and string obfuscation game, replacing the basic XOR method with more challenging stealth methods.
+Let’s analyze them!
+Dridex’s previous obfuscation methods persisted for many months, so it was a notable change when a new build was released with different obfuscation methods.
+Per our analysis, the rest of the code didn’t change much, so we followed a usually useful rule: When trying to figure out what has changed, start by figuring out what hasn’t.
+Let’s take a piece of Dridex’s code where an API call is resolved and see what it looks like in the new build.
+In the old Dridex build (0x3003c), the code looked like this:
+This call to SetThreadPriority is very useful to us because it happens in one of the first instructions from DllEntryPoint, making it easy to locate in the code.
+When we go to a newer version and check out the code at DllEntryPoint, we see there has been a change:
+This figure above was taken from build 0x300f6/v3.246, as were the rest of the code examples from this point on.
+Most of the code seems the same.
+We can observe that mystery_function is the API-resolving function, but instead of the index, it now receives two DWORDs of unknown meaning.
+We also know that these DWORDs somehow stand for Kernel32!SetThreadPriority.
+We can thus name the code:
+Let’s get down to business and see how resolve_api_v2 works.
+We already know that when called with the arguments resolve_api_v2(0x2F3C3C34, 03A0ECF43), it returns the address of Kernel32!SetThreadPriority.
+Let’s analyze its code:
+Early on, resolve_api_v2 enters a loop that iterates over memory space, advancing in intervals of 0x10 bytes.
+Dynamically analyzing it with WinDBG, we set a break point at 0x6A9C78C4 (marked in red) and examined the data at the offset I named import_table:
+This is clearly some sort of import table.
+The 0x10-byte-long structures at the table present the following format:
+Notice the table is almost empty.
+It only stores information about API functions that were already called in the current execution so that they wouldn’t need to be resolved again each time.
+The more interesting bit is how resolve_api_v2 gets information about an API function when it is called for the first time and not yet stored in this table.
+The import table is not an ordinary one — it’s actually custom-made by Dridex’s developers.
+If the search in this custom import table fails, another internal function is called.
+Upon first glance, we can see several loops that perform XOR operations on running memory addresses — a decryption code.
+Without analyzing the entire function, we notice this small loop:
+Note the XOR with 0xEDB88320.
+This is a constant used for a CRC32 hashing operation.
+Let’s reload Dridex and put a break point at the start of the hashing process, then see what’s being hashed here.
+What we see are names of modules and their exports.
+Take, for example, the string “KERNEL32,” taken at a break point a bit further down the code:
+The hashes of this string are compared to the argument that the resolver function received.
+Turns out that the arguments resolve_api_v2 receives are CRC32 hashes with another XOR against a constant value.
+The first is the hash of the API function name and the other identifies the library of the API call.
+In our example:
+Going over and hashing the loaded modules and all their exports is quite a lot of work.
+Modules like kernel32 or ntdll have many exports, and having to hash them every time the code calls one of them is remarkably inefficient.
+That explains why Dridex developers use a custom import table to cache the ones already resolved.
+The first thing that comes to mind when examining Dridex’s new API obfuscation method is that it can’t be used to obfuscate the string constants.
+While the names of the modules and their exports are present in memory, there’s no pool of string constants to iterate over and hash to find the right one.
+The malware would have to hide them somewhere in the binary.
+Let’s have a look at a call to the resolving function:
+Similar to how we figured out the encrypted API calls, we will again observe that the code hasn’t changed much and locate a spot where it needs to resolve a string constant.
+We see that the code receives three parameters: an integer, which we shall soon see is an index; an offset in the binary’s .rdata section, where an encrypted blob is stored; and an output address.
+The encrypted blob has two parts — the first 40 bytes are the encryption key and the rest is the encrypted data.
+The resolver code is not very long in this case.
+We quickly located the point where the encrypted blob is being decrypted, which is done in a sequence of three loops:
+The first decryption loop does two things:
+It initializes a 256-byte-long array, where array[x] = x, to be used as a permutation table.
+It cyclically copies and expands the first 40 bytes of the encrypted blob to fill a 256-byte-long buffer.
+This buffer is the key with which the data was encrypted.
+The second loop scrambles the permutation table:
+The third loop uses the permutation table to decrypt the data while continuously swapping the table:
+This looks an awful lot like RC4: A permutation table, S-Box, is initialized, scrambled with a key, then XORed against the data while continuously swapping values.
+Dridex regularly uses the RC4 cryptography to secure its communications with command-and-control servers, so it makes sense that it would use RC4 for internal string obfuscation as well.
+To save time and effort, let’s test this idea with an IDA Python script that performs RC4 decryption.
+The script I used here does a bit more — it also treats the decrypted data as a list of null terminated strings and returns a list:
+Success!
+As it turns out, Dridex does encrypt strings with the RC4 stream cipher.
+The decrypted data is a sequence of null terminated strings.
+The index that was given as an argument to the resolver is the index of the desired string in the sequence.
+We can now de-obfuscate both strings and API calls to create a readable sample of Dridex.
+It looks like Dridex’s developers decided to ditch the old XOR method and start protecting its secrets with more advanced encryption.
+Why change?
+Dridex is a constantly evolving project.
+As such, it moves forward with the times.
+Does this make the code more evasive and tougher to research?
+Perhaps temporarily — only until one figures out how the new protections work.
+Remember, the RC4 key is stored adjacent to the encrypted data, so decrypting is almost no problem at all.
+The CRC32 method used for the APIs is also simple once you know how it works.
+Dridex’s candy may have been moved to a different drawer, but we found it.
+Now we can research and develop protections against it more capably.
+In this research, I analyzed a Dridex sample with MD5: 010ed3da6a32c576bf60b6167dc3f136.
+Dridex is featured in an IBM X-Force Exchange collection, which is updated regularly.
+Read the white paper: Accelerating growth and digital adoption with seamless identity trust
+Magal Baz is a malware researcher for IBM Security's Trusteer's group.

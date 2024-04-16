@@ -1,0 +1,179 @@
+FortiGuard Labs Threat Analysis Report
+FortiGuard Labs has been monitoring a new release of the malware known as Predator the Thief, labeled as version 3.3.4.
+After our last article about Predator the Thief, we have continued monitoring this malware family.
+There have been small development differences between each minor version, making this latest version very different from version 3.0.8 mentioned in our last article.
+In early December we observed a new Predator the Thief campaign using version 3.3.3.
+We analyzed the new campaign, and found that it is both stealthier and more complicated than its predecessors.
+In addition, it was upgraded again to version 3.3.4 on Christmas Eve.
+In this report we will quickly analyze its latest set of capabilities.
+Firstly, we discovered that the campaign now uses multiple phishing documents designed to look like invoices, all pushing the same payload of Predator the Thief.
+Figure 1 shows the infection chain, and Figure 2 shows an example of phishing document.
+Once the document is opened the malware performs the following operations:
+1.
+AutoOpen macro runs the malware VBA script.
+2.
+It downloads three files through PowerShell.
+VjUea.dat: Legitimate AutoIt3.exe
+SevSS.dat: Base64-encoded AutoIt script with certificate header.
+apTz.dat: RC4-encrypted Predator the Thief
+3.
+It then uses a legitimate AutoIt3.exe to run decoded AutoIt script.
+“SevSS.data” is decoded by certutil.exe, a legitimate command line program that is part of the Certificate Service in Windows.
+The script is then run to decrypt apTz.dat into the payload of Predator the Thief.
+4.
+It then loads Predator the Thief into a specific hollow process (dllhost.exe, in this sample).
+7195659c846b13069d19341b6da99d925acc7db827dd84e7dbe00815511d30b1.
+After running the malware, we found it connected with the C2 server corp2.site.
+In the data sent to its C2 server we found the information file “information.txt” contained its version.
+As usual, the authors use Telegram to promote their malware business.
+They upgrade the panel and stealer almost every month.
+We checked the following channel, used for providing update notes for their customers:
+hxxps://t.me/PredatorSoftwareChannel
+The malware was upgraded in early December to Version 3.3.3, and it was soon upgraded again to a new version 3.3.4 on Christmas Eve.
+Here are notes for both versions:
+The stealer’s side does not change much in either version released in December.
+However, there are have been some new features added since our last article.
+In the following section we will analyze the features found in version 3.3.3 to determine what changes have been made during this period.
+More anti-debug tricks have been added to Predator the Thief.
+NtSetInformationThread
+NtQueryInformationProcess
+BeingDebugged flag
+CheckRemoteDebuggerPresent
+Breakpoint detection with AddVectoredExceptionHandler
+Thread for permanently monitoring debugger
+Descriptor table register check
+GetTickCount check
+We also found that it copies a portion of ntdll.dll into an allocated memory.
+It then hooks the copied portion with a simple shellcode to call the function NtQueryInformationProcess for anti-debug purposes.
+It also prevents analysts from hooking NtQueryInformationProcess to avoid being detected.
+And it also checks the crc32 checksum of the allocated memory to prevent any changes.
+Before the main routine it also includes multi-level anti-debug functions.
+A thread is used to detect debuggers every five seconds.
+In contrast with the previous version, 3.0.8, most of the junk code in the main routine has been removed.
+We can also observe that the assembly code is much shorter but more complicated.
+For example, all strings are decoded at runtime with XOR or SUB, and those string-decoding loops cause the flow to be more complicated.
+We also found that the stolen information is sent as a zip file.
+However, those files are never generated in the file system.
+Instead, the malware allocates a memory space to locate the entire zip file structure, and then adds the zip file directly from memory to the request data.
+This is an API used to get the configuration from C2 server.
+The configuration is more complex and detailed than previous versions, and is encrypted during the connection.
+One example returned the following base64-encoded-like data.
+In fact, the string is encrypted using basic base64 and RC4 algorithms.
+The RC4 algorithm uses the C2 domain name as its key.
+After decoding the string shown in the previous figure, we found the following configuration string.
+Note that the IP information is masked.
+[0;1;0;0;0;1;1;0;1;;;1]#[]#[City;Country;Longitude;Latitude;IP;Timezone;Postal code]#[]#[]
+The string can be divided into five parts using “#”.
+"[]" Indicates an empty configuration.
+1.
+The first part of the string first analyzed in version 3.3.3 contains 12 arguments split with semicolons, and version 3.3.4 the configuration related to the CIS region check has been removed:
+Webcam bmp capture
+Enable anti-VM check: SIDT, SGDT, STR, CPUID
+Collect Skype information
+Collect Steam information
+Screen capture
+Enable CIS region check with default language:
+We found the following languages are checked in version 3.3.3: Russian, Armenian, Azeri, Belarusian, Georgian, Kazakh, Tajik, Turkmen, Uzbek, and Ukrainian.
+However, in version 3.3.4, the code related to the default language check had been removed.
+According to the information found in the author’s notes in Figure 8, this may imply that a CIS region check is now performed on the server side.
+Remove itself after running
+Collect Telegram information
+Collect InetCookies
+File search limits
+Base64-encoded PowerShell command (Added in version 3.3.2)
+Browser history (Added in version 3.3.3)
+2.
+The second part contains a file grabber configuration.
+The following is an example of its configuration structure:
+[%userprofile%\Desktop|%userprofile%\Downloads;*.txt,*doc;2048;test.txt;0]:[another grabber configuration]
+It may contain multiple grabber configurations.
+There are five parts in each grabber configuration:
+Initial folders for grabber
+Target file types
+Maximum file size
+Exclusion list of file names
+Option for maintaining directory structure
+3.
+The third part is the victim’s IP information, which is checked and returned by the C2 server.
+City
+Country
+Longitude
+Latitude
+IP
+Time zone
+Postal code
+4.
+The fourth part is a sub-configuration for running the download module or other malware.
+Interestingly, the malware has become a possible loader for other malware due to its ability to download other malware.
+There are multiple ways to run files, including hollow process injection, reflective DLL injection, and general API usage, such as CreateProcessA and ShellExecuteA.
+Because this section has a complex configuration structure, we have simplified it to the following items:
+Download URL
+File execution method option
+Command line string for hollow process
+Download filename
+Registry for persistence
+Download file type (.dll or .exe)
+5.
+The fifth and last part is another configuration for downloading and executing modules.
+Different from the fourth part of the configuration, it defines an API list.
+Each API downloads files from [APIName].get and [APIName].post.
+The URL is in the following format:
+http[s]://[PredatorC2]/api/[APIName].
+[get|post]
+“.get” is a PE file section named “.rdata”.
+“.post” is the main part of the PE file.
+Eventually, it creates an executable “Werfault.exe” in the “%ProgramData%\[5-random-lowercase-letters name]” folder and then immediately executes it with ShellExecuteA.
+Interestingly, it is not only an API name.
+It is also implemented as an API list, so multiple files can be downloaded from different APIs and executed immediately.
+This is used for sending collected information to C2 server.
+The format is as follows:
+gate.get?p1=0&p2=315&p3=0&p4=0&p5=0&p6=0&p7=0&p8=0&p9=0&p10=fZWvcQzEdNJmebrpmhICjrWiShZP9vAWnA==
+The meaning of each argument is shown below:
+p1: Number of passwords
+p2: Number of cookies
+p3: Number of cards
+p4: Number of forms
+p5: Number of Steam accounts
+p6: Number of wallets
+p7: Number of Telegram accounts
+p8: Crc32 checksum anti-debug result
+p9: Module execution method configuration
+This item is related to the configuration of the fourth part.
+If the fourth part is enabled, this argument will set to 1.
+p10: Encrypted string of registry key name and OS version
+This item is encrypted by RC4 and base64.
+It also uses domain name as its RC4 key.
+For example, we have the following encrypted string at the beginning of this section.
+fZWvcQzEdNJmebrpmhICjrWiShZP9vAWnA==
+It can be decrypted into the following string.
+|Windows 7 Enterprise x64
+The format is “Registry Key Name|OS Version”.
+The registry key name comes from the fourth part of the configuration.
+If the configuration is not set, it will be empty.
+By setting this configuration, it will create a registry key at HKCU\Software\AdviceService Ltd.\[Name].
+In this recent Predator the Thief malware and campaign, a simple but tricky way to abuse legitimate AutoIt software to execute the payload of Predator the Thief has been added.
+In addition, the whole program flow has been changed.
+More anti-analysis features are used, and the configurations are more detailed and complex.
+It is also able to collect information in a file-less manner and delete itself immediately after sending information to C2.
+This makes it more difficult for analysts to analyze its damage to the victim system.
+It also has added new features to execute its additional modules and second stage malware in different ways.
+We will continue to monitor this malware family and its related activities and report on important new changes.
+As part of our membership in the Cyber Threat Alliance, details of this threat were shared in real time with other Alliance members to help create better protections for customers.
+Fortinet customers are protected from malicious threats mentioned in this analysis with the following solutions:
+All files are detected with FortiGuard Antivirus
+Malicious and Phishing URLs are blocked with our FortiGuard Web Filtering Service
+Malicious document: Detected as VBA/Agent.5C0F!tr
+670c3bb2d41335cee28f4fe90cf9a76a9b68a965e241df648a0198e0be6a9df1 46710b47763f27a6ffb39055082fa22e3e5a2bd9ae602ea651aefe01079e0c8d bcf6f482a8a7e81d3e96c54840d2d341d12923a3277688eddd2534d614dab70b 67093ad07a8342c42b01dd1645dbd18ea82cc13081b5ba84fa87617675cc7054 76a4e5baa3650dff80df493fa4aaf04d37bb5d20d7a569ec3bc550bdfb3c1991 50f7c8b3c825930b242dceef47bec9e7039bff40362f960c84cd9ff9edafc94b 759dc4b2ab45e6faf7a9f1325f75956c1954f3695400e66670f6950c06db44c2 4792c8a417b7accd3092788504332881154785a9ee2db2e93e63306813497c7c 35820393614d39e600b4afc3332de4547f25f4b5d076b43ea1af98020ec5a8f0 91722acec748c76de9d98e1797186a03dc9ab2efbd065a0f04e7c04654644dba 14b25649cf6f10670fc8e1afb923895ae0300a8feb78e5033488879d5206267b b53dd972d466e2d2ded3ce8cc7af28eda77f2939de0d9c1fbd3663fd057ea87d cb76b3ee29944a7d8b839025c1e9eae32b188443a7bf5cbfbf7eabe682424d92 68875254237c6f887d0f9771b8f356381f8a0384841ae422ef2d49faf30932e9 248ad207c6891d84765ea81d0aa3ca04bee69e0467dff8d693fa4eb76a491c16 4cac9af0198fe82f5ae87ac19e964471f6e87461743a21054c2f063be9c2c514 3118a980caf696fc5c84cb9ee88015f3a0cf205f021270b1f4f313bbae6b6464 caeb9b2518d47f3df6f2ec515ce314dca6993370b9e124479bff959075379a90 e5420cf530192596f2c388eeecfd8d6754af06939461629c94d509b991b967f4 c392229b34617ee5bc9e48bacde3fc8e9046eea51e6101624d312719e970dc00 6215d8637357be64510af9daf778ce12bf8401cdd16216a24da257d42217c65b c97d6c8075bd9c55fbdcadda6c69c21432d59e872acdc860228b2709edbb6e6c
+Encoded AutoIt script:
+36fe75ca8ca8bcef475737dae530e50eb262484ba0cd4dac0081d8508412d0ad - Autoit/Injector.ESA!tr
+RC4 Encrypted Predator the Thief 3.3.3:
+dce3bb2609c710339569404f8dce4e0786521bb0de46ad9358fc27d5b687f043 - W32/Agent.PTM!tr
+Predator the Thief version 3.3.3:
+7195659c846b13069d19341b6da99d925acc7db827dd84e7dbe00815511d30b1 - W32/Agent.PTM!tr
+Predator the Thief version 3.3.4:
+b7e0218883dfb06a4bf5bab7bf5ad4038258dd0e925d4fdd772def810ee2c92d - W32/Agent.PTM!tr
+C2: Detected as Malware:
+hxxp://stranskl.site/ hxxp://stranskl.site/apTz.dat hxxp://stranskl.site/VjUea.dat hxxp://stranskl.site/SevSS.dat hxxp://stranskl.site/api/check.get hxxp://stranskl.site/api/gate.get hxxp://corp2.site/ hxxp://corp2.site/api/check.get hxxp://corp2.site/api/gate.get hxxp://tretthing.site/ hxxp://tretthing.site/api/check.get hxxp://tretthing.site/api/gate.get
+Learn more about FortiGuard Labs threat research and the FortiGuard Security Subscriptions and Services portfolio.
+Sign up for the weekly Threat Brief from FortiGuard Labs.
+Learn more about Fortinet’s free cybersecurity training initiative or about the Fortinet Network Security Expert program, Network Security Academy program, and FortiVet program.

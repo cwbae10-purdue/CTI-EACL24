@@ -1,0 +1,67 @@
+The number of Flash Player exploits has recently declined, due to Adobe’s introduction of various measures to strengthen Flash’s security.
+Occasionally, however, an exploit still arises.
+On January 31, Kr-Cert reported a zero-day vulnerability, identified as CVE-2018-4878, being exploited in the field.
+(Adobe has released an update to fix this flaw.)
+We analyzed this vulnerability and found that it bypassed the byte array mitigation feature that was introduced to prevent “length corruption” attacks in Flash.
+This post will focus on how the exploit bypasses the length checks.
+This exploit has been used in targeted attacks and arrives as a Microsoft Office Excel file with an embedded Flash file.
+On opening the Excel file, the Flash file contacts a server and requests a key.
+Once the key is received, the file decodes another embedded Flash file, which is the actual exploit.
+The key is 100 bytes.
+It decodes and loads the embedded file using the loader.loadbyte function:
+Because the URL for the key was offline, we could not retrieve it.
+But the sample hash was available online on various sites.
+We analyzed the sample (SHA-256) 1a3269253784f76e3480e4b3de312dfee878f99045ccfd2231acb5ba57d8ed0d.
+This Adobe .SWF file contained multiple ActionScript 3 files as well as two embedded files in the BinaryData section, constituting the shellcode (marked in red in the following screen):
+When launched, the exploit checks if the system is running Windows.
+If so, it triggers the vulnerability.
+As we see in the preceding image, the exploit takes several steps:
+It creates a mediaplayer object
+It initializes the drmManager property of mediaplayer to a specially crafted class based on the DRMOperationCompleteListener object nugamej.
+The object nugamej is “freed,” but the drmManager points to the same memory location that nugamej used previously
+If we take a close look at nugamej, we can see that it was created from the class Rykim, which implements the DRMOperationCompleteListener class.
+The Rykim class has various “uint” variables with values set as 0x1111, 0x2222, etc.
+:
+These variables will be used later to access various addresses in the process space and other operations.
+The exploit then causes an exception by using Localconnection().connect, creates the new variable “katyt” of the Rykim class, and implements the DRMOperationCompleteListener class.
+A time check calls the function “cysit”:
+Cysit checks whether the newly allocated object’s a1 variable is 0x1111.
+If the value is not equal to 0x1111, then cysit stops the timer and proceeds with the exploitation.
+The exploit creates another object, “kebenid” of the type “Qep,” which extends the byte array class.
+The length of kebenid is set to 512 bytes.
+This will be modified later to make a read-write primitive to gain unrestricted access to process memory.
+We can see the structure of the byte array from https://github.com/adobe/avmplus/blob/master/core/ByteArrayGlue.h.
+We can see that the byte array class has array, capacity, and length.
+In the past we have seen attackers corrupting the length variable to arbitrarily read and write to a memory location.
+Thus there is an extra check to ensure the integrity of the byte array.
+The check creates a secret value that is XORed with array/capacity/length and saved in the variables check_array/check_capacity/check_length.
+When these variables are accessed, they are XORed with the secret key and their value is compared to the values stored in check_array/check_capacity/check_length.
+If they match, then we have genuine data; otherwise it will throw an error as in the following image:
+From the preceding code, we can retrieve the key by simply using any of the following calculations:
+Array ^ check_array = key
+Capacity ^ check_capacity = key
+Length ^ check_length = key
+As mentioned in https://github.com/adobe/avmplus/blob/master/core/ByteArrayGlue.h
+If the value of copyOnWrite is 0, then the key will be check_copyOnWrite.
+If we look carefully, we see both the katyt and kebenid object variables point to same memory locations.
+This can be confirmed If we print and compare the variables of the two objects.
+Comparing the following variables with the byte array structure, as previously mentioned, we get the following:
+So if we change katyt.a24 and katyt.a25, that will actually change the byte array capacity and byte array length.
+Then we just need to find the XOR key and we can set it to any length we want.
+Thus in this exploit the key is found using the logic Array ^ check_array = key.
+Once the key is available, we can easily modify the byte array capacity and length to 0xFFFFFFFF and check_length, thus bypassing the byte array security mitigations, and we can read or write anywhere in the process space:
+The exploit uses the preceding read-write primitive, gained through the byte array object, to read memory and search for kernel32.dll and functions such as VirtualProtect, and CreateProcessA.
+Once the addresses of these functions are located, shellcode can be executed on the system.
+This technique is very well documented online.
+The following screen shot shows the code responsible for searching kernel32.dll, later locating the VirtualProtect API address as 0x75ff2c15:
+The exploit later executes the shellcode and connects to a URL:
+It also launches cmd.exe using CreateProcessA:
+The shellcode also checks for some antimalware products:
+Attackers constantly search for ways to bypass new protection mechanisms.
+This exploit shows one such way.
+As always, we advise readers to be careful when opening unknown attachments and documents received in email.
+McAfee Network Security Platform customers are protected from this vulnerability through signature ID: 0x45223900.
+SHA-256: 1a3269253784f76e3480e4b3de312dfee878f99045ccfd2231acb5ba57d8ed0d
+hxxp://www.korea-tax.info/main/local.php
+hxxp://www.1588-2040.co.kr/conf/product_old.jpg
+hxxp://1588-2040.co.kr/conf/product.jpg

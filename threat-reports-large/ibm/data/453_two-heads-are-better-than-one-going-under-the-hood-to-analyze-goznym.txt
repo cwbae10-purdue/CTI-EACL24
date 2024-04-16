@@ -1,0 +1,117 @@
+In April 2016, IBM X-Force Research exposed a malware hybrid that combines the Nymaim downloader and the Gozi Trojan’s financial fraud module, naming that new banking malware GozNym.
+The inner workings of GozNym are quite interesting.
+This post is an overview of the GozNym Trojan’s main structure, with added details on its fraud-facilitating components as determined by X-Force Research.
+Gozi, also known as ISFB or Ursnif, is a financial Trojan that has had its source code leaked twice.
+The first and most significant leak took place in 2010, and the second occurred in late 2015.
+The essential parts of the Gozi code have been widely used in the past few years and are still being used by a variety of cybercriminals today.
+Gozi remains popular due to the effectiveness of the source code and its modularity.
+Two noteworthy modules that keep this malware relevant are:
+Gozi’s main module, which enables injecting the financial module into web browsers, communicates with the command-and-control (C&C) server and ensures its operational and stealth functions; and
+The financial module, which is injected into browsers and used for deploying malicious webinjections, among other actions.
+The Nymaim malware has been around since 2011 and was always known to be deployed in combination with additional malware.
+This kind of Trojan is usually referred to as a downloader.
+In its early days in 2011, Nymaim was used exclusively for dropping ransomware — way before ransomware became as prevalent as it is today.
+While Nymaim’s operators have touched on financial malware since then, they never stuck with any specific banking Trojan until 2015.
+In late 2015, IBM X-Force researchers started detecting stealthy malware infection campaigns in which Nymaim downloaded the Gozi Trojan and then used it in fraud attacks on online banking customers.
+These campaigns prompted a more detailed investigation of Nymaim’s malicious activity and eventually led researchers to discover Nymaim’s new hybrid form, which was named GozNym.
+That deployment mode changed in early 2016, when X-Force researchers noticed a subtle yet significant modification in this malware’s code: Nymaim began using a modified version of Gozi’s financial module and embedded it into the actual code.
+This version of the module is only usable in combination with another piece of code that was injected into the browser.
+By making this change, Nymaim was no longer a mere downloader used for running other pieces of malware.
+Rather, it became a hybrid banking Trojan that stands on its own and is detected as such.
+Since taking on its hybrid form, X-Force researchers have been paying close attention to GozNym.
+They have observed that it has become one of the most active players in the financial malware arena with capabilities such as redirection attacks, which are typical reserved for elite cybercrime gangs such as Dridex.
+The most common infection method we observed used with GozNym is a three-step process that begins with phishing emails containing poisoned Word documents.
+In the campaigns studied by X-Force researchers, malicious macros in the documents executed a Pony Stealer malware variant, which in turn downloaded and executed the GozNym installer/loader.
+When GozNym gets executed, it begins by avoiding researchers.
+We observed samples using different evasion techniques every time, but one dominant method stands out: the time check.
+With this verification on GozNym’s part, the malware would not run unless the current date of execution is very near the time of the infection campaign.
+This way, if researchers try to execute the sample even a few days after the campaign, it would not run without additional actions.
+Another anti-research technique we saw in GozNym’s deployment process was filtering victims by geolocation.
+To filter out irrelevant machines from intended campaign targets, the C&C server would check the victim IP’s geolocation and stop the malware’s execution on machines from the wrong country.
+This contributed to the malware’s ability to keep researchers’ endpoints out of the botnet.
+Under the standard infection flow, GozNym’s loader runs a hollowed process of Rundll32.exe, which in turn will inject its payload to other processes.
+The payload itself is heavily obfuscated.
+GozNym’s loader layers on additional anti-research techniques.
+The first is control flow obfuscation, which is composed of several mechanisms.
+When those are combined, they make it very difficult for security researchers to be able to statically follow the control flow of the program.
+Another anti-research technique used here is API obfuscation.
+Instead of directly calling a WinAPI, GozNym hashes a value in the place of the call and then continues by hashing each WinAPI until it encounters the matching hash to find its target.
+Strings are hidden and dynamically decrypted only when needed.
+Once the string is used, it gets overwritten to avoid leaving traces in memory.
+To keep a hold on the victim after system reboots, GozNym uses several persistence mechanisms.
+On one hand, having redundancy in this aspect is useful since the infection would remain even when only parts of the code were present.
+On the other hand, it adds extra noise and makes GozNym easier to spot.
+Registry run values used by the GozNym hybrid for persistency are located at:
+Each run value points to a unique GozNym binary, located in %programdata% or in %appdata% folders.
+Example run values include rheology-37 and bending-1.
+These names are hard-coded, fetched from a list that seems to be manually generated by the developer and often modified.
+Furthermore, GozNym adds its binary to the Windows system’s Startup folder.
+These binaries differ from the original GozNym loader as well as from one another.
+With that, all of GozNym’s binaries perform the same task: Execute GozNym after a system reboot — with one catch.
+Before completely executing, the binaries verify that the machine they are located on is the same as the machine that the original GozNym loader infected.
+This test is performed by checking the details of a specific registry value:
+Since Nymaim used to inject Gozi’s financial module into the victim’s browser and GozNym injects its own code as well as the modified ISFB financial module, let’s take a deeper look into the differences between Gozi’s original financial module and the modified version that was created when used by the GozNym hybrid.
+Gozi’s Financial Module (unpacked)
+GozNym’s Financial Module (unpacked)
+About 140 KB
+About 40 KB
+Used as usual and easily recognized by IDA.
+Constructs its own partial IAT.
+Uses some APIs supplied by second shellcode.
+Exist in the memory dump, easy to research.
+Hidden using GozNym’s code.
+None.
+Relies on GozNym’s code for memory allocations, decryption routines, string decryption and more.
+Resides in memory as a simple DLL.
+Resides in memory as a shellcode.
+Serpent cipher and RSA encryption.
+Uses four phases of encryption.
+Inside the browser’s process, GozNym’s highly obfuscated code acts as an interface for Gozi’s financial module.
+This makes researching it significantly more complicated.
+Two examples for using this interface are:
+Calling functions to allocate memory on the heap; and
+Calling a function for obtaining the decrypted webinjects configuration.
+Screen captures in the figures below show GozNym’s financial module in disassembly via IDA Pro.
+Note the call_nymaim_decrypt_conf function call is actually a part of the API and is used to obtain the decrypted webinjects.
+This function calls to the second injected module via the gate_to_nym_API function.
+Figure 1: Function invoked to request API for GozNym’s decrypted webinjects.
+Figure 2: Call to API function that decrypts GozNym’s webinjects configuration.
+In the next figure we can review the dynamic execution of the same code, just after the call to the gate_to_nym_API.
+The webinjects are already decrypted, as can be seen in the memory window on the left.
+Figure 3: Dynamic execution view.
+Like most classic financial malware, GozNym’s main modus operandi is the modification of communications between the user’s web browser and a bank’s servers, which allows it to alter the content of webpages presented to infected victims.
+Trojans can also modify commands that the user issues to the bank.
+This interception and modification becomes possible by patching the browser’s internal functions, which is a method that bypasses SSL protection.
+The instructions required for the webpage data manipulation are contained in what’s called a webinjection configuration.
+This data usually comes separately, fetched by the malware itself, and is kept within the Windows file system in encrypted form.
+In GozNym’s case, the configuration file is kept under the %TEMP% folder, protected by several layers of encryption.
+GozNym’s webinjects file requires four phases of decryption to reveal its targets and attack schemes.
+The first and third phases of the decryption routine share the same code but use different keys and encrypted data.
+The process is as follows:
+GozNym decrypts a small part of the configuration using hard-coded keys.
+The result is new set of keys that will be used at phase two.
+Using the derived keys from phase one, the malware decrypts most of the raw configuration to reveal the next encryption layer, using a proprietary cipher (see Figure 4).
+The malware decrypts the result from phase two using keys that were hidden within the previous layer’s data.
+This reveals the data for the next phase of the decryption routine.
+The malware performs ISFB decryption using the RSA and Serpent ciphers, as detailed below.
+Within the context of GozNym’s four-phase encryption, the last layer is the most interesting part.
+After decrypting the first three layers, the webinjects data is encrypted with the Serpent cipher, the key of which is stored inside a binary structure that the original ISFB author named DS_Header (see Figure 6).
+It is found at the end of the encrypted webinjects data.
+Since the DS_Header is encrypted with an RSA crypt, the malware’s binary contains a hard-coded RSA key it uses for decrypting the DS_Header.
+The result is a cleartext Serpent key that is then used to the decrypt the rest of the webinjection configuration.
+Figure 4: Phase II’s decryption code (viewed via IDA Hex-Rays).
+After the first two phases, the data contains the webinject’s size and the webinjection itself, still in encrypted form shown in Figure 5.
+Figure 5: The size of the configuration in our example (0x0000107B, marked in red).
+Figure 6: Gozi’s DS_Header data structure, taken from the ISFB leaked source code.
+Based on IBM X-Force data, the GozNym Trojan is showing increasing malicious activity levels.
+It is now spreading its redirection attacks to major U.S. banks, and it is expected to continue introducing upgrades and modifications in the near future.
+IBM Security can help banks and targeted organizations learn more about this high-risk threat.
+To help stop threats like GozNym, banks and service providers can use adaptive malware detection solutions with malware intelligence that provide real-time insight into fraudster techniques and capabilities.
+These tools are designed to address the relentless evolution of the threat landscape.
+Users looking to prevent advanced malware infections should follow security best practices at all times.
+This includes updating frequently used programs regularly and practicing good browser hygiene, such as avoiding suspicious websites.
+Since GozNym and banking malware like it is usually delivered as email attachments, it is also vital to never click on links or attachments in unsolicited email.
+MD5: 2A9093307E667CDB71884ECC1B480245
+IBM X-Force Research will be updating information and GozNym’s indicators of compromise via the X-Force Exchange platform.
+Join today to keep up to date about this threat and other findings from our cybercrime labs.
+Read the white paper: Accelerating growth and digital adoption with seamless identity trust

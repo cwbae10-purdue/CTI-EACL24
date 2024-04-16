@@ -1,0 +1,49 @@
+Although by force of habit many still refer to any malware as a virus, this once extremely common class of threats is gradually becoming a thing of the past.
+However, there are some interesting exceptions to this trend: we recently discovered malware that spread through injecting malicious code into Windows executable files; in other words, a virus.
+It is the first “living” virus in recent years that we have spotted in the wild.
+We named it KBOT, and Kaspersky solutions detect the malware and its components as Virus.Win32.Kpot.a, Virus.Win64.Kpot.a, Virus.Win32.Kpot.b, Virus.Win64.Kpot.b, and Trojan-PSW.Win32.Coins.nav.
+KBOT penetrates users’ computers via the Internet or a local network, or from infected external media.
+After the infected file is launched, the malware gains a foothold in the system, writing itself to Startup and the Task Scheduler, and then deploys web injects to try to steal the victim’s bank and personal data.
+For the same purpose, KBOT can download additional stealer modules that harvest and send to the C&C server almost full information about the user: passwords/logins, cryptowallet data, lists of files and installed applications, and so on.
+The malware stores all its files and collected data in a virtual file system encrypted using the RC6 algorithm, making it hard to detect.
+Number of Virus.Win32.Kpot detections, March — December 2019
+KBOT infects all EXE files on connected logical drives (HDD partitions, external media, network drives) and in shared network folders by adding polymorphic malicious code to the file body.
+To do so, the malware listens to the connection events of local and network logical drives using the IID_IwbemObjectSink interface and a query of type SELECT * FROM __InstanceCreationEvent WITHIN 1 WHERE TargetInstance ISA ‘Win32_LogicalDisk, and overrides the Indicate function of the IWbemObjectSink interface, where for each drive it performs recursive scanning of directories and infects EXE files.
+The malware retrieves paths to shared network resources using the API functions NetServerEnum and NetShareEnum, before scanning directories and infecting executable EXE files:
+Like many other viruses, KBOT patches the entry point code, where the switch to the polymorphic code added to the start of the code section is implemented.
+As a result, the original code of the entry point and the start of the code section are not saved.
+Consequently, the original functionality of the infected file is not retained.
+Virus code at the entry point
+The jmp command makes the switch to the polymorphic code:
+The virus also adds encrypted data to the end of one of the following sections: .rsrc, .data, .rdata.
+Data located after the selected section is shifted.
+At the same time, the parameters of the relocation table directory, resources directory, imports directory, parameters of sections, and other PE file parameters are modified accordingly.
+The encrypted data contains the body of the main malware module (DLL library), as well as code for decrypting, loading into memory, and running this library.
+The data is encrypted using the XOR method, plus the library is additionally encrypted with the RC4 algorithm and compressed using Aplib.
+Example of an infected file
+At the end of the polymorphic code is a classic piece of code for obtaining the kernel32.dll base:
+Next, the API address of the VirtualProtect function is retrieved and used to set permissions to write and execute encrypted virus data located at the end of the above-mentioned .rsrc, .data, and .rdata sections.
+The data is decrypted, and the switch to the relevant code is made:
+The code decrypts the DLL library with basic bot functionality (encrypted using RC4 and compressed using Aplib), maps the library headers and sections into memory, resolves the imports from the import directory, does manual relocations using information from the relocation table directory, and executes the code at the library entry point.
+To conceal malicious activity in the system and its ability to operate in the context of system applications, KBOT attempts to inject code into running system processes.
+Using the API functions OpenProcess/OpenProcessToken and GetTokenInformation, it retrieves the SID of the process into whose address space the main malware module is loaded.
+If the SID of the process matches WinLocalSystemSid, KBOT uses the CreateProcess API with the CREATE_SUSPENDED flag to create the new process svchost.exe, and then performs a classic inject: using the API functions NtCreateSection/NtMapViewOfSection, it allocates memory in the address space of the svchost.exe process, where it copies the header and sections of the main module, after which it resolves the imports from the import directory and does manual relocations using information from the relocation table directory.
+Next, KBOT calls the CreateRemoteThread/RtlCreateUserThread API with the address of the entry point.
+If the SID of the process does not match WinLocalSystemSid, the malware sets SeDebugPrivilege debug privileges and tries to perform a similar inject in the running processes services.exe and svchost.exe, whose SIDs match WinLocalSystemSid, as well as in the explorer.exe process.
+KBOT also injects the DLLs specified in the injects.ini file (located in the virtual file storage) into the processes listed in the same INI file.
+Configuration files, including injects.ini, are encrypted in one of the last sections of the main module of the bot, from where they are read, decrypted, and moved to the virtual file storage.
+The sample first searches for the current version of the required file in its storage (it might be that the current version was previously retrieved from the C&C); in case of failure, it reads the file data from the original version, which is located in the body of the bot itself in encrypted form.
+A special bot module — JF (joined files) — handles the processing of such files.
+At the start of the encrypted data of every such file, there is a structure with a data description containing a JF signature.
+Description of the data processing procedure of the configuration file
+The structure with the description of the encrypted file data corresponds to each encrypted file attached:
+Example of injects.ini:
+The above-mentioned JUPITER.32 and JUPITER.64 are DLLs that perform web injects that help the malware steal users’ personal data entered in browsers: passwords, credit card/wallet numbers, etc.
+; such injects are carried out through spoofing web page content as a result of injecting malicious code into the HTTP traffic.
+For this, it is necessary to modify the code of the browser and system functions responsible for the transmission and processing of traffic.
+To do so, after performing an inject in the system and browser processes, the web-injects library patches the code of functions in popular browsers (Chrome, Firefox, Opera, Yandex.Browser) and the code of system functions for transmitting traffic:
+The list of injects from the configuration file is stored by the malware in a global array of inject descriptors — a functionality analogous in many ways to the Rovnix bootkit.
+Below we give an example of the configuration file kbot.ini, where Hosts is the C&C list and ServerPub is the public key for data encryption:
+So as to operate in the address space of a legitimate system application when the system boots, the malware performs a DLL hijacking attack by infecting the system libraries specified in the import directory of the system executable file and placing them next to the system file, which is then written to Startup.
+In the system folder C:\Windows\\System32, the malware searches for executable EXE files suitable for attack, excluding from consideration the following files:
+Containing the strings level=”requireAdministrator” and >true

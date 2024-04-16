@@ -1,0 +1,41 @@
+As a follow up to Part One in this blog series on COM object hunting, this post will talk about taking the COM object hunting methodology deeper by looking at interesting COM object methods exposed in properties and sub-properties of COM objects.
+According to Microsoft, “The Microsoft Component Object Model (COM) is a platform-independent, distributed, object-oriented system for creating binary software components that can interact.
+COM is the foundation technology for Microsoft's OLE (compound documents), ActiveX (Internet-enabled components), as well as others.”
+A COM object’s services can be consumed from almost any language by multiple processes, or even remotely.
+COM objects are usually obtained by specifying a CLSID (an identifying GUID) or ProgID (programmatic identifier).
+These COM objects are published in the Windows registry and can be extracted easily, as described below.
+FireEye performed research into COM objects on Windows 10 and Windows 7, along with COM objects in Microsoft Office.
+Part One of this blog series described a technique for enumerating all COM objects on the system, instantiating them, and searching for interesting properties and methods.
+However, this only scratches the surface of what is accessible through these COM objects, as each object may return other objects that cannot be directly created on their own.
+The change introduced here recursively searches for COM objects, which are only exposed through member methods and properties of each enumerated COM object.
+The original methodology looked at interesting methods exposed directly by each object and didn’t recurse into any properties that may also be COM objects with their own interesting methods.
+This improvement to the methodology assisted in the discovery of a new COM object that can be used for code execution, and new ways to call publicly known code execution COM object methods.
+A common theme among publicly discovered techniques for code execution using COM objects is that they take advantage of a method that is exposed within a child property of the COM object.
+An example of this is the “MMC20.Application” COM object.
+To achieve code execution with this COM object, you need to use the “ExecuteShellCommand” method on the View object returned by the “Document.ActiveView” property, as discovered by Matt Nelson in this blog post.
+In Figure 1 you can see how this method is only discoverable within the object returned by “Document.ActiveView”, and is not directly exposed by the MMC20.Application COM object.
+Figure 1: Listing ExecuteShellCommand method in MMC20.Application COM object
+Another example of this is the “ShellBrowserWindow” COM object, which was also first written about by Matt Nelson in this blog post.
+As you can see in Figure 2, the “ShellExecute” method is not directly exposed in the COM object.
+However, the “Document.Application” property returns an instance of the Shell object, which exposes the ShellExecute method.
+Figure 2: Listing ExecuteShellCommand method in ShellBrowserWindow COM object
+As evidence of the previous two examples, it is important to not only look at methods exposed directly by the COM object, but also recursively look for objects with interesting methods exposed as properties of COM objects.
+This example also illustrates why simply statically exploring the Type Libraries of the COM objects may not be sufficient.
+The relevant functions are only accessed after dynamically enumerating objects of the generic type IDispatch.
+This recursive methodology can enable finding new COM objects to be used for code execution, and different ways to use publicly known COM objects that can be used for code execution.
+An example of how this recursive methodology found a new way to call a publicly known COM object method is the “ShellExecute” method in the “ShellBrowserWindow” COM object that was shown previously in this article.
+The previously publicly known way of calling this method within the “ShellBrowserWindow” COM object is using the “Document.Application” property.
+The recursive COM object method discovery also found that you can call the “ShellExecute” method on the object returned by the “Document.Application.Parent” property as seen in Figure 3.
+This can be useful from an evasion standpoint.
+Figure 3: Alternative way to call ShellExecute with ShellBrowserWindow COM object
+Using this recursive COM object method discovery, FireEye was able to find a COM object with the ProgID “Excel.ChartApplication” that can be used for code execution using the DDEInitiate method.
+This DDEInitiate method of launching executables was first abused in the “Excel.Application” COM object as seen in this article by Cybereason.
+There are multiple properties in the “Excel.ChartApplication” COM object that return objects that can be used to execute the DDEInitiate method as seen in Figure 4.
+Although this DDEInitiate method is also exposed directly by the COM object, it was initially discovered when looking at methods exposed in the other objects accessible from this object.
+Figure 4: Different ways to call DDEInitiate with Excel.ChartApplication COM object
+This COM object can also be instantiated and used remotely for Office 2013 as seen in Figure 5.
+The COM object can only be instantiated locally on Office 2016.
+When trying to instantiate it remotely against Office 2016, an error code will return indicating that the COM object class is not registered for remote instantiation.
+Figure 5: Using Excel.ChartApplication remotely against Office 2013
+The recursive searching of COM object methods can lead to the discovery of new COM objects that can be used for code execution, and new ways to call publicly known COM object methods.
+These COM object methods can be used to subvert different detection patterns and can also be used for lateral movement.

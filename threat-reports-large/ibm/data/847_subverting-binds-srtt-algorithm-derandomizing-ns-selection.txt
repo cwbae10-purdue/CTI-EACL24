@@ -1,0 +1,76 @@
+Today I presented at USENIX WOOT ‘13 a new vulnerability that we had found in BIND, the most popular DNS server.
+Exploiting this vulnerability allows to reduce the amount of effort required for an off-path (blind) DNS cache poisoning attack.
+The whitepaper is now publicly available, together with the presentation and ISC’s (the organization behind BIND) notification.
+In this blog post I will describe the vulnerability in a less formal fashion.
+An off-path DNS cache poisoning is an attack at which we assert that the adversary does not see the traffic between the DNS resolver and some name server (NS), but manages to poison the cache of the DNS resolver nevertheless.
+In order to do so, the attacker usually induces a request between the DNS resolver and the NS, and then races against the genuine DNS answer.
+DNS protects against this type of attack by having some random data inside each DNS query.
+The random data consists of 3 elements:
+The DNS TXID (16 bits)
+The UDP Source port (~16 bits)
+The destination IP address.
+The destination IP address can be random if the target zone has multiple authoritative name servers.
+We will see next that it indeed has some random properties.
+The resolver accepts the answer if and only if the DNS answer contains matching data, otherwise the DNS answer is simply dropped.
+This means that the attacker must first win the race against the genuine answer and then guess the random data correctly.
+Since the TXID and UDP Source port randomness are well-studied, we decided to focus on the randomness of the name server (NS) selection.
+We wanted to see how much entropy can be added if a resolver simply chooses the target NS randomly out of the authoritative name servers.
+In order to do so we gathered some statistics.
+We downloaded the root zone file and created the following CDF graph:
+From the graph we can see that almost half of the TLDs have more than 8 NSs.
+This means a truly random NS selector can bring some entropy but obviously not as much as by randomizing the DNS TXID and UDP source port.
+However, derandomizing such algorithm can make existing attacks run faster or be more efficient.
+In addition it can make an off-path attack become on-path (Man-in-the-Middle), if the attacker is on a path between the resolver and some authoritative NS, but not on a path between the resolver and other authoritative NSs.
+The goal of the resolver when facing multiple authoritative NSs is to choose the fastest one, by Round-Trip Time (RTT).
+Since the RTT changes frequently, BIND maintains a moving average for each NS IP.
+This value is first initialized with a very low value between 1 and 32 microseconds.
+Each time there is a valid DNS response available, the SRTT is updated with a weighted sum which takes into account the old SRTT value and the newly available RTT.
+The weights are 0.7 for the old SRTT and 0.3 for the RTT.
+In order to avoid starvation, any non-queried NS out of authoritative NSs thatt can be queried, is multiplied with a decay factory of 0.98.
+In error situations, such as a network timeout, the SRTT is punished with 200ms with an upper bound of 1s.
+The authoritative name servers are simply queried in the order of their SRTT values (NS with lowest SRTT is queried first).
+All of the SRTT values are stored inside a cache which is accessed by the NS IP.
+Now that we understand the SRTT algorithm, we can safely claim that If the attacker can somehow influence the SRTT algorithm, he can derandomize the NS selection.
+He can achieve this in two different approaches.
+The first one is to increase the SRTT of all name servers but one.
+The other strategy would be to lower the SRTT of the target NS.
+There are two previous works which try to tackle the NS selection.
+The first one which adheres to the first approach is [Herzberg & Shulman, 2012].
+It abuses IP fragmentation in order to cause the error operation of the SRTT algorithm.
+The second, [Petr, 2009], adheres to the second strategy.
+It uses fast spoofed responses in order to exploit the update operation of the SRTT algorithm.
+Both attacks are probabilistic (i.e.
+there is some guess work behind them so they don’t always work).
+Our attack is deterministic (i.e.
+it always succeeds), and in addition the NS which we lower its SRTT does not even see it.
+In this post I will describe a simple variant of the attack, the more sophisticated ones (but not more effective) can be found on the whitepaper.
+Our attack abuses non-open resolvers, i.e.
+NSs that do not answer on queries that they are not authoritative of.
+Most of the resolvers around the Internet are non-open.
+The attacker does not need to control them, but simply needs to know their IP address.
+We will see how the attacker can take leverage of them in order lower the SRTT value of an arbitrary NS to an arbitrary value on some target resolver.
+The attacker also hosts a malicious NS.
+We assume that this malicious NS is the authority of some domain, i.e.
+malicious.foo.
+Let’s also assume that we want to lower the SRTT value of one of the authoritative NSs of ibm.com.
+It’s important to mention that our attack does not depend on the amount of authoritative NSs the target zone has, but for the sake of simplicity, in this example, the zone has two nameservers: NS1 and NS2.
+We will lower the SRTT of NS2 on the target resolver, so it will be queried before NS1.
+The attack begins by first querying the resolver for some domain the malicious NS is authoritative of, e.g.
+666.malicious.foo.
+The resolver will eventually approach the malicious NS, which replies with a DNS delegation that contains:
+A large list of non-open resolvers
+The NS that we try to lower the SRTT of, NS2
+We assume that NS2 was already on the SRTT cache of the resolver and was contacted prior to the attack, so its SRTT is based on some real RTT value.
+Since the non-open resolvers were not on the cache, they will be added with very low values between 1 and 32 microseconds according to the SRTT algorithm.
+This means that they will be queried before NS2 by the NS selection.
+The resolver will query each of them and they will refuse since they are non-open resolvers.
+After each query the SRTT value of NS2 will be decayed, i.e.
+multiplied by 0.98.
+The resolver will time out after 30 seconds and we can force this timeout if the amount of non-open resolvers is sufficiently large.
+This means that the resolver will not even get to querying NS2 and at the end of the attack the SRTT of NS2 will be 0.98^n of its original value, where n is the amount of non-open resolvers which were queried before the timeout.
+The root cause of this vulnerability is that the resolver maintains a shared cache of SRTT values.
+The cache is shared in the sense that a malicious NS can affect SRTT values of NSs which are not related to it.
+We suggest to split the cache.
+For example, it can be split according to the currently queried zone.
+Roee leads the X-Force Application Security Research Team at IBM.
+He has vast knowledge and experience in network and mobile security.

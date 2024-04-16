@@ -1,0 +1,96 @@
+In the past years, the problem of vulnerabilities in industrial automation systems has been becoming increasingly important.
+The fact that industrial control systems have been developing in parallel with IT systems, relatively independently and often without regard for modern secure coding practices is probably the main source of ICS security problems.
+As a result of this, numerous custom solutions have appeared, including proprietary network protocols and algorithms for authentication and encryption.
+It is these solutions that were the main source of threats discovered by ICS IT security researchers.
+At the same time, we can see that industrial automation systems derive some of their problems from common technologies (examples include CodeSys Runtime, Microsoft Windows vulnerabilities, etc.
+).
+Companies attach different priority levels to such problems and the risks associated with them.
+It is obvious for everybody that vulnerability information should never be disclosed until a patch is released.
+However, many companies believe that this information should not be published even when a patch is available.
+For software developers, this is always a blow to their reputation.
+And companies that use vulnerable systems are not always physically able to install a patch or this installation may involve significant costs (interrupted operation of the systems to be updated, the cost of work related to installing updates, etc.
+).
+We assess risks based on our experience of a security system developer and supplier.
+We are convinced that it is absolutely essential to inform users of vulnerable software about the new threat and the need to update their software as soon as possible.
+This certainly does not guarantee that all users of vulnerable systems will promptly update them and the threat will go away.
+However, in our experience, if this is not done very few users update their systems in a timely manner, even if patches are available.
+We confront hundreds of thousands of new threats every day and we can see that threat actors are on a constant lookout for new attack opportunities.
+And we realize that by keeping silent about problems we give those threat actors a chance.
+This is why we decided to share information on one of our discoveries: according to our research, connecting a software license management token to a computer may open a hidden remote access channel for an attacker.
+While performing various penetration tests, Kaspersky Lab ICS CERT experts repeatedly encountered the same service on the computers of customers who used software and hardware solutions by different industrial vendors.
+The experts didn’t attach much importance to it until it was found to be vulnerable.
+The service was hasplms.exe, which is part of the SafeNet Sentinel hardware-based solution by Gemalto.
+The solution provides license control for software used by customers and is widely used in ICS and IT systems.
+The solution’s software part consists of a driver, a web application and a set of other software components.
+The hardware part is a USB token.
+The token needs to be connected to a PC or server on which a software license is required.
+Some of the USB token models are listed in the table below.
+License control solutions of this type are based on the following operating principles: a software product requires a license to operate properly; when a USB token is plugged into the computer, the software “sees” the license and becomes fully functional.
+The token must be plugged in every time the software is started and remain connected while it is in use.
+The software part of the Gemalto solution is installed once and remains functional regardless of the life cycle of the software requiring a token.
+This Gemalto solution is used in products by other software vendors, including such companies as ABB, General Electric, HP, Cadac Group, Zemax and many other organizations, the number of which, according to some estimates, reaches 40 thousand.
+According to the results of independent research conducted by Frost and Sullivan in 2011, SafeNet Sentinel, which is currently owned by Gemalto, has a 40% market share for license control solutions in North America and over 60% in Europe.
+The number of end users who use Gemalto solutions is not known.
+However, if each company has 100 clients, the number of users is in the millions.
+Unfortunately, few people realize that connecting a token to a computer to control licenses may not be a safe thing to do.
+From researchers’ viewpoint, hasplms.exe exhibited a rather curious behavior in the system: it could be remotely accessed and communicated with on open port 1947.
+The protocol type was defined by the network packet header – either HTTP or a proprietary binary protocol was used.
+The service also had an API of its own, which was based on the HTTP protocol.
+Analyzing the service was made more difficult by the fact that the binary file used a VMProtect-type protector and generated its bytecode from the original Gemalto code.
+Due to this, it was decided to use fuzzing as the main tool for analyzing the vulnerable service’s behavior.
+First of all, we looked at the localization function – the user could download language packs consisting of two files, one of which was localize.xml.
+The second file, in HTML format, had parameters, one of which turned out to be vulnerable to buffer overflow.
+It would have been a simple vulnerability, if it wasn’t for one curious detail: although, as mentioned above, a protector was used, for some reason the developers did not use any of the classical mechanisms providing protection from such binary vulnerabilities (such as Stack Canary, Stack Cookie, ASLR, etc.).
+As a result, a simple buffer overflow could allow an attacker to execute arbitrary code on the remote system.
+Note that such software development flaws are very rare in modern solutions.
+As a rule, secure coding practices are implemented when developing serious commercial products (such as SDL – security development lifecycle), which means that security is designed into applications at the development stage, rather than being implemented as an additional option.
+This attack vector can be used without LPE (local privilege escalation) – the vulnerable process runs with SYSTEM privileges, enabling malicious code to run with the highest privileges.
+Sample script loading a language pack file
+Result of Buffer Overflow exploitation, leading to RCE
+The vulnerability was assigned the number CVE-2017-11496.
+This was just one of the vulnerabilities we found.
+And the overall result of our research was disquieting.
+In late 2016 – early 2017, 11 vulnerabilities were identified: two allowed remote code execution if exploited and nine were denial-of-service vulnerabilities.
+By June 2017, Kaspersky Lab ICS CERT had identified three more vulnerabilities: an XML bomb and two denial-of-service flaws, one of which could potentially lead to remote execution of arbitrary code.
+In total, 14 vulnerabilities have been identified, all quite dangerous (for example, exploitation of each of the Remote Execution of Arbitrary Code type vulnerabilities is automatically performed with SYSTEM privileges, i.e., the highest privilege level in Windows).
+All attack vectors affecting the vulnerable service were multi-stage.
+We promptly sent all information on the vulnerabilities identified to Gemalto.
+The vulnerabilities were assigned the following respective CVE numbers:
+CVE-2017-11496 – Remote Code Execution
+CVE-2017-11497 – Remote Code Execution
+CVE-2017-11498 – Denial of Service
+CVE-2017-12818 – Denial of Service
+CVE-2017-12819 – NTLM hash capturing
+CVE-2017-12820 – Denial of Service
+CVE-2017-12821 – Remote Code Execution
+CVE-2017- 12822 – Remote manipulations with configuration files
+In addition to vulnerability descriptions, we sent a description of peculiar functionality to Gemalto.
+Kaspersky Lab ICS CERT experts have found that hasplms.exe has some rather unusual functionality:
+When a Gemalto USB token is first connected to a computer (even if the active session is blocked), a driver and service that accepts network connections on port 1947 are installed if the Internet access is available.
+If a driver is manually downloaded from the Gemalto website and installed, a driver and service that accept network connections on port 1947 are installed and port 1947 is added to Windows firewall exceptions.
+If Gemalto software is installed as part of a third-party installation file, port 1947 is also added to Windows firewall exceptions.
+There is an API function which enables or disables the administrative panel in the web interface, making it possible to modify the settings of the program part of the SafeNet Sentinel hardware-based solution.
+The panel is available by default on the localhost IP address – 127.0.0.1.
+The API can be used to change the internal proxy settings for updating language packs.
+After changing the proxy server, the service’s internal logic can be used to obtain the NTLM hash of the user account under which the hasplms.exe process is running (i.e., SYSTEM).
+This appears to be an undocumented feature and can be used for stealthy remote access.
+This means that remote attackers can use these capabilities to gain access to the administrative panel of the Gemalto software, carry out attacks with system user privileges and conceal their presence after completing these attacks.
+As mentioned above, Gemalto representatives were informed of this attack vector.
+Solutions, technologies or individual software modules used by many third-party vendors often do not undergo proper security testing.
+This potentially opens up new attack vectors.
+At the same time, closing vulnerabilities in such products, which are often used, among other applications, in banking and industrial control systems, is not always a smooth process: for some reason, vendors of such systems are in no hurry to notify their users of problems identified in their products.
+In early 2017, we sent information about 11 vulnerabilities we had identified to Gemalto.
+It was only in late June that, in response to our repeated requests, the vendor informed us that a patch had been released and information about the vulnerabilities that had been closed, as well as a new version of the driver, could be found on the company’s internal user portal.
+On June 26, we informed Gemalto of the suspicious functionality and of three more vulnerabilities.
+This time, things went quicker: on July 21 the vendor released a private notice on a new driver version – without any mention of the vulnerabilities closed.
+According to Gemalto, the company has notified all of its customers of the need to update the driver via their account dashboards.
+However, this was apparently not sufficient: after we published information about the vulnerabilities identified, we were contacted by several developers of software which uses hasplms.
+It became clear from our communication with them that they were not aware of the problem and continued to use versions of the product with multiple vulnerabilities.
+We urge those users and companies that use Gemalto’s SafeNet Sentinel to install the latest (secure) version of the driver as soon as possible or contact Gemalto for instructions on updating the driver.
+We also recommend closing port 1947, at least on the external firewall (on the network perimeter) – but only as long as this does not interfere with business processes.
+In the case of installing the driver via Microsoft Windows Update servers, we recommend checking hasplms.exe to make sure it is the latest version.
+If an obsolete version is used, it is crucial to install the latest (secure) version of the driver from the vendor’s website or contact Gemalto for instructions on updating the driver.
+We also recommend closing port 1947, at least on the external firewall (on the network perimeter) – but only as long as this does not interfere with business processes.
+This will help to reduce the risk of the vulnerabilities being exploited.
+Some software vendors who use third-party solutions as part of their products may be very thorough about the security of their own code, while leaving the security of third-party solutions to other companies (the vendors of these solutions).
+We very much hope that most companies act responsibly both with respect to their own solutions and with respect to third-party solutions used in their products.

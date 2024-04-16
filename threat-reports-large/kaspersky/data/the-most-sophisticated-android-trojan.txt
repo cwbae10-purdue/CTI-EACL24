@@ -1,0 +1,97 @@
+Recently, an Android application came to us for analysis.
+At a glance, we knew this one was special.
+All strings in the DEX file were encrypted, and the code was obfuscated.
+The file turned out to be a multi-functional Trojan, capable of the following: sending SMS to premium-rate numbers; downloading other malware programs, installing them on the infected device and/or sending them further via Bluetooth; and remotely performing commands in the console.
+Now, Kaspersky Labs products detect this malicious program as Backdoor.AndroidOS.Obad.a.
+Malware writers typically try to make the codes in their creations as complicated as possible, to make life more difficult for anti-malware experts.
+However, it is rare to see concealment as advanced as Odad.as in mobile malware.
+Moreover, this complete code obfuscation was not the only odd thing about the new Trojan.
+The creators of Backdoor.AndroidOS.Obad.a found an error in the popular DEX2JAR software this program is typically used by analysts to convert APK files into the more convenient Java Archive (JAR) format.
+This vulnerability spotted by the cybercriminals disrupts the conversion of Dalvik bytecode into Java bytecode, which eventually complicates the statistical analysis of the Trojan.
+Also, the cybercriminals found an error in the Android operating system which relates to the processing of the AndroidManifest.xml file.
+This file exists in every Android application and is used to describe the applications structure, define its launch parameters, etc.
+The malware modifies AndroidManifest.xml in such a way that it does not comply with Google standards, but is still correctly processed on a smartphone thanks to the exploitation of the identified vulnerability.
+All of this made it extremely difficult to run dynamic analysis on this Trojan.
+The creators of Backdoor.AndroidOS.Obad.a also used yet another previously unknown error in the Android operating system.
+By exploiting this vulnerability, malicious applications can enjoy extended Device Administrator privileges without appearing on the list of applications which have such privileges.
+As a result of this, it is impossible to delete the malicious program from the smartphone after it gains extended privileges.
+Finally, Backdoor.AndroidOS.Obad.a does not have an interface and works in background mode.
+In this malicious application, all external methods are called via reflection.
+All strings are encrypted, including the names of classes and methods.
+Each class has a local descriptor method which obtains the string required for encryption from the locally updated byte array.
+All strings are hidden in this array.
+The most important strings containing the C&C address undergo an additional stage of decryption.
+For this, the Trojan first checks if Internet access is available, then downloads the page facebook.com.
+It extracts a certain element of that page, and uses it as decryption key.
+Thus, Backdoor.AndroidOS.Obad.a can only decrypt C&C addresses when Internet access is available.
+This feature further complicates the analysis of this piece of malware.
+Some strings are additionally encrypted.
+The local decryptor receives a coded string in Base64 and decodes it.
+The decoded string is first decrypted with XOR operation with the MD5 of the key, then additionally decrypted with the MD5 of the string “UnsupportedEncodingException”.
+To obtain the MD5 of the key, the same local decryptor decrypts yet another string, which is then used as an argument for MD5.
+In this way, key strings, such as the name of the function SendTextMessage, are protected.
+With the decryption results on hand, we were able to reproduce the applications working algorithm.
+Immediately after it starts, the application attempts to obtain Device Administrator privileges.
+As we wrote above, one feature of this Trojan is that the malicious application cannot be deleted once it has gained administrator privileges: by exploiting a previously unknown Android vulnerability, the malicious application enjoys extended privileges, but is not listed as an application with Device Administrator privileges.
+We have already informed Google about the Device Administrator vulnerability in Android.
+With the extended Device Administrator Privileges, the Trojan can block the devices screen for up to 10 seconds.
+This typically happens after the device is connected to a free Wi-Fi network or Bluetooth is activated; with a connection established, the Trojan can copy itself and other malicious applications to other devices located nearby.
+Its possible that this is how Backdoor.AndroidOS.Obad.a tries to prevent the user from discovering its malicious activity.
+Also, the Trojan attempts to obtain root privileges by performing the command su id.
+The information about whether superuser privileges have been successfully obtained is sent to the C&C server.
+Obtaining root privileges can put cybercriminals in an advantageous position when executing commands on the console remotely.
+After the first launch, the malicious application collects the following information and sends it to the C&C server at androfox.com:
+MAC address of the Bluetooth device
+Name of operator
+Telephone number
+IMEI
+Phone users account balance
+Whether or not Device Administrator privileges have been obtained
+Local time
+The collected information is sent to the server in the form of an encrypted JSON object.
+This information is sent to the current C&C server every time a connection is established.
+In addition the malicious program reports its current status to its owner: it sends the current table of premium numbers and prefixes to which to send text messages (the aos parameter), the task list (task), and the list of C&C servers.
+During the first C&C communication session, it sends a blank table and a list of C&C addresses that were decrypted as described above.
+During the communication session, the Trojan may receive an updated table of premium numbers and a new list of C&C addresses.
+In response, the C&C server sends another JSON object which might look like this after decryption:
+{"nextTime":1,"conf":{"key_con":"oKzDAglGINy","key_url":"3ylOp9UQwk","key_die":"ar8aW9YTX45TBeY","key_cip":"lRo6JfLq9CRNd6F7IsZTyDKKg8UGE5EICh4xjzk"}}
+NextTime is the next connection to a C&C server
+conf are configuration strings.
+Configuration strings can contain instructions to connect to new C&C servers, tables of numbers with prefixes and keys with destinations for text messages, and new tasks with parameters.
+Besides, keys for traffic encryption (key_cip) may be sent to conf.
+Cybercriminals can also use text messages to control the Trojan.
+Configuration strings may also contain key strings (key_con, key_url, key_die) that the Trojan will look for in incoming text messages, and perform certain actions accordingly.
+Each incoming text message is analyzed for the presence of any of these keys.
+If a key is found, the appropriate action is performed:
+key_con: immediately establish a C&C connection;
+key_die: delete tasks from the database;
+key_url: connect to a new C&C server.
+This instruction must be followed by the new C&C address.
+This way the cybercriminal can create a new C&C server and send its address to infected devices in text messages containing this key.
+This will make all infected devices reconnect to the new server.
+If a send text message instruction key is found in conf, the Trojan sends a message to the numbers provided by C&C.
+Thus, the infected devices do not even need to have an Internet connection to receive an instruction to send charged text messages.
+The Trojan receives instructions from the C&C and records them in the database.
+Each instruction recorded in this database contains the instructions sequence number; the time when it must be executed, as ordered by C&C; and parameters.
+Command list:
+Send text message.
+Parameters contain number and text.
+Replies are deleted.
+PING.
+Receive account balance via USSD.
+Act as proxy (send specified data to specified address, and communicate the response).
+Connect to specified address (clicker).
+Download a file from the server and install it.
+Send a list of applications installed on the smartphone to the server.
+Send information about an installed application specified by the C&C server.
+Send the users contact data to the server.
+Remote Shell.
+Executes commands in the console, as specified by the cybercriminal.
+Send a file to all detected Bluetooth devices.
+This command list for Obad.a enables the malicious program to spread files via Bluetooth.
+The C&C server sends the Trojan receives the local address of the file to be downloaded to the infected devices.
+On a C&C command, the malicious program scans for nearby devices with enabled Bluetooth connection, and attempts to send the downloaded file to them.
+Despite such impressive capabilities, Backdoor.AndroidOS.Obad.a is not very widespread.
+Over a 3-day observation period using Kaspersky Security Network data, Obad.a installation attempts made up no more than 0.15% of all attempts to infect mobile devices with various malware.
+To conclude this review, we would like to add that Backdoor.AndroidOS.Obad.a looks closer to Windows malware than to other Android Trojans, in terms of its complexity and the number of unpublished vulnerabilities it exploits.
+This means that the complexity of Android malware programs is growing rapidly alongside their numbers.

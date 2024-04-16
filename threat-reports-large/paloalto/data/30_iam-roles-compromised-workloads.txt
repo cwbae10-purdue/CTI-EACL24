@@ -1,0 +1,208 @@
+In the spring of 2020, the Unit 42 Cloud Threat Intelligence Team was approached by a customer who wanted the group to test the defenses of their Amazon Web Services (AWS) infrastructure.
+The customer ran thousands of workloads, hundreds of Amazon Simple Storage Service (S3) buckets and maintained cloud native databases with over 500 active development users and nearly 1,000 roles across four AWS accounts.
+For this Red Team exercise, Unit 42 researchers were provided limited information about the internal architecture and were given limited access to the environment itself.
+The researchers were able to gain privileged access to two AWS accounts using two different identity and access management (IAM) misconfigurations.
+The misconfigurations allowed the researchers to gain access to the cloud as anonymous users and then pivot to source code repositories hosted outside the cloud.
+The first identified misconfiguration (see “Risky Combination of Policies”) exploited a risky combination of policies that allow users with an IAM role to elevate to AdministratorAccess.
+When hundreds of users are given this role, this opens up many potential avenues for exploiting this vulnerability to gain AdministratorAccess and compromise the entire cloud.
+The second identified misconfiguration (see “Overly Permissive IAM Trust Policy”) exploits an overly permissive IAM trust policy that allows unauthenticated users to gain access to internal resources anonymously.
+The researchers successfully moved laterally inside the cloud to eventually obtain private keys for certificates, database credentials and repository source code.
+After analyzing the severity of overly permissive IAM trust policies, Unit 42 researchers then conducted reconnaissance research on GitHub to look for AWS accounts with misconfigured IAM trust policies.
+The research found misconfigured accounts belonging to billion-dollar organizations – a U.S. pharmaceutical company and a financial company based in Brazil.
+All of these misconfigurations could lead to major data breaches that leak thousands of sensitive details on cloud workloads, such as virtual machine (VM) snapshots, database tables and S3 buckets.
+Details of the Red Team exercises and GitHub reconnaissance research can be found in the Unit 42 Cloud Threat Report, 2H 2020 (CTR).
+This blog covers the techniques and processes used to identify the attack paths in the cloud.
+The blog analyzes the root cause of risky combinations of IAM policies.
+Protection and remediation strategies specifically for the identified misconfigurations are also included.
+Unit 42 researchers note that all misconfigurations found during the exercise were customer misconfigurations, not AWS platform security misconfigurations.
+AWS has tried its best to detect and alert users when an IAM trust policy is misconfigured.
+However, while IAM trust policies are secure by default, users can still override the policies and introduce insecure configurations.
+AWS also offers its free IAM Access Analyzer to help identify unintended access to resources and data that are shared with an external entity.
+AWS IAM is one of the most complex services in any cloud environment.
+It governs the interaction between every user, service and resource.
+While cloud IAM services are securely designed by the cloud service providers (CSPs), like AWS, if misconfigured by the customer or misused, the damage may impact multiple services and resources.
+For example, the Capital One data breach in 2019 cost the company $80 million due to overly permissive IAM configurations that allowed the attacker to move laterally from AWS Web Application Firewall (WAF) to Amazon Elastic Compute Cloud (EC2) and S3 buckets.
+Knowing how critical IAM services and their configurations can be, when Unit 42 researchers considered how to approach the customer’s requested Red Team exercise, we decided to start with IAM.
+We tested the customer’s cloud environments by poking at different IAM features.
+Two independent IAM Role-related misconfigurations were identified in two different AWS accounts that allowed researchers to successfully compromise their cloud environments.
+The next section provides a primer to AWS IAM Roles.
+An AWS IAM Role is an IAM identity that provides temporary access to cloud users or services.
+The concept of the IAM Role is based on Role-Based Access Control.
+Users who need the same access permissions are assigned the same role, and multiple roles may be assigned to a single user.
+In AWS, a principal (meaning a user or service) assigned a role can obtain a short-term access token by “assuming” the role.
+The token gives the principal access to authorized resources.
+Each token can be set to expire between 15 minutes and 12 hours from the time it is granted.
+Once a token has expired, a new token needs to be requested to continue the access.
+Common use cases for IAM roles include:
+Users who need temporary access to certain cloud resources can be associated with an IAM Role that grants specific permissions.
+Cloud services like EC2 or AWS Lambda that need to interact with certain cloud resources can be attached with IAM roles.
+Organizations that have existing Identity Providers (IdP) such as Azure Active Directory (AD) or OpenID can use IAM roles to grant cloud access to users managed by the IdP.
+Existing users in an AD can simply assume a role to access the cloud without having user accounts in the cloud.
+Users or services from one cloud account can be given cross-account access to another.
+For example, suppose a group of developers in Cloud A need to collaborate with developers in Cloud B using AWS CodeBuild.
+In that case, an IAM role can be created in Cloud B to grant access to developers in Cloud A.
+Unit 42 researchers were provisioned with the developer’s role in the customer’s development environment to emulate insider attacks and/or attacks caused by a credential leak.
+The environment hosted multiple replicas of the production infrastructure for quality assurance (QA) purposes and was actively used by hundreds of developers.
+Unit 42 researchers discovered that users with the developer role could obtain AdministratorAccess by chaining a set of permissions.
+AdministratorAccess in AWS is the “key to the kingdom” that allows attackers to launch any attack against an organization, such as stealing sensitive data or wiping out the entire infrastructure.
+Although this development environment had no production workloads, an adversary could use the information observed in the development environment to pivot to the production environment.
+Researchers found credentials, code repositories and even misconfigurations shared in both environments.
+There were also IAM roles in the production account that allowed users in the development account to assume the role, meaning that attackers in the development account could obtain access tokens in the production account though the AssumeRole.
+AssumeRole is a unique AWS role that allows cross-account access.
+One IAM permission that led to this vulnerability was IAM:PassRole.
+PassRole is a feature that allows a principal to attach an IAM role to another service.
+For example, a user with PassRole permission can create an EC2 instance and attach a role to a VM.
+This VM then can use the permissions associated with the role to access AWS resources.
+IAM PassRole permission is necessary when a principal needs to use an AWS service to manage other AWS resources.
+AWS Services such as EC2, Lambda, Glue and ECS can all be attached with IAM roles to perform specific actions.
+Because the PassRole feature allows a principal to grant permissions to cloud services, it can be abused if its permission policy is not restricted.
+A malicious principal can pass permissions that it doesn’t have to a service and exploit this service to perform malicious activities on its behalf.
+The IAM roles that a principal can pass depend on the principal’s permissions policy and the IAM role’s trust policy.
+Permissions policy restricts the IAM roles that the principal can pass and the services that the roles can be passed to.
+Trust policy restricts the services the role can be attached to.
+In Figure 1 below, on the left is a permissions policy that allows a principal to pass roles with specific names (role/DevOpsEC2-* and role/DevOpsECS-*) to a list of services (ec2.amazonaws.com and ecs.amazonaws.com).
+On the right is an IAM role’s trust policy.
+In this case, it allows only an EC2 service to assume the role.
+A principal can pass a role to a target service only when all the following conditions are met:
+The principal’s permissions policy has IAM:PassRole permission.
+The role’s name matches the pattern defined in the permissions policy’s resource field.
+The target service is listed in the permissions policy’s condition field.
+If there is no condition field, the principal can pass a role to any service.
+The role’s trust policy allows the target service to assume the role.
+If the role is more privileged (has more allowed permissions) than the principal, the principal can access the service that the role is attached to, then there is a potential privilege escalation.
+Figure 2 illustrates how Unit 42 researchers discovered, exploited and eventually gained AdministratorAccess in the customer’s AWS cloud environment.
+Researchers identified and confirmed the step-by-step actions an attacker could take to compromise the environment.
+1.
+An attacker steals a credential from an employee through phishing (e.g.
+developer role session token).
+The attacker finds out the permissions of the token by using the AWS IAM API or enumerating the services.
+2.
+The attacker discovers that the token has IAM:PassRole permission and there is no restriction on the roles that can be passed.
+The attacker can pass ANY role.
+3.
+The attacker checks the existing roles and their trust policies.
+Normally, each role can only be assumed by a service.
+The attacker needs to find roles assumable by services to access.
+The attacker can move forward after finding a subset of roles that meet the conditions.
+4.
+The attacker checks the permissions policies of the roles that can be exploited.
+If any of these roles are more privileged (i.e.
+have more permissions) than the attacker’s current identity, the attacker can pass this role to a service and gain the elevated privilege from the service.
+The attacker finds multiple roles with AdministratorAccess that can be assumed by EC2.
+5.
+The attacker creates a new EC2 instance and attaches EC2ManagerRole to the VM.
+The attacker then logs in to the VM and calls the metadata service API at http://169.254.169.254/latest/meta-data to retrieve the session token.
+This session token gives the attacker AdministratorAccess to the entire cloud.
+The steps above illustrate just one possible attack path using a misconfigured IAM:PassRole.
+Unit 42 researchers identified multiple IAM roles and services in the customer’s environment that could be exploited the same way.
+This “class” of attack path was exploitable because the permissions policy of the developer’s role had no restriction on the PassRole action (Figure 3).
+Furthermore, AdministratorAccess was given to multiple IAM roles that could be exploited.
+Considering that hundreds of developers are using this IdP role daily, there is a considerable chance that, had one of the developers’ laptops been hacked, the outcome would have been damaging.
+With AdministratorAccess, a malicious actor could exfiltrate sensitive data, disrupt the business operation or lock down the entire infrastructure with ransomware.
+Upon identifying the issues, Unit 42 researchers immediately worked with the customer to remediate the misconfiguration and review the logs.
+Fortunately, the forensic work indicated that no malicious actors had successfully exploited this misconfiguration.
+Unit 42 researchers found the customer’s production AWS account ID from the customer’s GitHub page.
+The GitHub page hosts instructions and scripts used for integrating with the customer’s products.
+With the account ID, researchers were able to enumerate the misconfigured IAM Roles by attempting to assume a list of role names.
+It did not take long to find a misconfigured role that can be assumed anonymously.
+Figure 7 illustrates how researchers identified and confirmed the step-by-step actions an attacker could take to compromise the environment:
+An attacker obtains a list of role names (e.g., prodApp-nat, prodApp-app2-nat) through reconnaissance and enumeration.
+Because the role names are not long and somewhat predictable, it is feasible to find a misconfigured role through enumeration.
+2.
+The attacker obtains a temporary access token by assuming the misconfigured role.
+With the access token, the attacker can enumerate the permissions and find the resources it can access.
+3.
+The attacker can see all the EC2 instances and read their metadata.
+From the startup script in the metadata, the attacker can obtain information such as the Docker images the VM deploys, the database that the VM queries and the S3 buckets the VM pulls data from.
+4.
+The attacker then accesses the S3 buckets found in the EC2 metadata and downloads all the data.
+There are certificate keys, multiple shell scripts used for deploying applications and a few encrypted files containing credentials.
+5.
+The attacker uses the AWS KMS decrypt capability available to the role to decrypt the ciphertext, now giving the attacker plaintext access credentials.
+6.
+After obtaining the plaintext credentials, the attacker can move laterally and access the Docker Hub repository, Splunk server and databases.
+This misconfigured IAM role was a critical vulnerability because it allowed an unauthenticated attacker to exploit it remotely.
+With the private keys for certificates, attackers could launch man-in-the-middle attacks or impersonate the company’s official sites.
+With source code repository access, attackers could leak the company’s intellectual properties, find vulnerabilities or even inject malware into the source code.
+Fortunately, the forensic work indicated that no malicious actors had successfully exploited this misconfiguration.
+Since it is possible to check the IAM trust policy’s configuration remotely and anonymously, Unit 42 researchers were curious to discover how common the misconfiguration is.
+The researchers’ approach was to use publicly available data in GitHub to conduct reconnaissance operations.
+Searching for misconfigured IAM roles is similar to searching for exposed databases that allow logging in without a password.
+Instead of scanning for IP addresses and ports, Unit 42 researchers performed a scan for AWS account IDs.
+Instead of searching for database users who can be authenticated without a password, researchers searched for IAM roles that can be assumed anonymously.
+If the name of a misconfigured role is correctly guessed, researchers (or attackers) could assume the role and obtain an access token.
+Overall, Unit 42 researchers analyzed 283,751 files across 145,623 repositories and identified 32,987 confirmed AWS account IDs and 68,361 role names.
+Figure 13 illustrates the research methodology:
+Unit 42 researchers used GitHub API to search for files that may contain Amazon Resource Names (ARNs) or AWS IAM Role Names.
+Researchers used all possible resource names listed in the IAM document as keywords to query the GitHub API.
+For example, the keyword arn:aws:amplify matches an AWS Amplify ARN and the keyword arn:aws:cloud9 matches a AWS Cloud9 ARN.
+IAM Role Name may also appear in an IAM ARN such as arn:aws:iam:123456789012:role/MyTestRole.
+Because AWS operates in 3 different partitions, different partition names (aws, aws-cn, aws-us-gov) were also used in the search keywords.
+Once all the files had been downloaded, Unit 42 researchers first extracted potential account IDs and role names using regular expressions.
+If a file was in AWS CloudFormation or Terraform format, the file was further parsed into a JSON object and had all the property names analyzed.
+Due to the popularity of IaC templates, more than 70% of the downloaded files were IaC, which made the analysis easier and more accurate.
+Because not all the extracted account IDs are valid, researchers used the AWS Management Console page to validate each account ID.
+AWS creates a console page at https://account_alias_or_id.signin.aws.amazon.com/console/ for each active account.
+If an account ID exists and is active, sending an http request to this URL will receive an HTTP 200 response.
+AWS accounts in aws-cn and aws-us-gov partitions can also be tested similarly using URLs https://account_alias_or_id.signin.amazonaws.cn/console/ and https://account_alias_or_id.signin.amazonaws-us-gov.com/console/, respectively.
+4.
+Finding existing role names in an AWS account is similar to brute-forcing passwordless user names in a database.
+Thanks to the technique published by Rhino Security Labs, it is possible to check if a role name exists in an AWS account without leaving any trace in the target account.
+The technique abuses the AWS IAM trust policy validator to check if an IAM role specified in the Principal field exists.
+Unit 42 researchers enumerated each verified account ID with a subset of role names identified in Step 2.
+Role names found in the same GitHub repository as the account ID were tested first, followed by the top 500 most common IAM role names found in GitHub.
+5.
+To check if an existing IAM role can be assumed anonymously, Unit 42 researchers attempted to assume each role using the assume-role command.
+If the role can be assumed anonymously, a secret key and session token set will be returned.
+Note that this step leaves logs at the target account regardless of whether the role is successfully assumed.
+Within the misconfigured accounts, hundreds of thousands of EC2 snapshots, thousands of EC2 volumes and hundreds of S3 buckets were found.
+The resources leaked from a misconfigured IAM role depended on the permission policy of the role itself.
+Unit 42 researchers discovered misconfigured DevOps roles that had near system administrator permission.
+Also found were misconfigured DBAccess roles that had access to database services such as Amazon DynamoDB and Amazon Redshift.
+Finally, there were LambdaExecution roles that allowed only basic Get and Invoke actions on Lambda functions.
+Most notably, the research found misconfigured accounts belonging to billion-dollar organizations – a U.S. pharmaceutical company and a financial company based in Brazil.
+Regardless of the types of resources these misconfigured roles could access, they all leaked information that malicious actors can exploit.
+A compromised cloud account could be much worse than a compromised cloud host because a cloud account may have access to hundreds or thousands of cloud resources.
+The seemingly endless resources in the cloud make the infrastructure an attractive target.
+Even an account with only LambdaExecution permission could impose significant financial impact by invoking a large number of function calls.
+Humans are good at many things, but identifying risky permissions across hundreds of identities is a task best left to automation.
+Research has shown that overly permissive or stale accounts exist in almost every cloud environment.
+While cloud providers deliver a good baseline for implementing a least-privileged approach to permissions, this breaks down as cloud adoption scales across multiple providers.
+The complex and dynamic nature of IAM makes it difficult to stay in a secure state continuously.
+A secure IAM today may become insecure tomorrow when a new role is added or an existing policy is edited.
+Nevertheless, good IAM hygiene can also greatly reduce risk.
+Unit 42 researchers recommend the following best practices:
+Granular access control on sensitive data and workloads (least privilege): Grant only absolutely needed permissions to users and services.
+A few examples: If a service only needs to access a few files in an S3 bucket, don’t grant the service access to the entire bucket.
+If a service only needs to decrypt/encrypt data using a particular key in the KMS, don’t grant the service access to the entire KMS.
+If a sensitive file in an S3 bucket or a key in KMS is only accessed by a particular service, block all traffic from sources other than the service.
+If a service only needs to access a few files in an S3 bucket, don’t grant the service access to the entire bucket.
+If a service only needs to decrypt/encrypt data using a particular key in the KMS, don’t grant the service access to the entire KMS.
+If a sensitive file in an S3 bucket or a key in KMS is only accessed by a particular service, block all traffic from sources other than the service.
+Harden IAM Role’s Trust Policy: Never grant anonymous access (“Principal” : { “AWS” : “*” }) to any IAM role.
+Make role names difficult to guess by adding random strings.
+If the role is shared across AWS accounts, enforce unguessable external ID as another layer of protection.
+If a role is only assumed by users or services from specific IP addresses, enforce a condition on the principal’s source IPs.
+Harden the IAM:PassRole Permission: When granting the IAM:PassRole permission in a policy, always enforce restrictions on: The role names that the principal can pass.
+The services that the principal can pass a role to.
+The role names that the principal can pass.
+The services that the principal can pass a role to.
+Enable MFA: Multi-factor authentication (MFA) provides another layer of security in case the primary password is compromised.
+MFA can be enabled for both users and IAM roles.
+Automate Credential Rotation: Implement an automated process to rotate credentials used in the cloud environment.
+Rotating credentials periodically can mitigate the risk of credential leak.
+Harden the IAM:PassRole Permission: When granting the IAM:PassRole permission in a policy, always enforce restrictions on: The role names that the principal can pass.
+The services that the principal can pass a role to.
+The role names that the principal can pass.
+The services that the principal can pass a role to.
+Create groups or roles with granular permissions: Users in the same project tend to have similar permission requirements and can be placed in the same group or role to simplify the permission management.
+However, if there are smaller teams working on different parts of the project, roles or groups with smaller permission boundaries should be created for each team.
+Monitor IAM APIs: All major cloud service providers have services to monitor IAM usage.
+These services help identify abnormal activities, such as brute-force attacks and logging from unrecognized devices or locations.
+Leverage cloud native security platforms: Managing a large number of privileged users with access to an ever-expanding set of sensitive resources can be challenging.
+On top of that, cloud resources themselves have permission sets that need to be managed.
+Cloud native security platforms (CNSPs) like Prisma Cloud help leverage the identity of cloud resources to enforce security policies and ensure secure user behavior across multiple cloud environments.
+Download the Unit 42 Cloud Threat Report, 2H 2020 for more research and best practices to implement in your organization.
+Highlights from the Unit 42 Cloud Threat Report, 2H 2020
+Unit 42 Cloud Threat Report: CSP Findings on Logging, Encryption and Exposed Services
+Attend a Unit 42 Cloud Threat Report Briefing Session

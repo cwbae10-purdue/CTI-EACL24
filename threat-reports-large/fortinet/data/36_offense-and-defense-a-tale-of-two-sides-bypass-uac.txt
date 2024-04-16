@@ -1,0 +1,156 @@
+FortiGuard Labs Threat Analysis Report
+This is the 2nd installment of the “Offense and Defense – A Tale of Two Sides” blog series, where we focus on different tactics and techniques malicious actors use to complete their cyber missions—and how organizations can detect and ultimately prevent them.
+You can check out the blog series at Offense and Defense – A Tale of Two Sides: Group Policy and Logon Scripts, Offense and Defense – A Tale of Two Sides: PowerShell, and Offense and Defense – A Tale of Two Sides: OS Credential Dumping.
+In this month’s “Offense and Defense – A Tale of Two Sides” blog, we will be walking through a new technique in sequence as it would happen in a real attack.
+Since I discussed downloading and executing a malicious payload with PowerShell last time, the next logical step is to focus on a technique for escalating privileges, which is why we will be focusing on the Bypass User Account Control (UAC) attack technique.
+Once the bad guys have managed to breach defenses and get into a system, they need to make sure they have the right permissions to complete whatever their tasks might be.
+One of the first obstacles they typically face is trying to bypass the UAC.
+It’s important to note that, while very common, Bypass UAC is a much weaker version of a Local Privilege Escalation attack.
+There are much more sophisticated exploits in the wild that allow for sandbox escapes or becoming a privileged system using a device owned by a least privileged user.
+But we will save those other topics for another day.
+Before we start, we will all need a basic understanding of how UAC works.
+UAC is an access control feature introduced with Microsoft Windows Vista and Windows Server 2008 (and is included in pretty much all Windows versions after that).
+The main intent of UAC is to make sure applications are limited to standard user privileges.
+If a user requires an increase in access privileges, the administrator of the device (usually the owner) needs to authorize that change by actively selecting a prompt-based query.
+We all should be familiar with this user experience.
+When additional privileges are needed, a pop-up prompt asks, “Do you want to allow the following program to make changes to this computer?” If you have the full access token (i.e.
+you are logged in as the administrator of the device, or if you are part of the administrator’s group), you can select ‘yes’, and be on your way.
+If you’ve been assigned a standard user access token, however, you will be prompted to enter credentials for an administrator who does have the privileges.
+NOTE: When you first log in to a Windows 10 machine as a non-admin user, you are granted a standard access token.
+This token contains information about the level of access you are being granted, including SIDs and Windows privileges.
+The login process for an administrator is similar.
+They get the same standard token as the non-admin user, but they also get an additional token that provides admin access.
+This explains why an administrative user is still prompted with the UAC consent prompt even though they have appropriate access privilege.
+It’s because the system looks at the standard access token first.
+If you give your consent by selecting yes, the admin access token kicks in and you are on your merry way.
+The goal for this feature was that it would limit accidental system changes and malware from compromising a system, since elevating privilege required an additional user intervention to verify that this change is what the user was intending to do, and that only trusted apps would receive admin privileges.
+One other item that is important to understand is that Windows 10 protects processes by marking them with certain integrity levels.
+Below are the highest and lowest integrity levels.
+High Integrity (Highest) – apps that are assigned this level can make modifications to system data.
+Some executables may have auto-elevate abilities.
+I will dive into this later.
+Low Integrity (Lowest) - apps that perform a task that could be harmful to the operating system
+There is much more information available out there for the UAC feature, but I think what we have covered gives us the background we need to proceed.
+The UAC feature seems like a good measure for preventing malware from compromising a system.
+But unfortunately, it turns out that criminals have discovered how to bypass the UAC feature, many of which that are pretty trivial.
+Many of them work on the specific configuration setting of UAC.
+Below are a few examples of UAC bypass techniques that have been built into the opensource Metasploit tool to help you test your systems.
+UAC protection bypass using Fodhelper or Eventvwr and the Registry Key
+UAC protection bypass using Eventvwr and the Registry Key
+UAC protection bypass using COM Handler Hijack
+The first two take advantage of auto-elevation within Microsoft.
+If a binary is trusted – meaning it has been signed with a MS certificate and is located in a trusted directory, like c:\windows\system32 – the UAC consent prompt will not engage.
+Both Fodhelper.exe and Eventvwr.exe are trusted binaries.
+In the Fodhelper example, when that executable is run it looks for two registry keys to run additional commands.
+One of those registry keys can be modified, so if you put custom commands in there they run at the privilege level of the trusted fodhelper.exe file.
+It’s worth mentioning that these techniques only work if the user is already in the administrator group.
+If you’re on a system as a standard user, it will not work.
+You might ask yourself, “why do I need to perform this bypass if I’m already an admin?” The answer is that if the adversary is on the box remotely, how do they select the yes button when the UAC consent prompt appears?
+They can’t, so the only way around it is to get around the prompt itself.
+The COM handler bypass is similar, as it references specific registry (COM hander) entries that can be created and then referenced when a high integrity process is loaded.
+On a side note, if you want to see which executables can auto-elevate, try using the strings program which is part of sysinternals:
+Example = Strings -sc:\windows\system32\*.exe | findstr /I autoelevate
+As I mentioned, there are many more bypass UAC techniques.
+If you want to explore more, which I think you should do to ensure you’re protected against them, or at least can detect them, you can start at this GitHub site (UACMe).
+Now that we understand that bypassing the UAC controls is possible, let’s talk about defenses you have against these attacks.
+You have four settings for User Account Control in Windows 7/10.
+The settings options are listed below.
+Always notify Probably the most secure setting.
+If you select this, it will always notify you when you make changes to your system, such as installing software programs or when you are making direct changes to Windows settings.
+When the UAC prompt is displayed, other tasks are frozen until you respond.
+Probably the most secure setting.
+If you select this, it will always notify you when you make changes to your system, such as installing software programs or when you are making direct changes to Windows settings.
+When the UAC prompt is displayed, other tasks are frozen until you respond.
+Notify me only when programs try to make changes to my computer This setting is similar to the first.
+It will notify when installing software programs and will freeze all other tasks until you respond to the prompt.
+However, it will not notify you when you try to modify changes to the system.
+This setting is similar to the first.
+It will notify when installing software programs and will freeze all other tasks until you respond to the prompt.
+However, it will not notify you when you try to modify changes to the system.
+Notify me only when programs try to make changes to my computer (do not dim my desktop) As the setting name suggests, it’s the same as the one above.
+But when the UAC consent prompt appears, other tasks on the system will not freeze.
+As the setting name suggests, it’s the same as the one above.
+But when the UAC consent prompt appears, other tasks on the system will not freeze.
+Never notify (Disable UAC) I think it’s obvious what this setting does.
+It disables User Access Control.
+I think it’s obvious what this setting does.
+It disables User Access Control.
+The default setting for UAC is “Notify me only when programs try to make changes to my computer.” I mention this because some attack techniques will not work if you have UAC set to “Always notify.” A word to the wise.
+Another great defense for this technique is to simply not run as administrator.
+Even if you own the device, work as a standard user and elevate privileges as needed when performing tasks that require them.
+This sounds like a no-brainer, but many organizations still provide admin privileges to all users.
+The reasoning is usually because it’s easier.
+That’s true, but it’s also easier for the bad guys as well.
+Privilege escalation never really happens as a single event.
+They are multiple techniques chained together, with the next dependent on the one before successfully executing.
+So with that in mind, the best way to break the attack chain is to prevent any of these techniques from successfully completing – and the best place to do this is usually by blocking a technique in the execution tactic category or before when being delivered.
+If the adversary cannot get a foothold on the box, they certainly are not going to be able to execute a bypass UAC technique.
+If you’re interested in learning more about technique chaining and dependencies, Andy Applebaum created a nice presentation given at the First Conference that you might want to take a look at.
+One common question people ask is, “why are there no CVEs for theseUAC security bypass attacks?” It’s because Microsoft doesn’t consider UAC to be a security bypass, so you will not see them in the regular patch Tuesdays.
+Over the years, our FortiGuard Labs team has discovered many threats that include a bypass UAC technique.
+A great example is a threat we discovered a few years back that contained the Fareit malware.
+A Fareit payload typically includes stealing credentials and downloading other payloads.
+This particular campaign run was delivered via a phishing email containing a malicious macro that called a PowerShell script to download a file named sick.exe.
+This seems like a typical attack strategy, but to execute the sick.exe payload it used the high integrity (auto-elevated) eventvwr.exe to bypass the UAC consent prompt.
+Below is the PowerShell script.
+You can see that the first part of the script downloads the malicious file using the (New-object System.net.webclient).Downloadfile() method we discussed in the first blog in this series.
+The second part of the script adds an entry to the registry using the command reg add HKCU\Software\Classes\mscfile\shell\open\command /d %tmp%\sick.exe /f.
+Finally, the last command in the script runs the eventvwr.exe, which needs to run MMC.
+As I discussed earlier, the exe has to query both the HKCU\Software\Classes\mscfile\shell\open\command\ and HKCR\mscfile\shell\open\command\.
+When it does so, it will find sick.exe as an entry and will execute that instead of the MMC.
+Our 24/7 FortiResponder Managed Detection and Response team also sees a good amount of bypass UAC activity in our customers’ environments.
+Usually, the threat is stopped earlier in the attack chain, before it has a chance to run the technique, but there are occasions when it is able to progress beyond that point.
+We also observe it if the FortiEDR configuration is in simulation mode.
+A recent technique we detected and blocked was a newer version of Trickbot.
+When this payload runs it tries to execute the WSReset UAC Bypass technique to circumvent the UAC prompt.
+Once again, it leverages an executable that has higher integrity (and higher privilege) and has the autoElevate property enabled.
+This specific bypass works on Windows 10.
+If the payload encounters Windows 7, it will instead use the CMSTPUA UAC bypass technique.
+In Figure 5 you can see our FortiEDR forensic technology identify the reg.exe trying to modify the registry value with DelegateExecute.
+Our FortiSIEM customers can take advantage of rules to detect some of these UAC bypass techniques.
+Below is an example rule to detect a UAC bypass using the Windows backup tool sdclt.exe and the Eventvwr version we mentioned before.
+Below, in Figure 7, we can see the sub-patterns for the rule detecting the eventvwr Bypass UAC version.
+If you’re not using a technology like FortiEDR or FortiSIEM, you could start monitoring on your own (using sysmon).
+But again, it could be difficult since there are so many variations.
+In general, you can look for registry changes or additions in certain areas and the auto-elevated files being used, depending on the specific bypass UAC technique.
+For the eventvwr.exe version you could look for new entries in HKCU\SoftwarClasses.
+Also keep an eye on the consent.exe file since it’s the one that launches the User Interface for UAC.
+Look for the amount of time it takes for the start and end time of the consent process.
+If it’s milliseconds, it’s not being done by a human but an automated process.
+Lastly, when looking at the entire UAC process, a legitimate execution is usually much simpler in nature, whereas the bypass UAC process is a bit more complex or noisy in the logs.
+You will have to do a lot of research to figure out the right rules to trigger on.
+It’s probably better to just get a technology that can help prevent or detect the technique.
+This should save you a lot of time and personnel overhead.
+Once you’ve done your research on the technique, it’s time to figure out how to reproduce it so you can figure out whether or not you detect it.
+Some of the same tools apply as I mentioned last time, but there are a few that are fairly easy to use.
+Below are a few examples.
+Atomic Red Team has some very basic tests you can use to simulate a UAC bypass.
+Figure 8, below, lists them.
+As I mentioned earlier, Metasploit has a few bypass UAC techniques you can leverage.
+Remember that in the attack chain your adversary already has an initial foothold on the box, and they are trying to get around UAC.
+With that said, you should already have a meterpreter session running on your test box.
+Executing the steps to run a bypass UAC (using fodhelper) technique is pretty simple.
+First, put your meterpreter session in the background by typing the command background.
+Next, type use exploit/windows/local/bypassuac_fodhelper.
+From there you need to add your meterpreter session to use the exploit.
+Type in set session <your session #> and then type exploit.
+If you’re successful, you should have something on your screen that looks like what’s shown in figure 9, below.
+Lastly, in video 1 below, I walk you through a bypass UAC technique available in Metasploit.
+I had established initial access and ended up with a meterpreter session.
+From there I tried to add a registry for persistence, but don’t have the right access.
+So, I try to run the getsystem command, but that fails as well.
+This is usually because UAC is enabled.
+I then select one of the bypass UAC techniques, which then allows me to elevate my system privilege and add my persistence into the registry.
+Once again, we continue play the cat and mouse game.
+As an industry we build protections (in this case UAC) and eventually the adversary finds ways around them.
+This will most likely not change.
+So the important task is understanding your strengths and weaknesses against these real-world attacks.
+If you struggle with keeping up to date with all of this, you can always turn to your consulting partner or vendor to make sure you have the right security controls and services in place to keep up with the latest threats, and that you are also able to address the risk and identify malicious activities using such tools as EDR, MDR, UEBA and SIEM technologies.
+I will close this blog like I did last time.
+As you go through the process of testing each Bypass UAC attack technique, it is important to not only understand the technique, but also be able to simulate it.
+Then, monitor your security controls, evaluate if any gaps exist, and document and make improvements needed for coverage.
+Stay tuned for our next Mitre ATT&CK technique blog - Credential Dumping.
+Find out more about how FortiResponder Services enable organizations to achieve continuous monitoring as well as incident response and forensic investigation.
+Learn more about FortiGuard Labs threat research and the FortiGuard Security Subscriptions and Services portfolio.
+Sign up for the weekly Threat Brief from FortiGuard Labs.
+Learn more about Fortinet’s free cybersecurity training initiative or about the Fortinet Network Security Expert program, Network Security Academy program, and FortiVet program.

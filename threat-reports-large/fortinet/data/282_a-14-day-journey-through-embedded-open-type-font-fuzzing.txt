@@ -1,0 +1,64 @@
+One of our daily routines as researchers here at FortiGuard Labs is to write and maintain our internal fuzzers to help us more effectively find potential vulnerabilities on different software products.
+We have a range of such tools, from highly sophisticated algorithms to some dumb fuzzers that run 24/7 to find potential issues on Microsoft Office suites.
+Even those give us surprises from time to time, even though they are not cutting edge fuzzers.
+In this blog post we would like to share how we discovered multiple Embedded Open Type (EOT) font vulnerabilities by using a combination of dumb and intelligent open source fuzzers.
+EOT fonts are a compact form of OpenType fonts which are typically compressed using MicroType® Express font compression technology.
+According to W3C, this is a modified version of the LZW compression algorithm, and its compression and decompression algorithm is well documented on the W3C site.
+EOT fonts are also used to protect the copyrighted font files embedded in, for instance, websites, PowerPoint documents, and other third party software that utilize embedded fonts.
+Perhaps due to its compactness, the EOT file format is not very complicated.
+If you are fan of file format reverser, you might probably find this 010 Editor EOT template useful, and a detailed description of each field can be found here, which can come in very handy when it comes to creating your own EOT font utility.
+We came across our first EOT font vulnerability when our dump fuzzer, dubbed PPTFuzz, found an interesting test case that crashed Microsoft PowerPoint.
+This is shown in List 1, below, which is an excerpt of the crash log produced by PPTFuzz.
+However, what really caught our attention was the offending instruction code found in the t2embed.dll module.
+Later, we confirmed this DLL is responsible for loading EOT fonts after checking one of its export functions: TTLoadEmbeddedFont from MSDN.
+List 1: Excerpt of crash log
+Before we decided to dive deeper into EOT font fuzzing, we first wanted to understand the root cause of this vulnerability.
+Unfortunately, we didn’t find any existing utility that could extract the embedded font from inside an office document, so we decided to write a simple python script to do the job for us.
+After we had successfully extracted the font, we did a quick analysis against the mutated EOT font and concluded that mutated compressed font data could cause an out-of-bound read, like the one demonstrated in List 1, during the decompression operation performed by t2embed.dll.
+Based on our analysis, we classified the issue as an information leak vulnerability; however, according to Microsoft it could potentially lead to remote code execution.
+Nevertheless, we didn’t want to spend too much time looking into its exploitability as we wanted to dig deeper to look for other low hanging fruit in the EOT font parser engine.
+The AFL fuzzer should be no stranger to those who have been doing fuzz testing.
+The fact is that AFL is more effective for open source fuzzing using compiler instrumentation compared to binary fuzzing using QEMU, which has some performance overhead.
+But keep in mind that AFL is mostly useful for programs running on the Linux platform.
+Recently, Ivan Fratric successfully ported AFL to Windows, which is known as WinAFL, that allows you to fuzz test Windows binaries.
+However, my experience told me that WinAFL does not work very well for complex binaries, such as Microsoft Office suites, in large part because it consists of global states that could break the persistent mode or in-memory fuzzing operation.
+The effectiveness of WinAFL is in large part due to its persistent mode mechanism, but users need to ensure that the input file feed to WinAFL is successfully closed in order to achieve a faster execution time.
+This can be achieved easily if we have good control of the binary.
+For instance, patching the binary will not affect the stability of the original program or recompiling the binary from the source code.
+Hence, EOT font seems to be a good target to be fuzzed using WinAFL by creating a simple utility that we called loadeot, which will leverage the TTLoadEmbedFont API function in order to load the font.
+Since we adapted most of the code from Adobe’s WebKitAir, it didn’t take much effort to write our custom EOT loader utility.
+Because it’s the only such tool we know of, we decided to open source this utility in case someone else might find it useful.
+The source code of loadeot can be found in our Github’s repository.
+We also crawled and downloaded EOT fonts from the Internet while simultaneously extracting some of the EOT fonts from our previously collected PowerPoint documents.
+After a week, we were able to gather over 10,000 EOT files.
+Before we started fuzzing them, we made use of winafl-cmin.py, a ported version of afl-cmin (kudos to Axel Souchet!
+), to minimize the corpus to around hundred test cases.
+Over the course of a day of fuzzing we got a couple of crashes from the WinAFL fuzzer running with our custom EOT loader.
+We also got a number of out-of-bound read crashes that typically lead to trivial information leakage upon successful exploitation.
+However, the most interesting crash that caught our attention is a test case found on the latest build of Windows 10 x86 1607.
+So we decided to look into this particular test case and perform some additional analysis.
+Please take note that the following analysis is based on t2embed.dll version 6.1.7601.17514 on Windows 7 x86.
+As usual, we checked the call-trace and its crash context:
+List 2: The call-trace and its crash context
+The crash context told us that an out-of-bound write to an invalid address caused a memory access violation.
+By looking at the function name, we could tell that the faulty code was located at t2embed!ApplyNameChangeToNameRecords.
+After some reverse engineering, we confirmed the exact location of the offending code, as well as its root cause.
+Another interesting finding was that we realized that this function is only triggered if szWinFamilyName is provided to the API function TTLoadEmbeddedFont, which indicates that an alternative font name will be used rather than using the existing font name specified in the EOT file.
+Upon analysing t2embed!ApplyNameChangeToNameRecords, we found that the issue resided in parsing the TTF naming record in which the length of the name record that was retrieved from the EOT file is not properly sanitized by the parser.
+List 3: A code snippet of name records parsing
+As shown in the highlighted code in List 3, the parser stored the font name length to a variable - we named it nameLen - which is controllable by adversaries.
+When looking at its pseudocode, we believe the length bound check as shown in the highlighted code is insufficient because nameLen is used later to calculate the buffer length for the new font name, which eventually results in an integer overflow, as demonstrated in the following code snippet:
+List 4: Integer overflow leads to buffer overwrite in parser engine
+In fact, there are two possible ways to trigger a buffer overflow, either in WrappedCopyNewName or memcpy.
+If the OffsetString is not NULL, the allocated underflow buffer will not be able to fit the new font name, and thus the buffer overwrite will take place in WrappedCopyNewName, which is a wrapper function that calls memcpy to copy the new font name into NameRecordNewName.
+From the attacker’s point of view, the exploitation will be more convenient if the buffer overflow occurs after WrappedCopyNewName is called, which is the direct call to memcpy with the attacker’s controlled nameLen.
+What’s even worse is that the OffsetString is also controllable from the EOT file, thereby making it trivial for an attacker to exploit this vulnerability.
+Nevertheless, this is a classic buffer overwrite due to an integer overflow, and it affects all versions of Windows including the latest build of Windows 10, as far as we have tested.
+Microsoft Security and Response Center (MSRC) later classified this vulnerability as critical because it is very likely to be exploited, along with the fact that it could also lead to remote code execution on the latest version of Windows 10.
+We urge Windows users to consistently apply Microsoft patches to keep themselves protected.
+For Fortinet’s customers, you can use the corresponding IPS signatures to protect your environment:
+MS.Windows.Express.Compressed.Fonts.Remote.Code.Execution (CVE-2017-8691) and MS.Windows.Graphics.EOT.File.Parsing.Code.Execution (CVE-2017-11763).
+Until next time, stay safe!
+Signing off
+-== FortiGuard Lion Team ==-
+Sign up for our weekly FortiGuard intel briefs or to be a part of our open beta of Fortinet’s FortiGuard Threat Intelligence Service.

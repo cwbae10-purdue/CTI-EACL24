@@ -1,0 +1,178 @@
+With the help of FortiGuard’s in-house Threat Intelligence Platform (Kadena), FortiGuard Labs discovered a series of attacks targeted at service centers in Russia.
+These service centers provide maintenance and support for a variety of electronic goods.
+A distinctive feature of these attacks is their multi-staging.
+These attacks use forged emails, malicious Office documents with exploits for a vulnerability that is 17 years old, and a commercial version of a RAT that is tucked into five different layers of protective packers.
+In this article we will overview every stage of these attacks.
+In addition, we will try to find any connection to another attacks carried out by the same group.
+An IOC section is also provided at the end of the article.
+At the end of March, an undisclosed Russian service company engaged in the repair and servicing of electronic devices received several emails.
+These emails seemed to be from representatives of the Samsung Company.
+An example of such email is provided in the figure below.
+We believe that these emails were a starting point for a planned targeted attack, and not just a part of a random mass campaign.
+Here are our reasons for this conclusion:
+The email was specifically sent to the service company that repairs Samsung’s electronic devicess.
+This company is based in Russia, and the email is written in the Russian language with a Russian name in the “From” field.
+The sender falsely claims to be from the Samsung Company.
+The email contains a file with the name Symptom_and_repair_code_list.xlsx that is related to the targeted company’s profile.
+After carefully examining this email, we have concluded that it is highly unlikely that a native Russian speaker wrote this text.
+Instead, this text was probably the product of some machine translation.
+Therefore we can reasonably assume that while these attackers targeted a Russian company, they are not Russian speakers.
+We also analyzed the headers of this email.
+We can see that authentication attempt results in soft-fail, which means that the IP address of the sender does not known to be related to the domain in the “From” field.
+While all of the emails we detected have different attachments, they are all united by a common pattern: the attached files are all .XLSX, and they all looks legit.
+An example of the internals of such files is shown in the figure below.
+Another common feature that unifies all these samples is that they all contain an exploit.
+We will discuss this in more detail in the next section.
+Side note: Inside the malicious documents there is a printer configuration string, shown in the figure below.
+We have conducted our investigation and concluded that this string is related to the original source of these files and did not belong to the attackers.
+Instead, the IP from these strings is probably related to the organization where these documents were initially created.
+All of the printers in the documents are Samsung models.
+The attackers later modified these files to contain an exploit.
+During our dynamic tests with these suspicious documents we recorded the malicious activity of the eqnedt32.exe.
+This gave rise to a suspicion that CVE-2017-11882 is being used.
+Later, we confirmed that all fresh samples are exploits from the same vulnerability: CVE-2017-11882.
+The malware authors clearly love this vulnerability because it allows them to achieve a stable exploitation across all current Windows platforms.
+The reason lies in the fact that the component “eqnedt32.exe” has not been updated for 17 years.
+This component was so old that some researchers supposed that Microsoft had lost the source code of eqnedt32.exe and had to do a binary patch of the existing executable to fix this vulnerability.
+You can find more analysis of this vulnerability in this comprehensive article.
+Shellcode in this case are used to solve standard tasks for PIC (Position Independent Code):
+It unencrypts the rest of its body
+It determines the address of kernel32.dll
+It parses the export directory of the kernel32.dll and locates the addresses of two key functions: LoadLibraryA and GetProcAddress.
+With these two functions it can get access to any function it’s need to execute its payload.
+With help of LoadLibraryA and GetProcAddress, the shellcode obtains the addresses of the other needed functions.
+It is interesting that in this case the “hashing names” technique is not used.
+This shows us that the shellcode author was not actually limited by the code size and could “afford” to store function names in plain text.
+The two most important functions “imported” by the shellcode are: URLDownloadToFileW and ExpandEnvironmentStringsW.
+The purpose of the first one is obvious.
+The last function is used to determine the exact location where the shellcode should store downloaded payload, since this location will be different under different platforms.
+Finally, Shellcode downloads a file from the URL: hxxp://brrange.com/imm.exe, stores it in %APPDATA%server.exe, and then tries to execute it.
+For this article, we decided to analyze one of the payloads, downloaded from the malicious URL:
+Brrange.com/imm.exe.
+This process was depicted in Figure 5, above.
+For reference, the SHA-256 checksum of the analyzed sample was: 975ddf75491e3f482a7d7941e4fd33fb98e4daf339f57a4c7843fd2b375c199b
+Before analyzing its malicious function, the sample needs to be unpacked.
+This sample has multiple-layer multi-packer protection.
+The first layer of protection – is the well-known ConfuserEx packer.
+This packer obfuscates objects names, as well as names of methods and resources, to make it hard to read and be understood by humans.
+In addition, ConfuserEX contains a lot of case jumps, which are used to alter the executions workflow.
+Therefore, with only a static analysis it is hard to predict which part of code will be executed next.
+The general workflow of the sample’s self-unpacking process is next:
+It decrypts resource names by removing “padding” symbols.
+For example, from the string "ADAeAmAasAAuAAAAAsLAoAtAAaAAAsAiAAAAtAAAAAAAAoAAAAA" it removes all capital letters ‘A’ and gets “DemasusLotasito”
+From those resources with decrypted names, it reads the blob of bytes and forms an array.
+This array is a next stage of the payload, encrypted by DES encryption.
+To decrypt a payload the packer initializes DES.decryptor with the parameters: KEY: 0x59, 0x2F, 0x55, 0x3D, 0x17, 0x4A, 0x55, 0x10 IV: 0x4A, 0x59, 0x36, 0x0D, 0x60, 0x59, 0x4A, 0x55
+Finally, it decrypts the resource and executes the decrypted file.
+In the figure below, we can see the internals of the “sender2” array, which starts from 0x4D, 0x5A, which is the MZ magic value from the DOS header.
+In this case, the name of the decrypted file is "BootstrapCS" and we will analyze it in the next section.
+BootstrapCS is the internal name of the executable in the second stage of its multi-layer protection.
+This layer is not obfuscated, but contains a lot of anti-analysis checks.
+Which checks should be taken are determined by the structure “settings” in the resources section (showed in the picture below).
+Notice the binary resource mainfile - this is the encrypted stage 3 of the Payload.
+Main anti-analysis features of this module include:
+Performs various checks for emulation, sandbox, and virtual machine: Checks for “SbieDLL.dll” Checks for specific values in the description of “Win32_VideoController object”: VMware VM additions S3 trio32/64 S3 trio32/64 VirtualBox graphics adapter VMware SVGA II
+Checks for “SbieDLL.dll”
+Checks for specific values in the description of “Win32_VideoController object”: VMware VM additions S3 trio32/64 S3 trio32/64 VirtualBox graphics adapter VMware SVGA II
+Searches for and shuts down specified processes: Fiddler Web Debugger WPE PRO The Wireshark Network Analyzer
+Fiddler Web Debugger
+WPE PRO
+The Wireshark Network Analyzer
+Disables system utilities: Command prompt Registry editor ask manager User Access Control (UAC)
+Command prompt
+Registry editor
+ask manager
+User Access Control (UAC)
+Writes the payload path to the following startup registry keys: HKLM\Software\Microsoft\Windows\CurrentVersion\Run\[Specified Name] HKCU\Software\Microsoft\Windows\CurrentVersion\Run\[Specified Name]
+HKLM\Software\Microsoft\Windows\CurrentVersion\Run\[Specified Name]
+HKCU\Software\Microsoft\Windows\CurrentVersion\Run\[Specified Name]
+Hides the file by assigning it system and hidden attributes.
+Injects a payload into different processes: Vbc.exe RegAsm.exe AppLaunch.exe Svchost.exe Notepad.exe Current process
+Vbc.exe
+RegAsm.exe
+AppLaunch.exe
+Svchost.exe
+Notepad.exe
+Current process
+Please note that among the “settings” resources there are binaries—one with a name mainfile—this is an encrypted executable, which represent the third level of packing protection.
+The encryption scheme used here is a simple XOR algorithm with the KEY = 0x20.
+After decryption, the payload is injected into one of the processes based on the value in the settings resource file.
+Proceeding to the decrypted payload “mainFile”, we can see that its internal name is “im3.exe” and it contains two entries in the resources “application” and “_7z”.
+We can also observe an interesting line called “Imminent-Monitor-Client-Watermark”.
+It contains the following information:
+If we check the mentioned domain “imminentmethods.net”, we find that this is the official website for a commercial Remote Administration Tool called “Imminent Monitor”.
+Anyone can purchase the license, set up a server, and build its own client stub.
+Developers clearly state their policy by explicitly prohibiting any usage of the tool in a malicious way.
+So, they are probably including this watermark to make sure that people won’t use their tool as a payload in their malicious campaigns.
+As we found, the watermark has been included in the code from 4.4 version of Imminent Monitor software.
+At the moment of writing, there are only 3.9 and 4.1 cracked versions publicly available.
+Therefore, there is possibility that a person who purchased this license officially also compiled it.
+But we cannot determine this for sure.
+Once we proceed in our further analysis of the file, we then have to unpack the resource called “application”.
+For the unpacking procedure, the file uses the legit “lzma.dll” library from 7zip.
+At this stage we encountered...ConfuserEx.
+What?
+ConfuserEx again?
+Yes!
+And this time with a rick rolling attempt :)
+Too bad this video was already blocked by Twenty Century Fox!
+:(
+This is the commercial version of the Imminent Monitor RAT.
+Our version of IMM consists of 5 modules:
+Aforge.Video.DirectShow 2.2.5.0 Aforge.Video 2.2.5.0 Injector 1.0.0.0 ClientPlugin 1.0.0.0 LZLoader 1.0.0.0
+The first two modules are capable of recording video from a victim’s webcam.
+The last three contain different spy and control functionalities.
+The full list of IMM features are available on the official website.
+Therefore, we will not describe them here in full.
+According to our dynamic analysis, a good indicator of compromise will be the next folder:
+%AppData%\Roaming\Imminent\
+We also analyzed the C2 servers used in these attacks.
+Based on the registrant data we have found 50 domains which were all registered on the same day.
+Some of these domains have already been used for malware spreading.
+Another group was linked to the phishing campaigns.
+These domains are currently blocked by our WebFilter.
+The full list of these domains is provided in the IOC section at the end of this paper.
+Additionally, we conducted a search among our collection of samples and found several .XLSX samples that use the same C2 servers as the samples from these attacks.
+These samples are older and use different vulnerabilities.
+We believe that this same group of attackers are behind both groups of samples.
+The list of the samples is also provided in the IOC section.
+FortiGuard Labs discovered multi-stage attacks targeted at Russian service centers.
+We also noticed that the pattern of these attacks has become quite popular today.
+The use of exploits is more efficient than the use of simple executable files, especially since the level of threat-awareness among users has sufficiently grown in recent years.
+It is simply not that easy to trick a user to opening executable file as it was before.
+Exploits are a different case.
+If your workflow demands that you have to open MS Office documents from external sources, then the most reliable security solution in this case must be based on sandboxing technology.
+FortiSandbox, for example, can detect exploitation attempts even for unknown vulnerabilities.
+If your organization has FortiSandbox protection and you have received an MS Document from an unknown source, it is better not to open it right away.
+Wait for 3-5 minutes: If malicious, the file will be detected during sandboxing, a special signature will be released, and your FortiClient will alert you about the sample.
+If your organization also has FortiMail configured together with FortiSandbox, then FortiMail will wait until the sandboxing process is finished before delivering the email to recipients.
+FortiGuard will continue to monitor the remaining registered domains and other activities of this attacker group.
+-= FortiGuard Lion Team =-
+%AppData%\RegAsm.exe
+%AppData%\Roaming\Imminent\*.
+*
+HKLM\Software\Microsoft\Windows\CurrentVersion\Run\Regasm
+“%AppData%\RegAsm.exe”
+015ec4becebcf293e7dac0f967818fdbe277d2c8567d1579c43ca7d647edeba6 MSIL/Kryptik.NJK!tr
+1cb202f9da52e50b3f13bc93a1ccd12509593754ad178d8e1d47f18d539cb03a MSOffice/CVE_2017_11882.B!exploit
+286f556cf1660f740c548a491f984a423c23605a6148828b97b0b46c7e34b2bd MSOffice/CVE_2017_11882.B!exploit
+403f4e1bb443f57a6f26fcef699232ebfb3f5e1adabbce46a1ef03f4d23e601d W32/Generic.TJ!tr
+4bdda7e7d4e4eda48ed39d3b8cb3162f8713f0ed75398f43cbd8727af050b6df MSIL/Kryptik.NKY!tr
+6083ec0d005cf548073024e6f7c9296760972304bce569614ec5df9baa330926 MSIL/Kryptik.LOA!tr
+67f5c55a5a61ceb50c3d37f106bba1fa57ae2d1f0a25c52aa949736908bc879f MSIL/Kryptik.NLJ!tr
+711e8a64bb3aaf032753133c90a6a9c177ec146d378de9fb99497d2474229cae W32/Generic.TJ!tr
+725d4e09fd28b41c62b66dd338f19e6b5cc871cbfbea69214a460beef00e7e70 MSIL/Kryptik.LOA!tr
+74e3dc19b3b2cffd60865bd8ed248e7b2fe9e0826d125117206b12338849ad37 MSIL/Kryptik.NJK!tr
+83772d16c4c791d44a27637376155781d1cf1b764b59b00430573e2efa936980 MSIL/Kryptik.MVX!tr
+8969c56e0d541e0ea42021d4165505474c4dd99605926ab3c391df02af2d919e MSOffice/Exploit.CVE20178570!tr
+975ddf75491e3f482a7d7941e4fd33fb98e4daf339f57a4c7843fd2b375c199b MSIL/Kryptik.NKY!tr
+b0da24906af16ba77019e581f810923c97d7bc4e03c901cfb0158edb3de10f39 MSIL/Kryptik.NHX!tr
+c7813f9520a2d906e72036a8766e04b3679b0f89cbea5ba4ceff494b4e0472c4 MSOffice/CVE_2017_11882.B!exploit
+d29393a8aad337019794eb9bfb035950893350ed4f8fd559a8457754228fb9ae MSIL/Kryptik.NKY!tr
+d58ab2d37666e1d4823af3325896d1fabc2b71338032d16adc52b4228ca56da7 MSIL/Kryptik.LOA!tr
+ef8fe9afc0053e6a10ca568bbe3f71ec9358232d670d14af7da072a6e60cdf5e MSIL/Kryptik.NJK!tr
+Brrange.com cb4cb4.ddns.net cb5cb5.noip.me cb7cb7.ddns.net derani.ir frpfrp.ddns.net
+Brtory.com Flscap.com
+Agspre.com Agtory.com Agvill.com Agworl.com Bransio.com Brcosm.com Brdoma.com Brfie.com Brscap.com Brspac.com Brsphe.com Brspre.com Brteri.com Brverse.com Brvill.com brworl.com dacosm.com dasphe.com daspre.com daworl.com facosm.com faspan.com faverse.com faworl.com flcosm.com flfie.com flrange.com flspac.com flspan.com flsphe.com flspre.com flteri.com fltory.com flval.com nimatio.com nimcosm.com nimfie.com nimfin.com nimrange.com nimrea.com nimscap.com nimspac.com nimsphe.com nimspre.com nimter.com nimteri.com nimtop.com
+Check out our latest Quarterly Threat Landscape Report for more details about recent threats.
+Sign up for our weekly FortiGuard intel briefs or for our FortiGuard Threat Intelligence Service.

@@ -1,0 +1,88 @@
+A FortiGuard Labs Threat Analysis Report: This blog originally appeared on the enSilo website on November 24, 2016, and is republished here for threat research purposes.
+enSilo was acquired by Fortinet in October 2019.
+Windows environment variables can be used to run commands.
+They and can also be used to bypass UAC, allowing an attacker with limited privileges to take complete control of the a system.
+This code leverages a rather unusual scenario within Windows OS.
+This is a continuation of our research as described in a previous post: Elastic Boundaries – Elevating Privileges by Environment Variables Expansion.
+In our last post on this topic, we have demonstrated that changing a location referred to by environment variables can divert file operations from a legitimate path to a possibly malicious one.
+Looking through the registry suggests different scenarios and possibilities that exist for environment variable expansion (ab)use.
+Let’s continue from where we left off last time.
+ASSUMPTION
+If a command contains an environment variable, it can be expanded into multiple executable commands.
+POSSIBILITY
+An attacker can set up commands that will be executed when a different, unrelated file is opened or otherwise accessed.
+APPLICATION
+A regular text file (.txt) opens with notepad.exe.
+The command to open such a file is:
+%SystemRoot%\System32\NOTEPAD.EXE %1
+Effectively running this command:
+C:\Windows\System32\NOTEPAD.EXE <filename.txt>
+Now, by using this command:
+setx SystemRoot “C:\Windows\System32\cmd.exe && C:\Windows”
+The resulting line changes to:
+C:\Windows\System32\cmd.exe && C:\Windows\System32\NOTEPAD.EXE <filename.txt>
+Which means opening a command window before Notepad is called.
+(“&&” means Notepad will run after the command exits, if it succeeds.
+There are other operators that could be used here instead.)
+The Windows registry contains commands that parse and expand a string that contains multiple percent signs (‘%’).
+ASSUMPTION
+Anything between two percent signs is considered an environment variable and could be expanded as one.
+POSSIBILITY
+An attacker can set an environment variable-like string to be expanded by Windows, thereby manipulating command parameters.
+APPLICATION
+Setting an environment variable named 1”, and pointing it to any dll file.
+Quote symbols must be escaped.
+setx “1\”,” “C:\Temp\evil.dll\”,”
+RESULT
+Running any .cpl file on the system will run evil.dll instead.
+Right-clicking “My Computer” (or “This PC” on Windows 10) and choosing “Manage” from the context menu causes the “Computer Management” console to open with elevated privileges and without showing the UAC prompt.
+Behind the scenes, this behavior is defined by the verb “Manage” of the computer item’s class, as can be seen in the registry at this path:
+HKCR\CLSID\{20D04FE0-3AEA-1069-A2D8-08002B30309D}\shell\Manage\command
+The value for this key is:
+%SystemRoot%\system32\CompMgmtLauncher.exe
+ASSUMPTION
+CompMgmtLauncher.exe runs with elevated privileges.
+POSSIBILITY
+An attacker can take control of this command by setting SystemRoot and gain elevated privileges.
+RESULT
+Failure.
+Our assumption is incorrect at this point.
+Changing the path did cause a different executable to launch instead of CompMgmtLauncher.exe, but it was running with medium integrity (i.e., not elevated).
+So, what does CompMgmtLauncher.exe do to achieve elevated status?
+THE ANOMALY
+CompMgmtLauncher.exe actually runs another link in the chain— – a .lnk file, found in the Start Menu’s Administrative Tools folder:
+C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Administrative Tools\Computer Management.lnk
+This link file points to the already familiar mmc.exe in Windows\System32, giving it an argument in the form of a .msc file, specifically compmgmt.msc.
+It appears that running mmc.exe by itself shows the UAC prompt, but running it with some specific .msc files does not.
+NEW ASSUMPTION
+CompMgmtLauncher.exe runs the file that the .lnk file points to with elevated privileges.
+POSSIBILITY
+An attacker can control the target of the .lnk file and bypass UAC.
+RESULT
+Failure.
+Not quite there yet.
+Writing to the directory and over the .lnk file requires high integrity to begin with.
+The folder of interest is referenced by two environment variables:
+ALLUSERSPROFILE=C:\ProgramData
+ProgramData=C:\ProgramData
+NEW ASSUMPTION
+CompMgmtLauncher.exe uses one of these variables to access the .lnk file.
+POSSIBILITY
+An attacker can change one or both of the mentioned environment variables and gain control over the called .lnk file.
+APPLICATION
+Set ProgramData to point to a directory other than C:\ProgramData
+Create the correct directory tree: Microsoft\Windows\Start Menu\Programs\Administrative Tools
+Create a link (.lnk) that points to a string containing a command
+Call “Manage” on “My Computer”/”This PC”.
+or Run CompMgmtLauncher.exe
+RESULT
+Success!
+The methods described here are not surprising news given previous findings.
+They also rely on an attacker having some access to the targeted machine and possessing some privileges to initiate an attack.
+Nevertheless, environment variables can aid attackers in compromising a system and they as a result, they provide some meaningful additions to their toolset.
+NOTE: The images in the post weare taken from a machine running Windows 7 32-bit.
+The methods have been tested on Windows 7 and Windows 10, both 32-bit and 64- bit versions and require no adjustments.
+There is still a lot more research to be conducted on the matter, on Windows and as well as other operating systems.
+https://github.com/BreakingMalwareResearch/eleven
+Learn more about FortiGuard Labs threat research and the FortiGuard Security Subscriptions and Services portfolio.
+Sign up for the weekly Threat Brief from FortiGuard Labs.

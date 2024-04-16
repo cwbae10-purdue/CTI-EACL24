@@ -1,0 +1,298 @@
+This report is a return to the problem of security mechanisms implemented in modern anti-theft technologies that reside in firmware and PC BIOS of commonly used laptops and some desktop computers.
+In particular, we have analyzed a number of standalone firmware files and personal computers.
+While physical security and a lack of proper code validation have already been shown in prior research by Core Labs, in our research we have focused on the network security aspect of such solutions.
+Our intention was to evaluate how secure Computrace Agent communications are and to see if it is possible to hijack control remotely.
+Modern computer systems that are widely used by individual consumers as well as large corporations have a number of pre-installed software that is shipped by an OEM manufacturer or a regional reseller to promote certain services and products.
+It might be difficult for an ordinary user to understand all the risks of such “extra-packages” existing on the system.
+While most of these products can be permanently removed or disabled by the user or an IT administrator, some types of product are designed to remain on the system even after professional system cleanup or total disk drive replacement.
+One such type of software is anti-theft technologies that are widely used on modern laptops, i.e., Absolute Computrace.
+While the general idea behind anti-theft technology is good, improper implementation can render it useless as well as harmful, or even extremely dangerous.
+We believe that companies producing anti-theft technologies must consider the security of their products extremely seriously.
+Our research started with a real-life incident involving one of our colleagues.
+He observed repeated system process crashes on one of his personal laptops.
+The crash generated an event log record and a memory dump that was immediately analyzed.
+A quick check then led to a full research cycle which eventually resulted in this report.
+The failure was related to instability in modules named identprv.dll and wceprv.dll that were loaded in the address space of one of the system service host processes (svchost.exe).
+A quick analysis of the file information revealed that these modules were created by Absolute Software and are part of the Absolute Computrace software.
+While Absolute Software is a legitimate company and information about Computrace product is available on the company’s official website, the owner of the system claimed he had never installed Absolute Computrace and didn’t even know the software was present on his computer.
+It could be assumed that the software was pre-installed by an OEM manufacturer or reseller company, but according to an Absolute Software whitepaper this should be done by users or their IT service.
+Unless you have a private IT service or your PC vendor took care of you, someone else has full access and control over your computer.
+This single incident could have been dismissed if it wasn’t for the fact that we discovered more personal computers belonging to our researchers, as well as some enterprise computers, with the same signs of Computrace working on them without authorization.
+From a minor hindrance the situation quickly turned in to a major incident, and we decided to carry out an in-depth analysis.
+One of the most significant contributions previously made on this subject is authored by Alfredo Ortega and Anibal Sacco of Core Security Technologies.
+In their whitepaper “Deactivate the Rootkit: Attacks on BIOS anti-theft technologies” they described the general mechanisms behind anti-theft products such as Absolute Computrace.
+Prior research has shown a significant risk coming from anti-theft software embedded in BIOS ROMs or firmware.
+It demonstrated that these modules are vulnerable to local attacks, such as those requiring physical access or the ability to run code at local system.
+Alfredo Ortega and Anibal Sacco demonstrated a tool that can be used to change encrypted registry settings of the Absolute Computrace Agent so that it redirects to another control server.
+In addition, we found a blogpost authored by Bradley Susser created in August 2012.
+The blog mentions a vulnerability in the authentication system of LoJack (Computrace) software.
+However, the post didn’t have enough proof to back up the claim, so we decided to embark on our own extended analysis.
+Computrace Agent is a Windows application that has two variants: a small agent and a full-size agent.
+The Small Agent is a piece of code that is of minimal possible size and maximum extensibility.
+This module is embedded into BIOS PCI Option ROM or UEFI firmware.
+According to the US patent 20060272020 by Absolute Software, where it is called a mini CDA (Communications Driver Agent), it was designed to check if the full-function agent is installed and functioning on the system, and if not, load the full function CDA across the Internet from the server.
+According to the patent, the persistence module resides in BIOS Option ROM:
+BIOS Option ROM
+The Option ROM contents has a small section with Computrace modules that are added by the manufacturer of the BIOS and written to the flash memory by the hardware vendor.
+PCI Option Rom Absolute module contents
+During our research we downloaded and looked into a few updates of BIOS firmware from official vendor support websites.
+Nowadays EFI BIOS can contain up to several hundred EFI drivers, applications and other modules packed into a type of file system.
+One of the modules we found was EFI Application or Option ROM in older systems with the Absolute Computrace Agent inside.
+So, if you try to reflash BIOS with official firmware, you just update the agent to a newer version.
+rpcnetp.exe inside autochk.exe inside EFI Application inside another EFI-Application inside ROM Module
+rpcnetp.exe inside autochk.exe inside EFI Application inside another EFI-Application inside ROM Module
+We found that some laptops with Computrace in the firmware provide a configuration of the Computrace security feature in BIOS Setup Utility, but in others it is absent.
+BIOS Setup Computrace settings on Lenovo Thinkpad X1
+Computrace related settings are not visible in BIOS Setup of ASUS X102BA
+It seems that the BIOS Setup Utility developer decides whether to include the feature to enable/disable the Computrace module in BIOS Setup.
+There are no policies that force him to implement this feature.
+This creates a serious obstacle for ordinary users in disabling Computrace.
+The first stage (after main BIOS initialization) is to execute modules from Option ROM.
+At this point the Computrace code searches for available disk drives and analyzes the partition table.
+If FAT/FAT32/NTFS partitions are found, it locates the Windows installation path and autochk.exe application.
+Next, it creates a backup of system default autochk.exe code parts and overwrites them with its own code.
+These parts are saved as autochk.exe.bak file on an FAT or autochk.exe:BAK NTFS ADS.
+This can be used as an indicator of Computrace activity at stage one.
+On some systems where the Computrace module is not part of the BIOS or it cannot be activated, a different approach is used.
+On such systems the Computrace activation code modifies the MBR of the hard drive and takes control of the PC at the earliest stage of the system boot.
+Apparently this approach is not as persistent as a BIOS-based dropper.
+At this stage a modified autochk.exe starts and has full access to the local file system as well as system registry via Windows NT Native API calls.
+Its main purpose is to drop the local file rpcnetp.exe and change the local system registry to create a new system service called rpcnetp.
+The original autochk.exe code is then restored.
+This module is also known as the small Computrace Agent or mini CDA (Communication Driver Agent).
+It’s approximately 17 KB in size and is written in C language.
+It is started as a Windows service; however, its operation is not limited to being a system service.
+This Windows PE executable copies itself to another file with a .DLL extension, modifies PE header flags accordingly to change the Windows PE EXE file to a Windows PE DLL and loads it in the memory.
+After that, rpcnetp.exe creates a child process “svchost.exe” in a suspended state and injects a freshly created rpcnetp.dll into its memory.
+When a DLL injection is successful and the svchost.exe process in resumed, the latter creates its own child process “iexplore.exe” started with the environment and rights of the locally logged-in user.
+A new iexplore.exe is started in a suspended state as well, and it receives an injection of the same rpcnetp.dll.
+When iexplore.exe is resumed, it may connect to the Absolute Command & Control (C&C) server to get commands and download additional modules to execute.
+rpcnetp.exe started two extra processes to initiate a connection with the Absolute C&C server
+This technique is widely used in malicious software and was one of the reasons for a close interest in the modules.
+In fact, according to our experience, no other legitimate software uses techniques like this.
+Also, the software uses a time delay of about one minute.
+We assume that this delay is used to let the system find and connect to a Wi-Fi network after starting.
+But this is also used as a trick in many malicious applications to prevent malware detection which relies on emulators or sandboxes.
+Why are there so many processes to accomplish the simple task of downloading an update?
+One possible answer is intentional obfuscation of the whole process to protect against reverse engineering.
+It is more difficult to analyze code that is running as a part of three different processes and has two boot variants: a DLL and an EXE file.
+It is known that the entry point procedure of EXE and DLL files differ in terms of the number of parameters passed at the start function.
+While the DLL and EXE variants execute the same code, all potential problems are dealt with quite well, so the code doesn’t crash or cause any instability.
+In addition, we have seen certain anti-disassembling and anti-debugging tricks that we use to perform a more rigorous analysis.
+After a successful start, rpcnetp.exe removes a registry service entry.
+This entry will be recreated with the next system start if rpcnetp.exe failed to connect to the C&C server.
+We believe the reason it runs in the iexplore.exe process context is to guarantee the availability of the Internet.
+The svchost.exe process running with Local System rights starts iexplore.exe in the context of a locally logged-in user.
+Therefore, if the user has Internet access via a proxy server, it will be automatically used when the agent connects to the C&C server.
+But why keep an extra svchost.exe process?
+This is apparently because of the limitations of iexplore.exe rights.
+So far, the svchost.exe process running with Local System privileges simply exploits iexplore.exe with user rights to pass the data to and from the server.
+This is implemented via a number of CreateRemoteThread, WriteProcessMemory, ReadProcessMemory system API calls.
+Actually, the rpcnetp.dll module spawns several threads per request to the C&C server.
+Due to frequent thread creation and termination, the whole system works rather slowly.
+We have recorded and analyzed a communication between the agent and C&C server.
+It’s noteworthy that the agent spawned 1355 new threads in svchost.exe and 452 in iexplore.exe to download less than 150KB of data.
+The network communications took about four minutes on a high-speed Internet link.
+During this time the agent issued 596 POST requests.
+More details about the Small Agent network protocol can be found later in this report.
+Unfortunately, the rpcnetp.exe module has no digital signature inside and no file information data.
+This makes it not only problematic for a system administrator to decide if it is a legitimate application but also makes it difficult to validate the integrity of the module’s code.
+We believe this is a serious flaw in current module implementation.
+In addition, if an attacker sets a read-only attribute for the modified file, it will never be replaced by a legitimate copy of rpcnetp.exe from BIOS.
+Rpcnetp.exe has a rather interesting timestamp inside.
+When you collect several links or export table timestamps from different samples, it becomes obvious that they were altered by someone (note the repeating double-byte values in hex form).
+Below are some of these timestamp values in hexadecimal form:
+4aa04aa0 4aa44aa4 4aa54aa5 4aa64aa6 ... 4f4c4f4c 4f504f50 4f954f95 4fc64fc6
+This data is not used by the sample we analyzed and it’s unclear what kind of information it carries, but considering rpcnetp.exe has no file information data, it could be a marker with the agent version.
+After all, the main purpose of rpcnetp.exe is to download and start a fully functional remote access tool.
+It communicates with a C&C server, relying on the built-in capabilities of the Small Agent to obtain some extra executables.
+The first executable that is sent to the agent is the file wceprv.dll, which is used to provide data encryption.
+Soon after saving wceprv.dll in the System32 directory, the Small Agent loads it in memory and switches conversation with the C&C to a more secure encrypted form.
+After that the Small Agent downloads extra files such as identprv.dll, Upgrd.exe and NTAgent.exe (later renamed to rpcnet.exe).
+Then it starts Upgrd.exe which is a single-run tool that handles an upgrade procedure: stopping and removing the current rpcnetp service and registering and starting a new service for rpcnet.exe (“Remote Procedure Call (RPC) Net”).
+When the rpcnet service starts successfully, it attempts to connect to the C&C server right away.
+The procedure is very similar to a rpcnetp service: it spawns child svchost.exe which creates iexplore.exe under the local user account.
+Like rpcnetp it creates many threads in these processes during communication with the C&C server.
+This service looks for configuration in several places on the system: registry key, reserved space on a hard drive and in its own body.
+The configuration states what server the agent should connect to.
+Surprisingly, it connects back to the same server and port as the previous rpcnetp service.
+We haven’t analyzed this service completely yet, but it’s absolutely clear that its main purpose is to provide extensible remote access to the machine running it.
+We think having anti-theft technology is a good idea, but only if everything works the way it is supposed to.
+When something goes wrong, a technology that has been developed to protect might be used as a weapon to attack.
+We have no proof of Absolute Computrace being used as a platform for attacks, but we see the potential for this and some alarming and inexplicable facts make this increasingly likely.
+One of the reasons for such in-depth research was the discovery of an unauthorized activation of a Computrace module in BIOS.
+We have observed several systems that seem to be affected by this mysterious problem.
+The first natural reaction of PC owners was to remove or disable this feature as soon as possible.
+One user decided to completely stop using Windows on his PC due to Absolute Computrace functions.
+That created certain difficulties for us in post-mortem analysis, but we managed to collect enough information to find the key timestamps of Computrace Agent activity.
+The owner of the system claims that he never installed, activated or even seen any Absolute products.
+However, the system was obviously running Computrace Agent software.
+PC belonging to a Kaspersky Lab employee with Computrace Agent
+According to the user, the laptop was purchased on April 27, 2012.
+The laptop owner stated that he was present when the packaging was opened at the point of sale and the seal had not been broken.
+Later that day he switched on the laptop and booted up the system.
+The creation of the C:Users directory on the hard drive indicated the exact time (local time zone) of the first start: 20:31, April 27, 2012.
+Next, the owner configured access to the Internet, which automatically generated Wireless LAN profile configuration files at C:ProgramDataMicrosoftWlansvcProfiles, which has the following creation time:20:52, April 27, 2012.
+Soon after that the Computracerpcnetp.exe module woke up and attempted to communicate with a C&C server.
+We found that it downloaded an update which was saved in C:WindowsSysWOW64rpcnet.dll at21:29, April 27, 2012.
+This proves that the owner of the laptop purchased it with the Computrace Agent pre-activated or activated automatically during the initial system installation.
+Laptop Model: ASUS 1225B
+This system had obvious signs of Computrace Agent activity while the owner of the system stated that he has never installed or used any Absolute Software products.
+Another private PC belonging to one of our colleagues
+According to information from the file system, the C:Users directory was created on 2012-08-11 15:23:45 (local time zone).
+The owner recognized that as the date of purchase.
+Then we found some more files:
+C:WindowsSysWOW64wceprv.dll - 2012-08-11 19:39:41 C:WindowsSysWOW64rpcnet.exe - 2012-08-11 19:42:29 C:WindowsSysWOW64Upgrd.exe - 2012-08-11 19:42:44 C:WindowsSysWOW64rpcnet.dll - 2012-08-11 19:43:07
+All these confirm that the Computrace Agent was installed on the day the laptop was purchased.
+The owner claimed that he broke the factory seal and started the OS in the store and later that day connected the laptop to his home Wi-Fi network.
+As in the case of System A, this means that the agent was pre-activated on System B.
+Laptop Model: Samsung 900X3C
+During our research we made several attempts to find pre-activated Computrace in a number of local computer retail shops.
+In total we have manually checked more than 150 different configurations from various manufacturers.
+To our surprise, we have found just a single system that had rpcnet.exe running.
+Backdoored PC at a local retail shop
+We didn’t have the chance to fully analyze the system in the shop, but the fact that rpcnet.exe was running meant that rpcnetp.exe was started and had successfully downloaded the rpcnet.exe from the Internet.
+The laptop was on sale and when we asked why, a shop assistant explained that it had been returned by the first owner because of a broken keyboard.
+The keyboard was repaired after that and the laptop was put on sale at a discount.
+That means the laptop was used and probably connected to the Internet by the temporary owner or at the repair service.
+It’s unclear whether Computrace was activated by the user or by repair service staff, so we decided not to rely on this finding.
+Laptop Model: Samsung NP670Z5E
+We have contacted Absolute Computrace technical support service and provided serial numbers of hardware that had suspicious installation of Computrace Agents.
+The technical support assistant reported that those serial numbers were not in their database.
+We believe this means Computrace was not activated in the normal way.
+How it was activated, why and by whom remains a mystery.
+Beside that we have found several online messages by users claiming that Computrace is activated on their computers.
+Below are some examples of such claims found on online message boards:
+One user claims he has never used Absolute Software products but it is running on his machine
+Another user online claims he has a brand new laptop with preactivated Computrace
+Yet another user claims he never ordered Computrace, but it was running
+These and other claims of laptop owners suggest that unauthorized activations of Computrace products are possibly quite widespread.
+Using Kaspersky Security Network we have collected statistics on the number of computers where Absolute Computrace is activated.
+Below is a map showing the geographical distribution of computers that have Computrace Agent running:
+Our stats are limited to anonymous data from Kaspersky Lab products that have KSN enabled, which is a very small subset of all users online.
+According to our estimates, the real number of users with Computrace Agent activated on their computers may exceed 2 million.
+We have no information on how many of those users know that Computrace Agent is running on their systems.
+In addition, we have collected statistics about the baseboard manufacturer names on computers where Computrace Agent is active.
+absolutecomputrace_14s Baseboard manufacturers of systems where Computrace Agent is active
+We have compared this chart to the chart of most popular PC Vendor manufacturers (according to Gartner for Q4 2013 Shipments).
+Most popular PC vendors according to Gartner
+You can see that with the exception of Toshiba, the TOP5 PC market players are in TOP6 of PCs where Computrace is active.
+According to Wikipedia, “On some Toshiba laptops rpcnetp.exe is preinstalled by Toshiba on the unit’s hard drive prior to shipment from the factory“.
+This explains why there are so many Toshiba computers with Computrace.
+However, it’s not so clear why the top two vendors: Lenovo and HP have a relatively low number of Computrace Agents on their PCs, while ACER and ASUS lower down the ranking have a more significant share of affected computers.
+We have found no public information about ASUS or ACER policies regarding Computrace activation or pre-installation on hard drives.
+Soon after startup, rpcnetp.exe (the Small Agent) attempts to establish a TCP connection with the C&C server.
+It may connect via an IP address hard-coded in its body, set in the registry or stored on a hidden location on the hard disk.
+If direct communication by IP fails, it may try to resolve a domain name (typically search.namequery.com) and use a new IP instead.
+Small Agent was expected to download and run additional executables.
+However, we haven’t found any specific functionality that was designed for downloading and running additional modules.
+Nevertheless, the extensibility of its protocol allows it to do absolutely anything including downloading and running extra modules.
+The US20060272020 patent has an interesting paragraph regarding the rpcnetp.exe communication protocol:
+Deploying the Persistence Agent successfully in BIOS, for example, makes heavy use of an extensibility designed into the communications protocol.
+Without this extensibility the Agent would be larger and require frequent updates to add or change functionality.
+Such updates are neither practical nor economical, since the BIOS is programmed into the flash EEPROM of the platform and special tools (most often requiring user interaction) must be used to update the BIOS.
+Also, intensive testing is performed by the OEM on the BIOS since its integrity is critical to the operation of the computer.
+Having read that, it becomes clear that we should not expect to find any classic implementation of an update mechanism.
+According to the patent, the Small Agent supports “A method to read and write the Agent’s memory space”.
+Basically, this is the core mechanism of running arbitrary code on the remote computer, sufficient to accomplish a download task.
+Here is how communication between the Small Agent and a C&C looks in Wireshark network sniffer:
+Part of network communication between Small Agent and C&C server
+The whole communication consists of a series of POST requests and HTTP responses.
+The first request sent by the Small Agent has no payload; it’s an empty POST request.
+The server replies with a special HTTP header, Tag Id, that will be used until the end of conversation with the agent.
+Each HTTP response and subsequent POST request includes short binary data which forms a packet to process.
+HTTP is used in a very simple mode just as a carrier of the agent packets.
+The binary packets are crafted using Computrace’s basic communication protocol.
+While we see that the agent initiates an HTTP session and sends the first HTTP request to the server, the direction of real communication is opposite to that.
+The server responses are treated as request to the client and the client responds to these requests in the data added to the following HTTP POST request.
+You can find the structure of such packets below:
+All packets start and end with a special byte “~” (0x7E).
+This byte is used as a packet border indicator (packet separator).
+The following 4-byte field contains an Address of memory to work with.
+If the packet is of read-type, then the Small Agent will read memory starting from this address.
+The number of bytes to read is specified in the following Size field (2-bytes long).
+Each packet is appended with special 3 bytes: 1 byte for Seq value and 2 bytes for Cksum.
+Seq is a special 8-bit value used as a sequence number that is incremented by server and client according to their sequence algorithm.
+Cksum is a 2-byte value having a short custom hash of all the fields after packet separator and before the Cksum.
+IfSeq or Cksum values are not what Small Agent expects, then current requests is disposed and the last response is used instead.
+A Seq number corresponding to the last response should indicate to the C&C server that the agent has received a corrupted or altered packet and the server should retransmit the request.
+The first packet of the server is special and is used for a basic handshake with the client.
+It looks like this:
+The Address field is set to hexadecimal 0xFFFFFFFF, Size is set to 0x0004 and a unique Session IDis chosen by the server.
+The value of Session ID should be used by the client in all responses to the server.
+Client response has a fixed format:
+Like in the server packets, the response packet must always start and end with a packet separator.
+The first 4 bytes after that are set to a fixed Session ID value defined by the server in the Handshake Packet.
+Next, the 2-byte field is the size of Response Data which is following that value.
+After that Seqand Cksum fields are used as with the server packets.
+An additional byte modification rule (escaping) may be applied if any of the fields between the packet separator contain a byte with hex-code 0x7E (which matches the packet separator).
+In this case the 0x7E byte is transformed into a sequence of two bytes 0x7D 0x5E, which would increase the packet size and affect the checksum.
+However, interpretation of the packet and calculation of the checksum is only accomplished after unescaping the packet.
+If the 0x7D byte is met in the packet before escaping, it must also be escaped and 0x7D is replaced with a sequence of 0x7D 0x5D bytes.
+This completes the protocol according to what we have observed.
+The protocol provides two basic primitives:
+Read operation
+Write operation
+In addition to that, the Handshake Packet provides the basic address of the Session object in the memory of the Small Agent.
+This might be sufficient to execute arbitrary code.
+However, on systems with DEP and ASLR enabled some extra steps may significantly ease the process of running code and make the process smoother and more stable.
+That is why there is extra processing implemented in the Small Agent.
+Upon receiving and writing data to a defined memory location it checks a special field in the Session object which defines a built-in basic command to execute.
+If the C&C server changes the value of this field, the agent may run a special command with parameters.
+The following commands are implemented in the module we analyzed:
+Get handle of a module in memory (calls GetModuleHandleA)
+Get address of an exported procedure (calls GetProcAddress)
+Reserve memory on heap
+Free memory on heap
+Execute chain of commands from memory location
+Call a function with specified memory address and parameters
+This adds extra flexibility and allows an engineer to precisely allocate memory, transfer data in it and execute any extra code if required.
+The protocol used by the Small Agent provides the basic feature of remote code execution.
+The protocol doesn’t use any encryption or authorization with the remote server, which creates numerous opportunities for remote attacks in a hostile network environment.
+Although encryption seems to be added to the protocol at some later stages of communication, an attacker may utilize the basic unencrypted protocol to successfully hijack the system remotely.
+A typical attack on a local area network would be to redirect all traffic from a computer running Small Agent to the attacker’s host via ARP-poisoning.
+Another possibility is to use a DNS service attack to trick the agent into connecting to a fake C&C server.
+We believe there are more ways to accomplish such attacks, though this is beyond the scope of the current research.
+When we first found and analyzed Computrace we mistakenly thought it was malicious software, because it used so many of the tricks that are popular in current malware.
+It has specific anti-debugging and anti-reverse engineering techniques, injects into the memory of other processes, establishes secret communication, patches system files on disk (autochk.exe), keeps configuration files encrypted, and finally drops a Windows executable directly from BIOS/firmware.
+Such aggressive behavior by Computrace Agent was the reason it was detected as malware in the past.
+According to some reports on the Internet, Computrace was detected by Microsoft as VirTool:Win32/BeeInject.
+Here is how Microsoft describes this generic threat name:
+Nevertheless, detection of Computrace modules was later removed by Microsoft and some AV vendors.
+Computrace executables are currently allowlisted by most AV companies.
+We believe that Computrace was designed with good intentions, but our research shows that vulnerabilities in this software can turn a useful tool into a powerful weapon for cybercriminals.
+We believe that such a powerful tool needs to have powerful authentication and encryption mechanisms to continue fighting the good fight.
+Although there was no evidence of intentional secret activation of Computrace modules on the computers we analyzed, we believe that the number of computers with Computrace activated may be surprisingly high.
+We do not believe that Absolute Software or any PC manufacturers have any reason to secretly activate this module, but it’s clear that if there are a lot of computers with activated Computrace Agents, it is the responsibility of the manufacturers and Absolute Software to notify those users and explain how they can deactivate it if they don’t want to use Absolute Software services.
+Otherwise, these orphaned agents will keep on running unnoticed and provide opportunities for remote exploitation.
+http://corelabs.coresecurity.com/index.php?module=Wiki&action=view&type=publication&name=Deactivate_the_Rootkit
+http://www.absolute.com/en/partners/bios-compatibility
+http://www.absolute.com/en/resources/whitepapers/absolute-persistence-technology
+https://www.google.com/patents/US20060272020
+http://en.wikipedia.org/wiki/LoJack
+One of the following processes is running: rpcnet.exe rpcnetp.exe 32-bit svchost.exe running on 64-bit system (can’t serve as complete indicator)
+rpcnet.exe
+rpcnetp.exe
+32-bit svchost.exe running on 64-bit system (can’t serve as complete indicator)
+One of the following files exist on the hard drive: %WINDIR%System32rpcnet.exe %WINDIR%System32rpcnetp.exe %WINDIR%System32wceprv.dll %WINDIR%System32identprv.dll %WINDIR%System32Upgrd.exe %WINDIR%System32autochk.exe.bak (for FAT) %WINDIR%System32autochk.exe:bak (for NTFS)
+%WINDIR%System32rpcnet.exe
+%WINDIR%System32rpcnetp.exe
+%WINDIR%System32wceprv.dll
+%WINDIR%System32identprv.dll
+%WINDIR%System32Upgrd.exe
+%WINDIR%System32autochk.exe.bak (for FAT)
+%WINDIR%System32autochk.exe:bak (for NTFS)
+The system resolves one of the following domain names using DNS: search.namequery.com search.us.namequery.com search64.namequery.com bh.namequery.com namequery.nettrace.co.za search2.namequery.com m229.absolute.com or any m*.absolute.com
+search.namequery.com
+search.us.namequery.com
+search64.namequery.com
+bh.namequery.com
+namequery.nettrace.co.za
+search2.namequery.com
+m229.absolute.com or any m*.absolute.com
+The system connects to the following IP: 209.53.113.223
+One of the following registry keys exist: HKLMSystemCurrentControlSetServicesrpcnet HKLMSystemCurrentControlSetServicesrpcnetp
+HKLMSystemCurrentControlSetServicesrpcnet
+HKLMSystemCurrentControlSetServicesrpcnetp
+Below are some of files that were discovered as rpcnetp or rpcnet service binaries:
+0153ad739956b12bf710c7039186728d 01a19f74cfb19cc61d62009bcfa59961 076a360ee0cfc5ca2afc8468fa1ae709 130206a40741aa57f3778bb70e593e16 19a51da66e818f0e10973e1082c79a70 19e67bd685019dafadfe524517dab145 1f2d10f767c7145a8d2a3fbbf66bed7a 27d43a7f03260ebdf81dd6515646510b 3a1ed2730cee3ec7d6d5091be5071eaa 418f527e59508480cfc17644d8387736 4476ccfd883c603cebbc317c6c41c971 4a3b02ac2e1635c0a4603b32d447fbb2 4bcf98b48bee5e7094d0cf026d4edce4 5235a32d018b79f065c64b06bd4001be 5515c17117a37fc808fc7a43a37128b0 5829887d2304c08237a5f43c42931296 5a5bb037b8e256a3304f113a187b1891 5e071026cb4c890a3584e02af1e3daf8 6846e002291086843463238e525c8aaa 77f57671b08e539e3232bf95a2ac8aec 78c696e5fd0041d8a5ce5e5e15b6f2f3 7a7cd44a4113046869be5ab8341f759f 8282e68524af7a46afc1bac2105c6cda 86332af92a6a80660bb8659711378140 8f95ce32c2596771174f7054a78f4a84 925f2df6a96637d23c677b33a07b52c1 961d7bbefa57d1b260db075404454955 a9e0a97c29bd110f54beb465d8ec3e52 aaaee16f8cbd6a35c0f6b37358b3ce54 b4c3723eb687b0e63aeea2974b8d73ba b7534d5ed3b01ff3a96b43b855b2a103 bb7ef397f31c184f4089fc9bac04566f c1b19ad11821780b67f4c545beb270c0 c6089ec6ae62fe264896a91d951d0c79 cacebf514be693301c1498e216b12dbb cbb0d507e47d7f0ae3e5f61ea8feff08 cde233aa0676f5307949c0a957a2f360 cf8bcf7138cc855d885271c4ee7e8a75 d2561d67e34ff53f99b9eaab94e98e2a e2e9dcce8d87608e4ba48118b296407f e57892858a7d3a7799eacb06783bd819 e583977f36980125c01898f9e86c6c87 ed9b58f56a13fbb44c30d18b9b5c44d0 ee08ce8247ffb26416b32d8093fe0775 eeab12e6f535ee0973b3ddb99287e06c ef8d08b07756edc999fbc8cfac32dc23 f03f740fde80199731c507cdd02eb06e f259382b6fa22cae7a16d2d100eb29e4 f42dbd110320b72d8ff72f191a78e5d5 fc0ba4c9a301b653ee2c437e29ed545e

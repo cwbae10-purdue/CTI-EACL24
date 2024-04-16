@@ -1,0 +1,154 @@
+This research explores the security landscape of the Internet-facing services hosted in Amazon AWS, Microsoft Azure and Google Cloud Platform.
+Public cloud is becoming increasingly popular and the reported total spending on cloud infrastructure grew 45.6% in 2018.
+Amazon AWS maintained its lead with a 31.3% share of the Cloud Service Provider (CSP) market, followed by Microsoft Azure with 16.5%, and Google Cloud Platform, with 9.5%.
+CSPs offer various “as-a-service” models that give businesses agility and flexibility to scale operations without worrying about the IT infrastructure.
+However, a single insecure configuration can put the entire infrastructure at risk.
+We focused on evaluating public cloud from the publicly exposed hosts.
+We collected information including exposed services, service versions and service vulnerabilities to determine the security posture of each host.
+We also investigated the correlation between malicious IPs in public cloud and prior known vulnerabilities.Our analysis revealed that:
+47% of SSH servers on Azure may be vulnerable to brute-force attacks due to the “use password-login” option.
+32% of exposed public cloud hosts have SSH servers open.
+24% of exposed public cloud hosts have known vulnerabilities.
+50% of exposed public cloud vulnerabilities have been known for at least two years.
+61% of exposed public cloud hosts are still on TLSv1.1 or older versions (v1.2 and v1.3 were released in 2008 and 2018, respectively).
+We also discovered evidence that attackers are using public cloud as a stepping stone to launch attacks.
+Cloud infrastructure is still considered more secure than on-premise infrastructure due to the significant resources that CSPs dedicate to maintaining and upgrading their infrastructure.
+AWS, Azure, and GCP each had less than 20 CVEs identified in 2018 as opposed to thousands of vulnerabilities found in Windows or Linux every year, according to the NIST National Vulnerability Database (NVD).
+However, there is no shortage of cloud security incidents across all CSPs.
+Examples include leaked voting machine passwords, the leak of Indian citizen records, and leaked user job profiles).
+Prior research from RedLock, NetSkope and McAfee showed that most cloud security incidents are attributed to misconfigurations by cloud customers, not the CSPs.
+While some security responsibilities have been gradually shifted from users to CSPs, users are always responsible for some security design and decisions.
+Secure cloud infrastructure can only be achieved when both CSPs and users fulfill their responsibilities.
+This blog reviews the current state of the public cloud service providers, then provides details on exposed services, exposed vulnerabilities, and malicious IPs.
+We conclude with a set of open-source tools to help users secure their public cloud infrastructure.
+CSPs offer various services that allow users to delegate infrastructure, operating systems, software platforms, and even functions to the cloud.
+Figure 1 shows the shared responsibility between users and cloud service provider.
+Delegating infrastructure to the cloud (Infrastructure as a service, or IaaS) gives users the highest control to manage their systems while delegating functions to the cloud (Functions as a Service, or FaaS) gives users the easiest way to run a piece of code without worrying about the platform, resilience, and scalability.
+This research shows that users make fewer security mistakes when more responsibilities are shifted to the cloud provider.
+Figure 1.
+The “as-a-service” operation models.
+As AWS, Azure, and GCP together account for more than 60% of cloud market share, this research focuses only on these three CSPs.
+AWS, Azure, and GCP currently respectively each owns 41.8 million, 14 million, and 7 million IPv4 addresses, based on a review of the IP range that each CSP publishes .
+These addresses are spread across multiple cloud services, as shown in Table 1.
+This table only shows AWS and Azure, since GCP has not published the IP blocks of its individual services.
+Note that the majority of this research was done by finding the exposed hosts in these IP blocks and analyzing the services running on them.
+Table 1.
+Number of public IPs that AWS and Azure allocate for the cloud services
+Whenever an application service is exposed to the entire internet, there is always a risk – no matter how secure the service.
+Some services – such as HTTP, POP3, and VPN – are designed to be open to the internet so that users can access them from anywhere.
+However, many application services don’t need to be wide open to the internet.
+For example, a database is typically accessed only by a few application servers from specific networks, and an SMB server is designed for sharing files within the same local area network.
+Opening these application services to the internet simply creates attack vectors into the system.
+While CSPs make it easier to deploy services to the internet, they also make it quicker to expose misconfigured or vulnerable services.
+To find the hosts and services exposed on the public cloud, we queried Shodan and Censys for the IP blocks owned by AWS, Azure and GCP.
+We found 9.3 million AWS hosts, 1.5 million Azure hosts, and 2.5 million GCP hosts.
+Our searches focused on eight services that are generally not secure enough to expose to the entire internet.
+Table 2 shows the result of these searches.
+It is shocking to see that 32% of the exposed hosts in public cloud have open SSH services.
+Although SSH is one of the most secure protocols, it is still too risky to expose this powerful service to the entire internet.
+Any misconfiguration or weak/leaked credentials can lead to host compromise.
+CIS benchmarks suggest inbound traffic to SSH services should be restricted to a small set of hosts.
+Curious to how secure these SSH servers are, we scanned all 2.8 million U.S. based SSH servers hosted in public cloud.
+To have strong security, SSH servers should only be authenticated with a public/private key pair, as opposed to password-based authentication, because they are vulnerable to brute-force attacks.
+Much to our surprise, almost 50% of the SSH servers on Azure have password login enabled while less than 5% had it enabled on AWS and GCP (Table 3).
+We thought it was more than a coincidence since the difference was so large, so we dug into Azure cloud to investigate how these SSH services are created.
+We quickly found the explanation: most SSH services on Azure Virtual Machines are configured during the VM creation process.
+Figure 2 shows a screenshot of the SSH configuration on Azure.
+Azure gives users two options: password authentication or public key authentication.
+It is logical to think that half of the users would choose password authentication, likely because they don’t know how the public key authentication works or how to create a key.
+Nevertheless, it is easy to come up with or reuse a password, but creating a public key requires significant extra steps, as described in this Azure documentation.
+This same behavior was not observed in AWS or GCP environments because neither of them offers password login as an option.
+AWS generates a new key pair and lets the user download the private key before the VM is launched (Figure 3).
+GCP also creates a key pair automatically upon VM creation and manages the keys inside the Compute Engine (Figure 4).
+This finding shows how much the UI design can steer user behavior and potentially move the system to a less secure state.
+Table 2.
+Ports and services discovered in public cloud
+Table 3.
+SSH servers exposed in the U.S.
+Figure 2.
+Azure Virtual Machine SSH configuration
+Figure 3.
+AWS EC2 SSH configuration
+Figure 4.
+Google Compute Engine SSH configuration
+Within the exposed application services in public cloud, we identified 29 million vulnerabilities in AWS, 1.7 million vulnerabilities in Azure, and 4 million vulnerabilities in GCP.
+On average, each vulnerable host has 11 vulnerabilities.
+Interestingly, the top 10 vulnerabilities across all three CSPs are largely the same and OpenSSH and Http_Server are the only two products seen on the list, as shown in Table 4.
+This is because web application is the most common service (http/https) exposed to the internet and OpenSSH and Http_Server are the most widely used technologies behind web applications.
+Table 4.
+Top 10 vulnerabilities in public cloud
+When dissecting the vulnerabilities across all the cloud services, 99.8% of the vulnerabilities in AWS are from EC2 and 99.8% of the vulnerabilities in Azure are from Azure Virtual Machine.
+AWS EC2 and Azure Virtual Machines are both IaaS that let users deploy and manage the entire operating systems.
+The unfortunate consequence is that most users don’t prioritize the security and are unaware of the vulnerabilities in their systems.
+Figure 5 shows the number of hosts with different numbers of vulnerabilities in public cloud.
+The horizontal axis is the number of vulnerabilities and the vertical axis is the number of hosts.
+25% of the AWS hosts, 8% of the Azure hosts, and 27% of the GCP hosts are found vulnerable.
+The majority of the vulnerable hosts have 1-10 vulnerabilities.
+Figure 5.
+The number of hosts with different numbers of vulnerabilities in AWS, Azure, and GCP
+Figure 6 shows the number of vulnerabilities within public cloud based on year of CVE release and severity rating.
+The horizontal axis is the CVE year, the vertical axis is the number of vulnerabilities and the colors represent CVSS v2 severity.
+As illustrated within the figure, 70% of the vulnerabilities are rated medium severity and 17% are rated high severity.
+18% of the vulnerabilities in AWS, 21% in Azure and 12% in GCP are older than five years.
+These old vulnerabilities imply the number of legacy or end-of-life applications that are still running in public cloud.
+Because patching these old vulnerabilities may require a revamp of the applications, developers usually avoid opening this can of worms.
+Figure 6.
+Number of vulnerabilities with different CVE year in AWS, Azure, and GCP
+Secure Socket Layer (SSL) and Transport Layer Security (TLS) are fundamental to the modern web application security.
+They provide communication privacy and data integrity to the computer network.
+Many vulnerabilities were discovered in earlier versions of the protocols and a few of the severe vulnerabilities allow man-in-the-middle attacks.
+After examining all the exposed hosts with SSL/TLS configured, we found more than 61% were still using protocols older than TLS v1.2, as shown in Figure 7.
+This number is worrisome as it’s been almost ten years since TLS v1.2 was released and both TLSv1.0 and TLSv1.1 are scheduled to retire in 2020.
+It is again not surprising to see that most of these outdated protocols are maintained by IaaS owners who are often behind the patching and update cycle.
+Figure 7.
+Adoption rate of different TLS/SSL versions in public cloud
+Public cloud not only simplifies developers and IT’s work but also provides a platform for malicious actors to launch or pivot attacks.
+The vulnerable application services in public cloud create attack vectors into the cloud infrastructure.
+From an attacker’s perspective, compromising a public cloud instance is not too different from compromising an on-premise server.
+However, knowing that an instance is hosted on a specific CSP, an attacker can better weaponize the exploit to evade surveillance.
+There is also a better chance that a compromised public cloud instance has higher computation power, in case of a crypto-jacking attack.
+Unit 42 has uncovered evidence that malicious actors are developing malware targeting public cloud infrastructure.
+To understand the problem, researchers analyzed the malicious IPs in 2018 from Facebook Threat Exchange.
+Out of the 16,764 malicious IPs, 985 originated from AWS, 109 originated from Azure, and 34 originated from GCP.
+A total of 7% of the reported IPs were from one of the three CSPs.
+It is unclear whether these malicious IPs were hosts compromised or created by attackers.
+We assume that hosts with more vulnerabilities have a higher chance of being compromised.
+To validate this assumption, we checked the vulnerabilities of the reported IPs during the time of their malicious activities.
+Figure 8 shows the vulnerability statistics of the malicious public cloud IPs.
+The left plot is the percentage of IPs with known vulnerabilities.
+The right plot is the average number of vulnerabilities found on each IP.
+Out of the 1,128 malicious public cloud IPs, 60% have known vulnerabilities with an average of 28 vulnerabilities per host.
+These numbers are statistically significant compared to the fact that only 24% of the exposed public cloud hosts are found with vulnerabilities with an average of11 vulnerabilities per host.
+Based on these numbers, there is a high chance that these vulnerable hosts were compromised and used for malicious activities.
+Finally, we looked for the malicious IPs that are associated with a high number of short-lived domain names.
+Short-lived domain names are a common characteristic of malicious hosts.
+We found that 20% of the malicious public cloud IPs are associated with more than 55 domain names within 12 months.
+The implication of these numbers is that public cloud is becoming a stepping stone for launching attacks.
+Figure 8.
+Vulnerabilities in the malicious public cloud hosts
+Public cloud adoption continues to accelerate as it plays an increasingly significant part in next-generation IT.
+Although Amazon launched AWS more than 13 years ago, CSPs started to focus more on security in recent years.
+About 75% of allAmazon cloud security products were launched within the last three years.
+In public cloud, security is a shared responsibility between the CSP and the users.
+As there are so many cloud services in public cloud, most of the users are probably unaware of their security responsibilities.
+CSPs not only should secure their cloud services but also set up guardrails to prevent and detect insecure user behavior.
+The findings in this study reiterate the importance of “security by default.” If there were no insecure options, the users could not have made insecure decisions.
+If CSPs proactively monitored for insecure user behavior and alerted users with actionable remediation, there would not have been so many exposed services.
+There are, however, still designs and decisions for which users should be responsible.
+Users need to have minimal security awareness to work in the cloud.
+Although Function-as-a-Service removes a lot of maintenance burden from the users, developers still need to write the code and assign proper permission to each function.
+If new vulnerabilities are found in the libraries that the functions use, only the developer can patch and update the source code.
+If CSP alerts an exposed SSH service and recommends a firewall configuration to restrict inbound traffic, only the system admins know what IPs the firewall should allowlist.
+These trivial tasks are too often neglected, which can lead to catastrophic outcomes.
+The sheer volume of security incidents caused by weak credentials or exposed databases have numbed the security community.
+Yet there is no sign that the number of related security incidents is slowing down.
+Different organizations simply repeat the same mistakes at different CSPs.
+Perfect security is almost impossible, but one should always conduct due diligence to minimize the chance of compromise.
+Thanks to the open-source community, there are plenty of free tools to simplify a complex job.
+These tools that can help users bridge the security gap in their cloud infrastructure.
+Vulnerability scanners: Developers should continuously scan their code for known vulnerabilities.
+Prisma Scan, Clair, OpenSCAP, and OpenVAS can identify the vulnerable packages in your system.
+Cloud infrastructure auditing: System administrators should continuously audit their cloud infrastructure and detect misconfiguration.
+Prisma IaC Scanner, ScountSuit, and CloudSploit can identify potentially misconfigured components in your cloud infrastructure.
+Exposed hosts and services monitoring: System administrators can monitor the IP blocks that they own from the internet.
+Shodan and Censys are IoT search engines that periodically scan the entire internet.

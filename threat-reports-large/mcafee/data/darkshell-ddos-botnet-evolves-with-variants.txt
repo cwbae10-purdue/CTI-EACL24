@@ -1,0 +1,84 @@
+Darkshell is a distributed denial of service (DDoS) botnet targeting Chinese websites.
+It was found in 2011 and was first analyzed by Arbor Networks.
+McAfee Labs recently analyzed a few new samples that turned out to be variants of Darkshell, and we found extensive variations in network traffic and control commands.
+The Darkshell bot follows a fairly standard installation process by copying itself into the System32 directory with a name that appears to be legitimate, for example, C:\WINDOWS\system32\WinHe803.exe.
+It then sends the system information of the infected machine to its control server in encrypted format.
+Once the control server receives the information, it responds with the victim’s address and the type of DDoS attack to perform.
+Here are a few of the MD5 hashes we analyzed:
+aff00fac695971c1aea37ce51f4d6228
+beec4de4740da867ed44c666d283c4f2
+b3e28fc05514abbaea1e12b676bef2a8
+bc47ff49ba8ea1bc0c028edd7262c0ac
+bcb210972648719e7d53223fbb7210ab
+beec4de4740da867ed44c666d283c4f2
+bf56f97511c4c4bc23d92c17d5e976fe
+c008c851bef86764943f7a4a2a16d7c6
+c74890f5a5400e70ff40da0493a933d7
+The binaries we analyzed were compiled in a way that it makes them hard to reverse engineer (and ease our analysis).
+Each binary contained a lot of junk code and made multiple calls between the junk codes to complete a single task.
+We also found that the binaries used antidebugging and antidisassembly techniques to evade disassembly and reversing.
+The code was written in C++.
+Let’s dig into some detailed analysis of the new variant of Darkshell.
+The binary executed fake code along with a debugger detection check, and exited the process while debugging.
+The binary accessed heap flags from the Process Environment Block (PEB) structure to detect our debugger.
+(Heap flags are set to “0x50000062” when a process is being debugged.)
+The following figure shows the actual code from the botnet binary:
+If the flags are set to 0x50000062, the bot will detect the debugger and will exit the process.
+Once we bypassed this defense, the botnet started its decryption routine with the help of the hard-coded XOR key shown below:
+First, the binary decrypted 1917 (hex) bytes of the code with the preceding XOR key, starting at the address 0x00401000.
+Next, it decrypted all the strings using the same XOR key.
+Following that, the bot built its import address table using the “LoadLibrary()” and “GetProcAddress()” functions.
+We found it interesting that the bot did not call LoadLibrary() and GetProcAddress() in the usual way.
+In this sample, it first pushed the address of the LoadLibrary() function on the stack and then returned to it, as shown in the next image:
+After the LoadLibrary() function, the sample returned to a piece of code that the OllyDbg 1.1 debugger failed to recognize.
+This maneuver means the binary uses an antidisassembly technique.
+To get around this obstacle, we tried OllyDbg 2.0, which successfully assembled the code as follows:
+The malware used a similar move with the GetProcAddress() function, pushing the address on the stack and returning to it.
+This way the bot built its import address table and jumped to original entry point, as we can see in the next image:
+By looking at the preceding code, we can easily say that this is a generic Microsoft Visual C++ executable entry point.
+Finally, we dumped the process and fixed the import table to unpack it in the original format.
+Here are the strings from the unpacked binary:
+Now we have our unpacked binary.
+Rather than dive into the reverse engineering, we will focus on network control activity.
+The bot sends a TCP packet of 228 bytes in encrypted format to its control server.
+Here is the packet capture:
+We identified the routine in use—a fairly simple XOR and substitution—with the help of the hard-coded value “7DB” in following snippet:
+The XOR key is generated and data is encrypted in the “encryption_routine” function seen above.
+The preceding encryption algorithm can be translated as follows: Encrypted Byte = (Original Byte ^ XOR Key) + XOR Key And hence the decryption algorithm is: Original Byte = (Encrypted Byte – XOR Key) ^ XOR Key
+Applying this decryption algorithm on the encrypted packet results in the following:
+Here’s an analysis of the Darkshell control structure of 228 bytes:
+struct {
+char Processor[127]; // Processor information char Memory[31]; // Memory information char OS[31]; // Operating System information char Version[31]; // Bot version information
+};
+As we see above, the bot sends processor, memory, and operating system information along with its version, “VIP0410” in this sample.
+Once the control server receives this information, it replies with 124 bytes of data that contain the victim’s address and method for launching the DDOS attack.
+The response packet is not encrypted, as we see below:
+The first 4 bytes describe the type of attack.
+In the preceding case the value “0x00000400” launches an HTTP GET request with a small-header DDOS attack on the victim, using port number 80.
+The port value is specified at offset “0x009E,” which is 50 (or 80 in decimal).
+The response attack structure of the 124 bytes:
+struct {
+DWORD dwCode; // attack method char Target[99]; // URL of target, NULL-terminated/extended DWORD Port // Port to attack DWORD ThreadCount // number of threads to create DWORD dwMilliseconds // Sleep (in milliseconds) DWORD socketCounter1 // Counter to create sockets DWORD socketCounter2 // Counter to create sockets
+};
+Once the bot receives the response, it parses the attack method and creates multiple threads with attack methods on the infected machine, according to the thread count.
+The bot supports multiple attack methods, including SYN flood, UDP flood, ICMP flood, SuperSYN flood, GET requests flood, etc.
+The bot can also download and execute malicious binaries from the control servers.
+An HTTP GET requests attack with a small header looks like this:
+Here are a few of the control domains we identified:
+hh6002.sxzyong.com
+9527idc.vicp.net
+hwtt.3322.org
+805.sxzyong.com
+801.sxzyong.com
+sdqd666.3322.org
+802.sxzyong.com
+806.sxzyong.com
+Further investigation revealed that the Darkshell botnet source code is available online.
+We found the www.darkshellnew.com domain, which calls itself the official Darkshell website.
+It hosts various versions of Darkshell botnet builder that can be downloaded free with source code.
+Here is a screenshot of the homepage (when converted from Chinese to English):
+Here are the different versions of Darkshell botnet builders available to download:
+Our research shows that variants of the Darkshell botnet are still evolving, with features such as antidebugging and antidisassembly techniques to make reverse engineering more time consuming.
+The botnet can launch DDOS attacks using different methods and can flood websites.
+Further, the presence of free Darkshell builders with source code on the Internet opens up the evolution of other variants with other mechanisms.
+I would like to thank my colleague Amit Malik for contributing to this botnet research.

@@ -1,0 +1,177 @@
+The Zeus botnet has been in the wild since 2007 and it is among the top botnets active today.
+This bot has an amazing and rarely observed means of stealing personal information–by infecting users’ computers and capturing all the information entered on banking sites.
+Apart from stealing passwords, this bot has variety of methods implemented for stealing identities and controlling victims’ computers.
+Over the years Zeus has been released in a lot of versions, adding or changing functionality, and is highly flexible in its configuration.
+So this is just a snapshot of one version (1.2.7.19), giving an overview of its functionality.
+In the first part of this blog I will disclose the process involved in building and distributing a Zeus botnet in the wild.
+In the second part, I will discuss how Zeus captures personal information by injecting code dynamically, and finally I’ll offer some thoughts on command and control.
+Zeus serves as a heads up for all those who believe that banking transactions on HTTPS can never be intercepted.
+I’ve been busy researching how Zeus is built and distributed in the wild.
+It has been a pretty high-profile botnet since it was discovered, due to its high rate of infections.
+During our research activity I was able to get hold of a Zeus builder toolkit.
+It was priced at US$700 to $1,500 then; a few months later, a free version of this toolkit was public.
+The process of building and configuring the Zeus bot requires just a couple of steps.
+Step 1) Â Configuration specification:
+Specifying all the static configuration parameters in the configuration file.
+The “edit config” button will allow you to enter various parameters to control the botnet as Â described below.
+timer_logs : Time interval to upload the logs to server timer_stats :Â Time interval to upload infection statistics to server url_config :Â Server URL for fetching the config file url_compip :Â Server URL for reporting the victim encryption_key :Â Encryption key to encrypt config file url_loader :Â URL for fetching latest version of the zeus.exe url_server :Â Command and control server file_webinjects:Â This parameter is the file name containing HTML web injection code.
+AdvancedConfigs :Â URL for fetching the backup config file WebFilters :Â Contains the masked list of URLs that should be monitored for capturing loginÂ credentials.
+WebDataFilters: Contains the list of URLs that should be monitored for specific string matches.
+If patterns such as “Passw” or “login” is matched, data is captured and sent to C&C server, e.g.,Â http://mail.rambler.ru/*” “passw;login” WebFakes: URLs that should be redirected to the fake websites
+TANGrabber:
+Step 2) Building an encrypted configuration file
+Let’s have a look what happens when we press the “Build config” button.
+The toolkit will build the final encrypted configuration file with an option to save it.
+This configuration file is then uploaded by the bot master on the C&C server.
+Step 3) Building the bot executable
+The bot master can build the Zeus executable with the “Build loader” button option.
+Zeus Network Communications
+When the bot is executed in a virtual machine, initially it communicates over HTTP and sends a GET request to the command and control server to retrieve the configuration file.
+The server replies with the requested configuration file.
+This request is made repeatedly on the basis of the timer value configured in the configuration file.
+The bot sends the information of the infected computer to the control server according to the “url_server” parameter specified in the configuration file.
+Upon closer analysis of the Zeus network communications, we have come across an interesting similarity between the GET response from the server and the next POST request sent by the bot.
+As observed above, we see this similarity in the initial part of the GET response from the server and the POST request from the bot, starting at the third byte after the HTTP header ends.
+We have made similar observations with the older versions of the Zeus bot.
+This consistent trait is something we can use to implement generic detection for this bot on a network gateway!
+HTML injection on SSL-secured banking transactions
+As banking websites evolved, they have added an extra layer of security to mitigate keystroke-logging attacks.
+On the other hand, continuously evolving malwares have also come out with new techniques to bypass these security measures and steal login credentials.
+Password-stealing botnets such as Zeus now use HTML code-injection techniques, whereby a bot on the infected computer injects HTML code into the legitimate web pages of the banking site to request additional personal information not required during the transactions.
+This lures the users into inputting more credentials than required.
+They are captured by the bot and posted to the Zeus bot masters command and control server.
+This shows even forms that are supposed to be HTTPS encrypted can be manipulated by a bot to entice the user into typing arbitrary amounts of personal information, which can be captured (using key logging) and sent off to the C&C master.
+Another technique that can be used is detecting the difference in the HTML form fields.Â The idea is to detect the change in the number of HTML form fields while accessing the banking site and when the data is posted on the server.
+This can be detected on the Network gateway.
+In the case of Zeus, as the banking sites are accessed over HTTPS, the perimeter device needs to be armed with SSL man-in-the-middle functionality to detect this form of network traffic.
+Banking websites have come up with the virtual keyboard technique to mitigate the keystroke-logging attacks.
+Zeus counterattacks this security feature by capturing the screenshots on each mouse click.
+Each click will be intercepted and a screenshot captured that will be sent to the drop server which is then combined sequentially to extract the entered password as shown below.
+Once a machine is infected with the Zeus bot, you can use the Zeus decoder tool available here to decrypt the encrypted config file.
+Let‘s take a look at the decrypted config file.
+We see the HTML injection code that this bot has added into it.
+http://172.16.230.183/bt.exe
+http://172.16.230.183/gate.php
+!
+*.microsoft.com/*
+!http://*myspace.com*
+https://www.gruposantander.es/*
+!http://*odnoklassniki.ru/*
+!http://vkontakte.ru/*
+@*/login.osmp.ru/*
+@*/atl.osmp.ru/*
+https://banking.
+*.de/cgi/ueberweisung.cgi/*
+*&tid=*
+*&betrag=*
+https://internetbanking.gad.de/banking/*
+KktNrTanEnz
+https://www.citibank.de/*/jba/mp#/SubmitRecap.do
+SYNC_TOKEN=*
+https://www.mybank.com/loginform.asp
+(Fake banking URL that I added while building the config file.)
+Following is the abbreviated list of banking sites targeted by this bot; it’s found in the decrypted configuration file.
+https://online.wellsfargo.com/signon*
+https://www.paypal.com/*/webscr?cmd=_account
+https://www.paypal.com/*/webscr?cmd=_login-done*
+https://www#.usbank.com/internetBanking/LoginRouter
+https://easyweb*.tdcanadatrust.com/servlet/*FinancialSummaryServlet*
+https://www#.citizensbankonline.com/*/index-wait.jsp
+https://onlinebanking.nationalcity.com/OLB/secure/AccountList.aspx
+https://www.suntrust.com/portal/server.pt*parentname=Login*
+https://www.53.com/servlet/efsonline/index.html*
+https://web.da-us.citibank.com/*BS_Id=MemberHomepage*
+https://onlineeast#.bankofamerica.com/cgi-bin/ias/*/GotoWelcome
+https://online.wamu.com/Servicing/Servicing.aspx?targetPage=AccountSummary
+https://onlinebanking#.wachovia.com/myAccounts.aspx?referrer=authService
+https://resources.chase.com/MyAccounts.aspx
+https://bancaonline.openbank.es/servlet/PProxy?
+*
+https://extranet.banesto.es/*/loginParticulares.htm
+https://banesnet.banesto.es/*/loginEmpresas.htm
+https://empresas.gruposantander.es/WebEmpresas/servlet/webempresas.servlets.
+*
+https://www.gruposantander.es/bog/sbi*?ptns=acceso*
+https://www.bbvanetoffice.com/local_bdno/login_bbvanetoffice.html
+https://www.bancajaproximaempresas.com/ControlEmpresas*
+https://www.citibank.de*
+https://probanking.procreditbank.bg/main/main.asp*
+https://ibank.internationalbanking.barclays.com/logon/icebapplication*
+https://ibank.barclays.co.uk/olb/x/LoginMember.do
+https://online-offshore.lloydstsb.com/customer.ibc
+https://online-business.lloydstsb.co.uk/customer.ibc
+https://www.dab-bank.com*
+http://www.hsbc.co.uk/1/2/personal/internet-banking*
+https://www.nwolb.com/Login.aspx*
+https://home.ybonline.co.uk/login.html*
+https://home.cbonline.co.uk/login.html*
+https://welcome27.co-operativebank.co.uk/CBIBSWeb/start.do
+https://welcome23.smile.co.uk/SmileWeb/start.do
+https://www.halifax-online.co.uk/_mem_bin/formslogin.asp*
+https://www2.bancopopular.es/AppBPE/servlet/servin*
+https://www.bancoherrero.com/es/*
+https://pastornetparticulares.bancopastor.es/SrPd*
+https://intelvia.cajamurcia.es/2043/entrada/01entradaencrip.htm
+https://www.caja-granada.es/cgi-bin/INclient_2031
+https://www.fibancmediolanum.es/BasePage.aspx*
+https://carnet.cajarioja.es/banca3/tx0011/0011.jsp
+https://www.cajalaboral.com/home/acceso.asp
+https://www.cajasoldirecto.es/2106/*
+https://www.clavenet.net/cgi-bin/INclient_7054
+https://www.cajavital.es/Appserver/vitalnet*
+https://banca.cajaen.es/Jaen/INclient.jsp
+https://www.cajadeavila.es/cgi-bin/INclient_6094
+https://www.caixatarragona.es/esp/sec_1/oficinacodigo.jsp
+http://caixasabadell.net/banca2/tx0011/0011.jsp
+https://www.caixaontinyent.es/cgi-bin/INclient_2045
+https://www.caixalaietana.es/cgi-bin/INclient_2042
+https://www.cajacirculo.es/ISMC/Circulo/acceso.jsp
+https://areasegura.banif.es/bog/bogbsn*
+https://www.bgnetplus.com/niloinet/login.jsp
+https://www.caixagirona.es/cgi-bin/INclient_2030*
+https://www.unicaja.es/PortalServlet*
+https://www.sabadellatlantico.com/es/*
+https://oi.cajamadrid.es/CajaMadrid/oi/pt_oi/Login/login
+https://www.cajabadajoz.es/cgi-bin/INclient_6010*
+https://extranet.banesto.es/npage/OtrosLogin/LoginIBanesto.htm
+https://montevia.elmonte.es/cgi-bin/INclient_2098*
+https://www.cajacanarias.es/cgi-bin/INclient_6065
+https://oie.cajamadridempresas.es/CajaMadrid/oie/pt_oie/Login/login_oie_1
+https://www.gruppocarige.it/grps/vbank/jsp/login.jsp
+https://bancopostaonline.poste.it/bpol/bancoposta/formslogin.asp
+https://privati.internetbanking.bancaintesa.it/sm/login/IN/box_login.jsp
+https://hb.quiubi.it/newSSO/x11logon.htm
+https://www.iwbank.it/private/index_pub.jhtml*
+https://web.secservizi.it/siteminderagent/forms/login.fcc
+https://www.isideonline.it/relaxbanking/sso.Login*
+This toolkit comes with a control panel installation that is typically used to track the botnet infections.
+This is a PHP application that can be run on a web server along with the other required database software (MYSQL).
+It also enables the attacker to remotely control and send commands to the victims’ computers.
+I opened one of the scripts that came with this toolkit and I found the bot can be given the following commands:
+$_COMMANDS_LIST = array
+(
+‘reboot‘ => ‘Reboot computer.’,
+‘kos‘ => ‘Kill OS.’,
+‘shutdown‘ =>Â ‘Shutdown computer.’,
+‘bc_add [service] [ip] [port]‘ => ‘Add backconnect for [service] using server witn address [ip]:[port].’,
+‘bc_del [service] [ip] [port]’ => ‘Remove backconnect for [service] (mask is allowed) that use connection to [ip]:[port] (mask is allowed).’,
+‘block_url [url]‘Â Â => ‘Disable access to [url] (mask is allowed).’,
+‘unblock_url [url]’ => ‘Enable access to [url] (mask is allowed).’,
+‘block_fake [url]‘Â Â => ‘Disable executing of HTTP-fake/inject with mask [url] (mask is allowed).’,
+‘unblock_fake [url]‘ => ‘Enable executing of HTTP-fake/inject with mask [url] (mask is allowed).’,
+‘rexec [url] [args]‘Â Â => ‘Download and execute the file [url] with the arguments [args] (optional).’,
+‘rexeci [url] [args]’ => ‘Download and execute the file [url] with the arguments [args] (optional) using interactive user.’,
+‘lexec [file] [args]’ => ‘Execute the local file [file] with the arguments [args] (optional).’,
+‘lexeci [file] [args]‘ => ‘Execute the local file [file] with the arguments [args] (optional) using interactive user.’,
+‘addsf [file_mask…]’ => ‘Add file masks [file_mask] for local search.’,
+‘delsf [file_mask…]’ => ‘Remove file masks [file_mask] from local search.’,
+‘getfile [path]’ => ‘Upload file or folder [path] to server.’,
+‘getcerts’ => ‘Upload certificates from all stores to server.’,
+‘resetgrab’ => ‘Upload to server the information from the protected storage, cookies, etc.’,
+‘upcfg [url]’ => ‘Update configuration file from url [url] (optional, by default used standard url)’,
+‘rename_bot [name]‘ => ‘Rename bot to [name].’,
+‘getmff’ => ‘Upload Macromedia Flash files to server.’,
+‘delmff’ => ‘Remove Macromedia Flash files.’,
+‘sethomepage [url]’ => ‘Set homepage [url] for Internet Explorer.’
+We found an interesting feature of this toolkit during the botnet building process: If the bot master accidently infects his own computer, he can remove the botnet with the “Remove spyware from this system” button.
+Too bad that command isn’t available to Zeus’ victims.

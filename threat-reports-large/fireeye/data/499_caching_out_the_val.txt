@@ -1,0 +1,65 @@
+During a recent investigation, we found references to timestamps associated with probable malicious files that preceded the earliest known date of compromise.
+These Application Compatibility Cache (“Shimcache”) timestamps were the only evidence linked to this timeframe.
+The Windows Shimcache was created by Microsoft beginning in Windows XP to track compatibility issues with executed programs.
+The cache stores various file metadata depending on the operating system, such as:
+File Full Path
+$Standard_Information (SI) Last Modified time
+Shimcache Last Updated time
+Process Execution Flag
+Similar to a log file, the Shimcache also "rolls" data, meaning that the oldest data is replaced by new entries.
+The amount of data retained varies by operating system.
+Additional information on Shimcache can be found in the Mandiant blog post by Andrew Davis.
+It is important to understand there may be entries in the Shimcache that were not actually executed.
+Based on our current understanding of the Shimcache, there are two actions that can cause the Shimcache to record an entry:
+A file is executed.
+This is recorded on all versions of Windows beginning with XP.
+On Windows Vista, 7, Server 2008, and Server 2012, the Application Experience Lookup Service may record Shimcache entries for files in a directory that a user interactively browses.
+For example, if a directory contains the files “foo.txt” and “bar.exe”, a Windows 7 system may record entries for these two files in the Shimcache.
+Microsoft designed the Shimcache in Windows Vista, 7, Server 2008 and Server 2012 to incorporate a "Process Execution Flag" category for each entry.
+The actual name and true purpose of this flag is still unknown, however, we have observed that the Client/Server Runtime Subsystem (CSRSS) process will set this flag during process creation/execution on those operating systems.
+Simply put, the Process Execution Flag, where present, makes it easier for the investigator to determine whether or not an entry was executed or if this entry was added a result of an activity other than file execution, such as interactively browsing a directory.
+These entries can be easily spotted by observing if the Process Execution Flag is marked as FALSE.
+Below is an example of entries from a Windows Server 2012 Shimcache.
+Notice the two entries which were not executed.
+C:\Program Files\Microsoft Office\Office14\EXCEL.EXE
+C:\Program Files (x86)\Common Files\TortoiseOverlays\TortoiseOverlays.dll
+The Shimcache in prior versions of Windows does not have a Process Execution Flag.
+However, there is no documentation stating that earlier operating systems such as Windows XP and Server 2003 may include files that were not executed in the Shimcache.
+Further, since neither XP nor Server 2003 record a Process Execution Flag, it seems probable that every entry in their Shimcache was present on the system and was executed at one point in time.
+Still, there is no official documentation from Microsoft on the Process Execution Flag for Windows XP and Server 2003.
+Since entries in the Shimcache are typically sequential, proximate entries indicate which files executed within the same timeframe.
+Therefore, if an entry in the Shimcache contains a reliable timestamp, the analyst may be able to infer the execution date of other files in its proximity.
+When investigating lateral movement as part of an intrusion, the aforementioned scenario often occurs when the remote execution utility “PsExec” executes on a system.
+More on this later.
+On this particular Windows Server 2003 system, we found two entries in the Shimcache of the PsExec utility which referenced last modified timestamps of 2013 and in 2012.
+We also found two entries of the attacker’s malware in Shimcache, where each malware entry was directly above the two PsExec entries, however, its last modified timestamps were from 2003.
+So...what does this mean?
+First, let’s review how the SI last modified timestamps function in NTFS.
+The last modified file timestamp represents the time the contents of the file (specifically, its $DATA or $INDEX attributes) were last modified.
+Because the last modified timestamp reflects the last time that file’s contents were changed, it is not indicative of the file execution time.
+Rolling up our sleeves, we examined the entries clustered around the attacker's malware, because we know Shimcache populates entries in a top-down, Least Recently Used (LRU) queue.
+This means the most recently executed entries are populated at the top of the list.
+Older entries that are re-used, such as “LogonUI.exe”, that executes every time a user logs into the system, appear to “bubble up” to the top of the Shimcache.
+Below is an excerpt of the Shimcache entries around the attacker's malware "Malware.exe" and remote execution utility "PSEXESVC.EXE".
+C:\Program Files\McAfee\VirusScan Enterprise\mfeann.exe
+Remember how PsExec updates its last modified timestamp upon execution?
+This was the case in our scenario since our attacker used a version of the popular remote execution utility PsExec to execute the malware.
+When executed against a remote system, PsExec creates a file named “PSEXESVC.exe” on the remote system.
+When a new file is created, the PsExec utility last modified timestamp will reflect the creation date of “PSEXESVC.exe”.
+Because of this behavior, the last modified timestamp of “PSEXESVC.exe” in the Shimcache is a reliable indicator of when “PSEXESVC.exe” executed.
+In other words, when the attacker's PsExec was executed (both times on this system), the Last Modified time record in the Shimcache reflected when it was executed, in 2013 and in 2012.
+Knowing that the "PSEXESVC.exe" utility executed helped us determine an accurate date of when "Malware.exe" was at least present on the system in 2012, our new earliest date of compromise.
+The question we have as investigators is, “Did this execute?”.
+From reading Andrew Davis' whitepaper "Leveraging the Application Compatibility Cache in Forensic Investigations", we know each time an application with unique metadata is executed, a corresponding Shimcache entry will be created.
+In other words, new entries are created when an existing file’s metadata has changed and is re-executed.
+This helps confirm the attacker's version of PsExec was executed twice on the system.
+And because the Shimcache recorded the attacker's malware as the next record above both PsExec records, it was probable the attacker used PsExec to invoke their malware around the same times in 2013 and in 2012.
+The value of Shimcache for investigators can be a slippery slope if not analyzed carefully.
+In our scenario, Shimcache was the only artifact we had to support an earlier date of compromise on this system.
+We initially acquired the Shimcache data as part of a mass acquisition sweep two months prior.
+This is an approach we often use at the beginning of an investigation to find outliers and attacker tools, etc.
+The two entries in question from 2012 had rolled from the Shimcache by the time we performed analysis on the system.
+It is important to recognize this resource is somewhat volatile and should be preserved as soon as the investigation allows.
+In an ideal situation, a system’s Shimcache can provide excellent supporting evidence that ties in with artifacts from the file system, registry, event logs, and network traffic.
+But the silver lining here is in some cases, the Shimcache alone can be an extremely powerful source of evidence to help focus investigations.
+Such evidence can provide greater confidence to the tough questions we help answer every day.

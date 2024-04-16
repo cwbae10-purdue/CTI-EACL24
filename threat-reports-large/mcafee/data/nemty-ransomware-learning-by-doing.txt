@@ -1,0 +1,338 @@
+The McAfee Advanced Threat Research Team (ATR) observed a new ransomware family named ‘Nemty’ on 20 August 2019.
+We are in an era where ransomware developers face multiple struggles, from the great work done by the security community to protect against their malware, to initiatives such as the No More Ransom project that offer some victims a way to decrypt their files.
+Not only that, but the underground criminal community around such ransomware developers can also be hyper critical, calling out bad code and choosing not to purchase ransomware that is not professionally developed.
+After one such developer, going by the name jsworm, announced Nemty on underground forums, we noted how the ransomware was not well received by some users in the criminal community.
+Certain sectors of that forum started to rebuke jsworm for technical decisions made about the functions in the ransomware, as well as the encryption mechanism used.
+Jsworm replied to all the comments, adding evidence about how the critical statements made were wrong and showcased the value of their new versions.
+They also fixed some ugly bugs revealed by users in the forum:
+One of the users in the forum highlighted a function for how Nemty detects extension dupes in a system, which needed to be re-written by the author:
+Despite the shortcomings in their ransomware, the Nemty developers are still in the underground forum, releasing new samples and infecting users through their affiliate program.
+Based on our telemetry, we have seen Nemty activity in these locations:
+FIGURE 1.
+Telemetry Map
+Nemty runs on a Ransomware-as-a-Service (RaaS) model.
+We’ve observed it being delivered using:
+RIG Exploit Kit in September 2019
+Paypal dummy sites
+RDP attacks through affiliates in their campaigns
+Botnet: Distributed through Phorpiex botnet in November 2019
+Loader: SmokeBot
+FIGURE 2.
+Nemty ransomware announcement
+In the release announcement the Nemty developers offered two types of collaboration: affiliation or private partnership.
+We found two aliases advertising Nemty, one of which is jsworm, who is quite active in the forums and announces all the news and updates there.
+This is the timeline of the operations performed by the Nemty crew:
+We observed how the Nemty developers adopted some characteristics from other old ransomware families like the defunct Gandcrab.
+One example of this is the reuse and reference to a URL that leads to an image featuring Russian text and a picture of the Russian president, like Gandcrab had in its code.
+FIGURE 3.
+Hardcoded URL inside the Nemty ransomware pointing to the same image as GandCrab
+The Nemty authors released different versions of their ransomware.
+In this research article we will highlight how the first version works and the significant changes added in subsequent versions.
+Hash: 505c0ca5ad0552cce9e047c27120c681ddce127d13afa8a8ad96761b2487191b
+Compile Time: 2019-08-20 19:13:54
+Version: 1.0
+The malware sample is a 32-bit binary.
+The packer and malware are written in the C/C++ language as the author announced on the underground forum.
+The compilation date in the PE header is the 20th of August 2019.
+FIGURE 4.
+EXEInfo Image
+Nemty uses RunPE in execution, meaning it unpacks in memory before execution.
+Analyzing the sample, we could find how the developer added certain protections to their code, such as:
+Decrypting certain information in the memory only if the encryption process is working as planned
+Clearing the memory after finishing some operations
+Information sharing between different memory addresses, cleaning the previous memory space used
+In order to create the ransomware note, Nemty takes each string and saves it into memory.
+When the ransomware compiles all the required strings it will join them together to create the entire ransomware note.
+In this operation, Nemty will decrypt line by line, moving the data to another memory address and cleaning the previous one to leave the information only in the new memory space.
+For the first version of Nemty, the encryption method was not applied consistently to all the strings, which is why it is possible to see some strings and spot part of the functionalities or juicy files from them.
+FIGURE 5.
+Clear strings in Nemty
+In execution, Nemty will check all the logical units available in the system, saving the information about them in a static list with the following information:
+Type of unit
+Available free space
+Through the use of the Windows API, ‘GetDriveTypeA’, the ransomware will differentiate units between:
+Removable
+Fixed
+Network
+FIGURE 6.
+Checking the type of logic units
+To check the free space available in the system, Nemty will use “GetDiskFreeSpaceExA”, again through the Windows API:
+FIGURE 7.
+Checking free disk space
+Since the first version, Nemty has implemented a functionality to extract the public IP address of the victim.
+The information is extracted through a request to the IPIFY service at http://api.ipify.org.
+These types of services are frequently used by RaaS to check the location where the victim was infected.
+FIGURE 8.
+Nemty getting the public IP
+The User-agent for some of the Nemty versions was the ‘Chrome’ string.
+The user-agent is hardcoded as a single string in the ransomware instead of using an original user-agent.
+FIGURE 9.
+Getting the IP address of the victim machine
+The IPIFY service is used to retrieve the public IP address of the victim and, with the extracted data, Nemty makes another connection to http://api.db-api.com/v2/free/countryName using the data previously obtained as an argument.
+The extracted IP address and country data is used later used as a part of the ransomware note creation.
+FIGURE 10.
+Getting the country name strings based on the IP address
+Nemty will extract the following information from the victim:
+Username Using the windows API GetUserNameA
+Using the windows API GetUserNameA
+Computer name Using the windows API GetComputerNameA
+Using the windows API GetComputerNameA
+Hardware profile Using the windows API GetCurrentHwProfileA
+Using the windows API GetCurrentHwProfileA
+With this data, the authors ensure that the infected victim is unique, which helps the RaaS operators quantify how many victims they were able to infect themselves or through the use of affiliates.
+FIGURE 11.
+Get Username, Computer Name and Hardware Profile from the victim machine
+RaaS families usually apply some protections to prevent infecting certain geographic regions.
+In the first version, Nemty still had this feature in development as our analysis showed that the ransomware did not check whether the victim belonged to any of the supposed blacklisted countries.
+During our analysis of ransomware it is quite usual to find functions that are still in development and are then incorporated in future versions.
+If the detected country is in the blacklist, Nemty returns the string “true” and keeps it in the config.
+If the country is not found, the value of the field will be false.
+FIGURE 12.
+Check the country name and return true or false string
+Immediately after making this check, Nemty will decode, from base64, the value of the master key and keep it in a memory address to use later.
+In parallel, it will prepare a random string with a fixed size of 7 characters and use it with the string “_NEMTY_” to create the ransomware note with the specific extension used in the encrypted files.
+Nemty will create a pair of RSA keys, one public and one private, in this process.
+FIGURE 13.
+Export public RSA and private keys
+Within this operation, Nemty will encode those keys in base64:
+FIGURE 14.
+Encode of RSA keys generated
+After this encoding, Nemty will decode again the victim RSA public key and import it for later use.
+FIGURE 15.
+Decoding of the RSA public key for later use
+The same operation is again used but this time with the master RSA public key from the ransomware developers.
+In the encryption process, with all the data collected from the user, Nemty will create their config file, all in memory.
+The config file is a JSON structured file with all the collected data and the AES key previously created.
+Regarding the key used, it is the same for all of the files, however Nemty uses a different IV for each file.
+An example of the information collected by Nemty and later used in the config file can be found below:
+This is an example Nemty configuration file:
+FIGURE 16.
+Nemty config file
+The different fields for the configuration file are:
+The configuration file will be saved on the disk encrypted with a RSA public key of 8192 bits and encoded in base64.
+FIGURE 17.
+Crypt the config file and encode in base64
+Nemty will get the username logged in the system through ‘SHGetFolderPathW’ and will save and encrypt it with the .nemty extension on that folder.
+FIGURE 18.
+Getting the user’s root folder
+FIGURE 19.
+Creation of the config file on the disk
+For the encryption, Nemty will create a new thread per each logic unit found in the system in order to encrypt the files.
+The method used to encrypt the files is similar to other RaaS families, getting all the files using the function ‘FindFirstFileW’ and ‘FindNextFileW.
+Nemty will avoid encrypting folders with the following names:
+.
+..
+…
+The encryption process will also avoid using files with the following names:
+FIGURE 20.
+Check of the blacklisted folder and file names
+This check is done using the insensitive function “lstrcmpiW”.
+Where Nemty is encrypting a file it will try two combinations, one in lower case, one in uppercase.
+The extensions checked are:
+FIGURE 21.
+Check of the file extensions
+If Nemty has successful checks, it will create a random IV and encrypt part of the file with the AES keys previously generated.
+It then begins the IV using the victim’s RSA public key and appends it to the encrypted file.
+FIGURE 22.
+Write the crypted file and put the IV in it
+Nemty will put the information required to decrypt the file in the encrypted part of it and then add the extension “.nemty” and continue with the next folder or file.
+FIGURE 23.
+Renaming of the new file with the Nemty extension
+After finishing the encryption process Nemty will use the function ‘WaitForSingleObjects’ and wait for all the pending threads.
+It will also download the Tor Browser and open a connection in the loopback with the configuration file.
+As a final action, Nemty will execute the command prompt of the machine with the hardcoded word “cmd.exe” and open the ransomware note.
+FIGURE 24.
+Opening the ransom note
+The style of the ransomware note changed across the different versions that the Nemty developers released.
+FIGURE 25.
+Different ransom notes between versions
+On the left side, we can see Nemty version 1.4.
+On the right side, the ransomware note belongs to Nemty version 1.0.
+Like other ransomware families, Nemty will perform these actions at the end:
+Delete the shadow copies using vssadmin
+Disable boot protections with bcedit and wbadmin
+Delete the Windows catalog with WMIC using the class shadow copy
+All these calls are made with the function “ShellExecuteA” with the “cmd.exe” string as the main program and the other as an argument.
+FIGURE 26.
+Deletion of the shadow volumes, disabling boot protections, and deleting the catalog
+Nemty will create a specific mutex in the system every time it infects a system:
+The ransomware will check the existence of the mutex using the function “GetLastError”.
+FIGURE 27.
+Creation of the hardcoded mutex
+If the system was infected previously with Nemty and it contains the mutex, the ransomware will finish the execution using the function “ExitThread”.
+This call will end the main thread of the malware, finishing the execution and returning the control to the operative system.
+The “ExitProcess” function is often used to avoid simple API monitoring.
+Nemty uses RC4 to encrypt its strings and, in execution, those will be decrypted and decoded from base64 and then be used as a part of the ransomware note.
+FIGURE 28.
+Calculating the size of memory to decode from base64
+The RC4 key used for Nemty 1.0 is ‘f*ckav’.
+Other malware families also often use offensive names or expressions regarding the security industry in their implementations.
+For decryption, the developers implemented a function through the API to reserve the needed space with ‘malloc’ and later decode the string in memory.
+As a protection, if the ransomware fails to get the size or on the decoding operation, the execution will finish using “ExitThread”.
+FIGURE 29.
+Decrypt the data with RC4
+Since the first version of Nemty was released, the authors started to evolve their ransomware by adding new capabilities and fixing aspects of its code.
+Analyzing the early versions of Nemty, we can state that they were more advanced in techniques and obfuscation compared to other RaaS families, but the first version still contained functions with some mistakes, such as references to API calls that were not used by the ransomware.
+At the time we wrote this article, the developers behind the ransomware have released 9 different versions:
+We have observed changes across the different versions of Nemty.
+For version 1.4, the developers applied the following changes:
+The ransomware will gather information regarding the logical units after checking if the victim has the Nemty mutex.
+Language check In this version, Nemty will respect and avoid encrypting files for victims inside the CIS countries.
+In this version, Nemty will respect and avoid encrypting files for victims inside the CIS countries.
+FIGURE 30.
+Check to avoid crypting if the language is blacklisted
+Compared with Nemty 1.4, this newer version was a major release, adding the following changes:
+Victim information stored in the registry
+Persistence
+Ability to kill processes and services
+New mutex
+Hardcoded image change
+C2 panel publicly accessible
+4 new blacklisted countries
+The first major change in this version of Nemty was the use of the Windows registry to store information about the infected machine.
+The hive used is HKCU with the NEMTY identifier.
+FIGURE 31.
+Information saved in the registry
+The second feature added is the possibility to kill certain processes to facilitate file encryption in the system, something that is commonly implemented by other RaaS families.
+In order to kill those processes, Nemty will use taskkill /im PROCESSNAME.
+FIGURE 32.
+Termination of processes
+Among certain kill processes, Nemty will stop certain services in the system with the same objectives:
+To stop the services Nemty, will use “net stop” and the service name.
+FIGURE 33.
+Stop of services on the victim machine
+The first versions of Nemty did not have any persistence technique, so the author decided to add it in version 1.5.
+The persistence is done through a scheduled task, “create /sc onlogon”.
+The binary is copied into the main user directory with the name hardcoded (this can be adapted for every binary released) “AdobeUpdate.exe” and the task launched using “ShellExecute”.
+FIGURE 34.
+Creation of a schedule task to persistence
+Regarding the picture hardcoded in the first versions, for this version, Nemty decided to change it and include a new one.
+FIGURE 35.
+New image referenced in the malware
+The author, decided to swap TOR for a public C2 panel where Nemty will send the victim’s data.
+https://nemty.hk/public/gate?data=<victim_data>
+For this version, the author added four new countries to the blacklist:
+Compared with the previous version, Nemty in the 1.6 version only implemented one single change.
+The author used their own implementation of the AES algorithm instead of using the CryptoAPI.
+The way that the malware previously generated the random key was based on functions of time but with version 1.6 it mostly used some other value to generate the random key.
+FIGURE 36.
+Changes in the key generation function
+One of the partners in the No More Ransom project, Tesorion, decided to publish a free decryptor for victims infected by Nemty.
+After the announcement, the Nemty authors released a new version utilizing a proper AES function using CryptoAPI.
+FIGURE 37.
+New implementation of the AES crypto using CryptoAPI
+Like in a game of cat and mouse, Tesorion released a new decryptor for this specific version.
+The Nemty authors responded by including a harcoded message to Tesorion in the samples:
+Tesorion “tesorion, thanks for your article”.
+Instead of changing the Nemty version number in this new binary, the authors released a new version of 1.6 with some changes.
+The changes added for this version are:
+New vssadmin utility used
+New processes and services to kill
+FakeNet feature
+This new version was released just 2 days after the first 1.6 version was released; this means that the actor is quite active in developing this ransomware.
+The first change for this version is how the logical units where enumerated.
+The Nemty author implemented the use of the utility “vssadmin” and also reduced the capacity of the shadow volumes to 401MB.
+This change probably helped the ransomware in terms of performance.
+FIGURE 38.
+Resize of the shadow volumes in the target logic unit
+The idea of this change was to remain more stealthy against endpoint security products, instead of just deleting the shadow copy and executing queries through WMI, BCEDIT, etc.
+The author changed their approach to use vssadmin with the delete flag.
+The Nemty authors added new processes to kill in order to facilitate file encryption:
+In addition to new processes, the author also included new services:
+For this version the Nemty authors decided to add one interesting feature.
+The ransomware in execution had implemented a function to retrieve the victim’s public IP address.
+In the case that Nemty cannot connect with the external IP address, the ransomware will add fake data in order to continue the encryption process.
+The fake data will be:
+FIGURE 39.
+Nemty using fake IP address and country name information if it cannot connect to the URL to get a WAN IP
+This feature implemented by Nemty will expose users in the protected countries as it will encrypt the system, even if the user belongs to one of the countries specified in the static blacklist.
+In this version the developers decided to remove certain features and added a new encryption process:
+The FakeNet feature was deleted and Nemty only used the old mechanism to check the victim’s region.
+An initial function that prepares a container to use the RC4 algorithm with the name “rc4” and get a key based in the hardcoded string (can change in other samples) “sosorin :)”.
+This key is used to decrypt part of the ransom note and certain strings.
+It changes the use of the authors’ own RC4 implementation to now use the RC4 algorithm with CryptoAPI.
+A new generation of RSA containers of keys, improving the key generation process.
+The ransom note text included “NEMTY REVENGE” instead of “NEMTY PROJECT” and also added the sentence: “Don’t trust anyone.
+Even your dog”.
+FIGURE 40.
+Nemty ransomware note
+For this version, the Nemty developers only made two minor changes:
+Change of the mutex name
+A new ransom note:
+FIGURE 41.
+Example of the new ransom note
+In this version, we found major changes compared with the prior version:
+A new mutex value
+The service used to get the public IP changed from https://api.ipify.org to https://www.myexternalip.com/raw In case the lookup fails, the external address changes from NONE to NOT_DEFINED.
+In case the lookup fails, the external address changes from NONE to NOT_DEFINED.
+The Windows OS check for XP was duped in prior versions and now only has one specific check.
+The configuration fields changed, certain fields were removed and new ones were added.
+This is an example for the new configuration file:
+This is an example for the new configuration file:
+{
+“fileid”:”NEMTY_E1EIVPU”,
+“configid”:”mArJi2x3q3yFrbvL8EYkKezDeGPgWeOG”,
+“compid”:”{a3cande1-f85f-1341-769f-806d6172f54544}”,
+“ip”:”NONE”,
+“country”:”{ ” “errorCode” “: ” “INVALID_ADDRESS” “, ” “error” “: ” “invalid addr” “,” “version” “:” 2.3 “,” “computer_name” “:” “USERPC” “,” “username” “:” “User” “,” “os” “:” “Windows XP” “,” “pr_key” “:” BwIAAACkAABSU0EyAAgAAAEAAQDdTDOyFDw4+kjmmP2epZ/484E7PLyyZ5W1obSZSHWPirGeobWwqnoVTXLPbKVYXZ4qszCzO71hwFKcKjeYjX1dVzSlonqpWlU5d2XLtM+6oN9PTUIv2Fp8Quf8w3FU+0OmmS9A0s3n6cnvpA8oIJTZFgYurYDs78Gv3dt4dUkQioqyT/kWBOTZMBARqjiN6JwCCZDU4moRm+9IcqiXzUydebF99EoHxKcJrAekIHuHbHzZq/FcVogFSHT+4aV2/NTrESiNLeLYWv0S/GJrYs2xoLLe3NpdW7disE/PY1yn4flWGPU931AWy4/ba8+bjRXr1UPCKFk370oqWesemfK8j694toexJlRYc8s1mql2T6gq/NnqsWIxgR2B4Esn3xMzXcGZD86mA+XO/gZWgZw9kyJ4rzonWiF8OMWznKgmC0n4rxoOh70eE0m15LPkJOJwmBcVoHE189R71titoNMEYZsK8/WE0x8YJjAAdxmI4ATufV1ZUDbO7yOf5Tc5UuHTxu5iUOL0dO004Hh0t6SZIxbjUbtlHhJTiUULL+TpyG9YP1LyNMhKDE80viN9Co/a6xbs6IRhxhRRFthtHE/kRBeYfhptCblWOStLebtrNgwfe8f3AR2XdH6uESiQ8rTXG/dSgXOfmUQzuvSbxdL4aQ5docbtjQlMEl/FqYqs1pGTEB+cBATRoeY97LSCr/ZvhQPUVPyAD0NHKPOUawrGtXyiAYP3WWhKOQFM1nqQ1E9Mf38NHbaQtNJ8s/BOvMxra2Q9AaCd34IGz3uZuEZIqqXx2qqchHoHPFvopBnkCiJThmb0PoUHsA4keC7EIv3To038Wg2GYhfzy6+vwEIx01F02xhZSHjSUlSmYM2YiS4FZu2F02L49tUPIueqo3ON2ts+G/z36kkaBFocPRJjQGL2cUmG0jI0kdahL6uNYfUL3Cu261bmxewxS1eSk+cb2zC5OckuwxoT66ZddRF+Ud2K2SIPV3oMy3D/4oUtsrAEUv2inEthtwvY8FdzzsM1KlcvLszggKHRdTe4a3hf9ALU7omy3avhGaCtznhRnZvD0W1QNKyKRYBCtHc7e30EpbYtQ8kxRBrrQfySsQMDPfagETSDQMRdD0lLmNCsaJJqS9s7CnsXuTedTiOZA7Nddrc/qUceeZ7ZXMvwhpQJ6TglLJ/qCMFz6u63biGhCi38BxVRhrFzMIV4wEHlmw/7ZKiIsE49XvWzJJH3J6cgvw8XGysgS29w8McqSVaucPhw+lONwc8SLTqDwZ78ozJmr3Hq4bWFjlMSeo/H8tzr++eVMAwNiiECWo2/i2WwraBG7/jpwtedjQF576tBE6TEvriVjohjyhAYj0SprtJoqS5kX6NVM8c8GaeVKbcUp6bPqZLlGi1yfP0dhgpnR81SfDVuv/RaLPedYPfKL3hK1g6UbRJvENVgrr5tik8TLley6v73MI1pbWmEnr48Zk8Y6bb4fm0H9OvkiDYmDDTh4I49TNEyuw8eD8auJ6CsapZUTmvqMlrGI3rnjueTdjQ= “,” “drives” “:[{” “drive_type” “:” “FIXED” “,” “drive_letter” “:” “C”:”/” “,” “total_size” “:” 9GB “,” “used_size” “:” 9GB “},{” “drive_type” “:” “NETWORK” “,” “drive_letter” “:” “E”:”/” “,” “total_size” “:” 9GB “,” “used_size” “:” 9GB “\”}]}”
+The User-agent changed to a new one, “Naruto Uzumake”.
+Concatenating a lot of taskkill commands through the use of “ShellExecuteA”; this version of Nemty kills a lot of new processes.
+FIGURE 42.
+Killing processes with CMD
+For this version, the authors added PowerShell executions using a command prompt with the function “ShellExecuteA” :
+FIGURE 43.
+Launching a PowerShell command
+This version added a new subkey in the registry key “Run” in the hive HKEY_CURRENT_USER with the name “daite drobovik”:
+FIGURE 44.
+Creating persistence
+The ransom note was again changed for this version:
+FIGURE 45.
+Example of the ransom note in version 2.3
+This version was a minor release like Nemty 2.2.
+In our analysis we only noted changes for the ransom note:
+FIGURE 46.
+Example of the ransom note in version 2.4
+This is the last version of Nemty we discovered.
+This one represents a minor release and we only spotted two changes for this version:
+A new mutex value
+A new ransom note:
+FIGURE 47.
+Example of the ransom note in version 2.5
+Our Advanced Threat Research (ATR) team followed the activity of the user jsworm in the underground forums, and uncovered another piece of their ransomware, called JSWORM ransomware.
+Below is an announcement they made on the same forum on which they presented Nemty:
+FIGURE 48.
+JSWORM ransomware and Nemty announcement
+We analyzed all the samples we had of JSWORM and Nemty and could not find any relationship in the code base between them, but it is clear that both pieces of ransomware belong to the same moniker.
+Some of the samples released contain custom packers so the compilation timestamp is not accurate for those cases.
+Based on the data of the binaries we found, we can see how Nemty activity started some time after the JSWORM ramsomware disappeared.
+This could indicate that the threat actor jsworm was developing both pieces of ransomware at the same time.
+One of the partners of NoMoreRansom was able to release a working version of a Nemty decryptor.
+If someone is affected by this ransomware, it is possible to contact them through NoMoreRansom to get a decryptor.
+In our analysis of the Nemty ransomware, we spotted a new trend in how its authors managed the data of their victims.
+In this instance, much like we have seen with other ransomware families like Maze, Nemty has its own website on which customer data is publicly released.
+Image source: Bleeping Computer
+Despite the number of RaaS families that appeared this year, Nemty represents another piece to observe and follow.
+Since we started to watch the activities of this ransomware, the criminals behind it have released multiple new versions with bug fixes and improvements.
+Such activity suggests that ransomware authors are feeling pressure from the great work done by security researchers and organizations, and in the case of Nemty, even from the underground criminal community which itself was quick to criticize some of its functions and implementations.
+Tesorion, now a partner in No More Ransom, released a working decryptor for Nemty and so we now expect that the author will change the ransomware again to continue their activities.
+The last action we observed from this group was the website shown above, created to leak customer data.
+The sample uses the following MITRE ATT&CK™ techniques:
+Generic Trojan.si
+GenericRXIS-SF!348C3597C7D3
+GenericRXIS-SF!37AABA6B18C9
+GenericRXIS-SF!5CC1BF6122D3
+GenericRXIU-OJ!0B33471BBD9F
+Ransom-Nemty!09F3B4E8D824
+Ransom-Nemty!2FAA102585F5
+Ransom-Nemty!65B07E2FD628
+Ransom-Nemty!9D6722A4441B
+RDN/GenDownloader.alr
+RDN/Generic.fps
+RDN/Generic.fqr
+RDN/Generic.fry
+RDN/Generic.ftv
+RDN/Generic.fxs
+RDN/Generic.fyy
+RDN/Ransom.gg
+RDN/Ransom.gn
+Trojan-FRGK!484036EE8955

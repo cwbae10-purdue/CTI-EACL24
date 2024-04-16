@@ -1,0 +1,70 @@
+DeathStalker is a threat actor that’s been active since at least 2012, and we exposed most of their past activities in a previous article, as well as during a GREAT Ideas conference in August 2020.
+The actor drew our attention in 2018 because of distinctive attack characteristics that didn’t fit in with the usual cybercrime or state-sponsored activities, leading us to believe DeathStalker is a hack-for-hire group..
+DeathStalker has leveraged several malware strains and delivery chains over the years, from the Python- and VisualBasic-based Janicab to the PowerShell-based Powersing and the JavaScript-based Evilnum.
+The actor consistently used what we call “dead-drop resolvers” (DDRs), which is obfuscated content hosted on major public web services like YouTube, Twitter or Reddit; once decoded by malware this content reveals a command-and-control (C2) server address.
+DeathStalker also consistently leveraged anti-detection and antivirus evasion techniques, as well as intricate delivery chains that drop lots of files to the target’s filesystems.
+To kick-start an infection, DeathStalker usually relies on spear-phishing emails with attachments, or links to public file sharing services, as well as script execution based on Windows shortcuts.
+We have identified how DeathStalker’s malware compromises in clusters or targets various types of entities in all parts of the world, with a possible focus on law and consultancy offices, as well as FINTECH companies, but without a clearly identifiable or consistent interest.
+The targeting does not seem to be politically or strategically defined and doesn’t appear to be the usual financially motived crime.
+Because of this, we conclude that DeathStalker is a cyber-mercenary organization.
+While tracking DeathStalker’s Powersing-based activities in May 2020, we detected a previously unknown implant that leveraged DNS over HTTPS as a C2 channel, as well as parts of its delivery chain.
+We named this new malware PowerPepper.
+We first spotted a variant of PowerPepper in the wild in mid-July 2020, dropped from a Word document that had been submitted on a public multiscanner service.
+Since then, the PowerPepper implant and the associated delivery chain has been continuously operating and developing.
+PowerPepper is a Windows in-memory PowerShell backdoor that can execute remotely sent shell commands.
+In strict accordance with DeathStalker’s traditions, the implant will try to evade detection or sandboxes execution with various tricks such as detecting mouse movements, filtering the client’s MAC addresses, and adapting its execution flow depending on detected antivirus products.
+The implant’s C2 logic stands out, as it is based on communications via DNS over HTTPS (DoH), using CloudFlare responders.
+PowerPepper first tries to leverage Microsoft’s Excel as a Web client to send DoH requests to a C2 server, but will fall back to PowerShell’s standard web client, and ultimately to regular DNS communications, if messages cannot get through.
+C2 communications content between the implant and servers is encrypted.
+We noticed that PowerPepper and the previously described Powersing use an almost identical PowerShell implementation of AES encryption, with only the AES padding mode and a function input format being changed.
+PowerPepper regularly polls a C2 server for commands to execute.
+In order to do so, the implant sends TXT-type DNS requests (with DoH or plain DNS requests if the former fails) to the name servers (NS) that are associated with a malicious C2 domain name.
+If the target which runs the implant is validated (we cover that later), the server replies with a DNS response, embedding an encrypted command.
+Both requests and responses contain patterns that can be easily detected with network intrusion detection systems, but the patterns have been changed across implant variants.
+The command execution results are sent back to the server through a batch of variable-length A-type DNS requests, where queried hostnames contain an identifier, data length, and encrypted data.
+During the course of our investigations, we noticed that the PowerPepper C2 name servers were actually open DNS resolvers that always resolved arbitrary hostnames with the same IP addresses: 128.49.4.4 (a US Navy-owned server), 91.214.6.100 and 91.214.6.101 (HSBC UK-owned servers).
+Using this fact and historical reverse DNS resolutions data, we have been able to preemptively identify the PowerPepper C2 domains.
+On top of the DNS C2 communication logic, PowerPepper also signals successful implant startup and execution flow errors to a Python backend, through HTTPS.
+Such signaling enables target validation and implant execution logging, while preventing researchers from interacting further with the PowerPepper malicious C2 name servers.
+It has also been used directly from some of the malicious documents that were involved in PowerPepper delivery, through the “Links to Files” feature in Office documents.
+The signaling Python backends were hosted on a public and legitimate content hosting web service named PythonAnywhere that allows users to build websites.
+The discovered Python backend endpoints were shut down by PythonAnywhere in coordination with us.
+As a result, DeathStalker tried to adapt the signaling feature by removing it from most PowerPepper delivery documents (but keeping it in the implant itself), and by adding a legitimate but compromised WordPress website as a reverse-proxy between implants and backends.
+The first type of PowerPepper delivery (or infection) chain we encountered, back in July 2020, is based on a malicious Word document.
+Although we couldn’t confirm how this document had been distributed to targets, the infection trails and documents we analyzed showed that the item is either embedded as a spear-phishing email body, or downloaded from a malicious link in a spear-phishing email.
+This infection chain varied slightly between July and November 2020: some dropped file names, integrated code or remote links changed, but the logic stayed the same.
+We won’t dive deep into the details of the delivery workflow, as the main tricks are addressed later.
+It should, however, be noted that the delivery chain is based on a monolithic document that embeds all required malicious items.
+Notably, this document contains decoy content, and the malicious logic is handled by Visual Basic for Application (VBA) macros, which ultimately run PowerPepper and set up its persistence.
+This infection chain is based on a Windows shortcut file, with a misleading .docx.lnk double extension, and constitutes a more modular approach to PowerPepper delivery.
+The delivery chain is very similar to the macro-based one, but implements two major changes:
+the malicious macros logic is moved to malicious PowerShell scripts, and the first one is directly embedded in the shortcut file, so there are no more VBA macros;
+the Word document from this chain is just a decoy and malicious files storage pack, and is downloaded from a remote location (a public file sharing service) instead of directly embedded somewhere.
+The malicious LNK files were most likely distributed as ZIP attachments within spear-phishing emails and, of course, the files dropped from this delivery chain differ across variants as well.
+Some malicious documents that we managed to retrieve contained a social engineering banner asking users to enable macros execution.
+This explains how the malicious logic from the macro-based delivery chain could actually be triggered when macros are disabled by default on most modern Office settings.
+The decoy contents we retrieved varied: the first we found in the wild were about carbon emissions regulations, but we also identified a fake travel booking form for a very specific event that’s planned next year in Turkey, and of course some are about the coronavirus.
+We were able to link most of the decoy contents back to the original contents published on the internet by their initial authors, meaning DeathStalker did not craft them, but instead picked out appropriate ready-made material that was available on the internet.
+One of the decoy components impersonated a legitimate travel agent but included altered contact details.
+PowerPepper delivery chains leverage a lot of obfuscation, execution and masquerading tricks to hinder detection, or deceive targets that are curious about what is happening on their computers.
+So, we thought we should describe some.
+DeathStalker hides strings in Word embedded shape and object (OLE packages) properties, like the “hyperlink” property, to obfuscate the malicious execution workflow, as well as reconstruct and execute commands or scripts.
+Notably, these properties are leveraged as a second stage PowerShell script in the LNK-based delivery chain: the first stage PowerShell script, which is embedded in a malicious LNK file, will parse downloaded Word document contents to extract and run a second PowerShell script.
+These property artifacts can also contain parts of URLs, dropped files paths, or commands that are directly leveraged by macros in the macro-based delivery chain.
+We can also see from the code extract above that DeathStalker uses macros to open another subdocument that is embedded in the first malicious document from the macro-based delivery chain.
+Last but not least, the comments are very helpful.
+In the course of their PowerPepper delivery workflows, DeathStalker leverages CHM files as containers to better evade detection, and uses a Windows built-in tool called “hh” to unpack content, from VBA macros or an LNK-embedded PowerShell script.
+All the files that are dropped on targeted computers from delivery chains and that are necessary to run PowerPepper are contained in these archives.
+The CHM files are embedded in the malicious Word (sub)document of the delivery chains.
+DeathStalker uses a Visual Basic Script (VBS) loader to start PowerPepper execution.
+The loader is launched immediately after delivery, and then at each computer startup, thanks to a companion launcher shortcut which is placed in a Windows startup folder.
+This VBS loader masquerades as a GlobalSign verification tool with comments as well as deceptive variables or help strings.
+Furthermore, the script’s malicious content is obfuscated by a custom encryption function.
+And here come our plants….
+The previously described VBS loader will basically do one thing: deobfuscate and run a PowerShell script against a picture file that was dropped earlier from the delivery chain.
+But the picture is actually a steganography image (of ferns…) that will be decoded by the VBS loader-embedded script, and contains the PowerPepper implant.
+In the first delivery chains that were discovered, the steganography image actually displayed peppers, hence the “PowerPepper” name.
+The Windows shortcut (LNK) file from the LNK-based delivery chain actually starts a Windows shell with an obfuscated command argument.
+The command is a specific form of a “FOR” Windows shell loop that generates the “PowerShell” string from an “assoc” shell built-in result.
+The malicious LNK file will fire a PowerShell script as a result, which in turn will recompose a second stage script from a downloaded Word document, as seen in Trick #1.
+Whether it’s at the end of macros execution (for the macro-based delivery chain) or as a last step of the shortcut-embedded scripts (for the LNK-based delivery chain), DeathStalker leveraged a signed binary proxy execution to start up PowerPepper for the first time.

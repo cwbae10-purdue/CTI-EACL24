@@ -1,0 +1,65 @@
+This blog was written by Sanchit Karve.
+W32/NionSpy is a family of malware that steals information from infected machines and replicates to new machines over networks and removable thumb drives.
+Aside from stealing keystrokes, passwords, Bitcoins, system information, and files on disk, NionSpy (also known as Mewsei and MewsSpy) can record video (using the webcam), audio (using the microphone), take screenshots, and use infected machines as a proxy tunnel to connect to other machines within the network.
+NionSpy is a prepender virus: It prefixes its malicious binary onto current executable files on a machine—as opposed to other data-stealing Trojans, which store all their functions in a single file.
+Viruses must ensure that they restore the original file prior to its execution to increase the likelihood that the original binary executes correctly.
+Most viruses decrypt the original binary just before execution.
+NionSpy, on the other hand, stores its decryption code in a separate DLL outside the stub to make file recovery difficult.
+The malware achieves this by storing an encrypted copy of the DLL within every file it infects.
+Once an infected file executes, it registers itself to open all executable and shortcut files as a parameter to its /START command-line argument as shown:
+%APPDATA%\{random folder name}\{malware executable}.exe [/RUNAS] /START “%1” %*
+When the malware executable runs with an executable file as the /START parameter, it decrypts and loads the embedded DLL located within itself, opens the executable passed as the argument, and checks whether it is infected by finding its infection marker, “aCfG92KX27EhW6CqpcSo4Y94BnUrFmnNkP5EnT.” If the marker is not found, the executable runs as is.
+However, if the marker is found, the original file is decrypted by calling the “NP8IGN” function exported by the decrypted DLL, stored temporarily in the %TEMP% folder with a random name, and then executes.
+NionSpy’s file execution.
+The location of the encrypted DLL and the hijacked file are obfuscated by an XOR/NEG operation, which when decrypted contains the location of the data, its size, and a seed value.
+The seed is fed to Microsoft’s C implementation of rand()—a pseudo random number generator.
+The virus also stores 4 to 7 bytes of information about its origin.
+If the file is created by infecting an executable file on disk, the term repl (for replication) is encrypted.
+If the file consists of just the dropper for the file infector, the term {random letter}.ode is encrypted and stored.
+The sample contains a bit fewer than 700 strings encrypted in the same fashion based on rand().
+The seed, length, and location of the string are stored in a special table accessed by the main string decryption routine.
+The strings are common for both the infector stub and the embedded DLL.
+However, not all strings in the table are used in the malware source code.
+Some strings, for example, seem to be intentionally left for researchers to discover.
+The decrypted strings provide a wealth of information about the capabilities of the virus and even include an internal version number that is transmitted to the control server with every request.
+The sample actively looks for installed firewall software and intentionally delays and limits its network communication if it finds a product from its blacklist.
+One uncommon aspect to NionSpy is its inclusion of almost 200 MD5 hashes in the encrypted string table.
+When a command is sent by the virus’ control server, its MD5 hash is calculated and compared against the hashes in the malware table to decide which operation to perform.
+We suspect this decision was made to increase the effort required to statically analyze the sample.
+The following screen shows some of the MD5s along with their original strings:
+We know of seven versions of the latest W32/NionSpy variant:
+Older variants of NionSpy are very primitive compared with the latest strain.
+Most strings are stored unencrypted, while about 40 to 50 strings are obfuscated using a 1-byte XOR key.
+The malware code appears to be more or less constant across versions with each change including small fixes for bugs and typos as well as the addition of a few enhancements (such as the ability to record audio for a variable amount of time in Version 7.6, instead of a constant 30 seconds in older versions).
+Some versions are compiled with different compilers to generate different binaries but are functionally identical.
+Four versions of the older NionSpy variant are present in the wild.
+Because older NionSpy variants do not use MD5 hashes to check for control server commands, all commands are visible in their binaries:
+NionSpy contacts the following control servers:
+109.195.54.18:7978
+176.31.246.49:14141
+178.62.233.140:50000
+37.139.15.65:14088
+46.32.233.54:53535
+62.75.179.223:11111
+62.75.179.223:19093
+72.167.201.238:11080
+78.46.36.35:33533
+85.214.252.4:9000
+ftspbz.net46.net
+nwoccs.zapto.org
+z3mm6cupmtw5b2xx.onion
+McAfee customers are already protected by the following detections:
+W32/NionSpy
+W32/NionSpy!dr
+W32/NionSpy.b!dr
+W32/NionSpy.c!dr
+W32/NionSpy!dam
+And other generic signatures
+YARA Signature rule NionSpy {
+meta:
+description = “Triggers on old and new variants of W32/NionSpy file infector”
+strings:
+$variant2015_infmarker = “aCfG92KXpcSo4Y94BnUrFmnNk27EhW6CqP5EnT” $variant2013_infmarker = “ad6af8bd5835d19cc7fdc4c62fdf02a1” $variant2013_string = “%s?cstorage=shell&comp=%s”
+condition:
+uint16(0) == 0x5A4D and uint32(uint32(0x3C)) == 0x00004550 and 1 of ($variant*)
+}

@@ -1,0 +1,48 @@
+New versions of the Zeroaccess bootkit demonstrate alternative approaches to distribution and to bootkit infection on 32- and 64-bit Windows.
+At the end of spring 2012, the rootkit family Win32/Sirefef and Win64/Sirefef (also known as ZeroAccess) was updated.
+We began tracking the first updated samples at the beginning of May when a new affiliate program started for the distribution of a new ZeroAccess version.
+The updated version of Sirefef doesn't use kernel-mode drivers, as was done previously, and doesn’t have hidden file storage.
+The affiliate program substitutes its own choices for the results of popular search engines–a form of click fraud–as a means of monetization.
+According to the forum message the most interesting regions for the installation of ZeroAccess are the US, Australia, Canada and the United Kingdom.
+The price for 1,000 installs onto machines in the US is $500.
+There is a special price range for active installations on an infected machine, dependent on system privileges.
+The administration panel for the new affiliation program used to distribute the new version of ZeroAccess looks like this:
+On the C&C (Command and Control) there are special checks for antivirus detections after every update of the dropper:
+In its previous versions ZeroAccess used a kernel-mode driver for access to hidden file storage and to protect components using self-defense tricks.
+In the latest versions the developers of ZeroAccess have rejected the use of kernel-mode components and have found interesting tricks for code injection.
+Here’s how the updated injection technique works:
+1.
+As the first step the shellcode (x86 or x64 depended by platform) is extracted from a cab-file stored in the dropper:
+2.
+A hidden system folder is created where the name of the directory path depends on the code injection technique (previously ZeroAccess used hidden file storage as a means of storing its components):
+"%USERPROFILE%Local SettingsApplication Data
+"%WINDOWS%Installer
+3.
+At the next step the shellcode will be injected into services.exe (Service Control Manager):
+The Call Graph of injected shellcode looks like this:
+The function for injecting code to services.exe looks like this pseudocode:
+4.
+In this version of ZeroAccess two code injection techniques are used:
+The first method uses a trick with ZwOpenThread()/ZwOpenProcess(), direct memory modification and ZwQueueApcThread() and is used for x86 systems or if another method returns a bad status
+The second method is used on x64 systems to provide modifications to the Service Control Manager file after changes to the security descriptor in the file services.exe:
+At the next step of code injection into the file services.exe, a section object is created by calling ZwCreateSection() and file contents are copied inside this section.
+Then the dropper writes shellcode to replace the original ScRegisterTCPEndpoint() function and deletes the ASLR support flag from PE header (the reason for this action is to make the shellcode more stable with hardcoded function addresses).
+Some of the latest modifications to ZeroAccess take additional steps in modifying services.exe: manipulations of the relocation section (.reloc) and the creation of a Thread Local Storage (TLS) callback to services.exe (ZeroAccess – From Rootkit to Nasty Infection).
+5.
+The finishing point is its creation of a new file with the same name – services.exe – but pre-modified to suit the purposes of the attacker.
+A new file is created by the function ZwCreateFile() call and filling the NTFS extended attributes parameter from the buffer with malicious dll code.
+The malicious payload module is not stored directly in services.exe, but loaded by misusing certain features of NTFS.
+Also basic information is copied from the original file (creation time, last access time, last write time, change time and file attributes).
+Injected shellcode at step 3 searches for the extended attribute with the name "731" using the ZwQueryEaFile() function and runs the payload on execution.
+The next layer of shellcode searches the beginning of the malicious dll module, prepares the entry point and executes it.
+The Call Graph of injected shellcode from the second layer looks like this:
+ESET products detect modifications in the system process services.exe as Win64/Patched.B.Gen.
+the modified services.exe file according to the BinDiff program is shown in the following figure:
+services.exe before (left) and after (right)malicious modifications
+ScRegisterTCPEndpointbefore() before modifications (left) and after malicious modifications (right)
+Detection statistics by region, from the beginning of this year, look like this (as collected by ESET LiveGrid® technology):
+[Win64/Sirefef detections by region] [Win32/Sirefef detections by region]
+After the ZeroAccess developer changed infection tactics and stopped using kernel-mode components in the latest version we tracked the growth of x64 version infections.
+Detection statistics for Win32/Sirefef and Win64/Sirefef look like this:
+ZeroAccess shows how rootkit developers search for other distribution methods and are finding interesting tricks for infecting system processes in user-mode.
+We have already talked at length (Bootkit threats: in-depth reverse engineering & defense) about reverse engineering bootkits at the most recent REcon conference in Montreal, but there’s more than one way for complex malware to work on x64 systems, as the latest samples of ZeroAccess demonstrate.

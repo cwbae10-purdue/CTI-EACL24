@@ -1,0 +1,122 @@
+ESET researchers are actively monitoring malware that targets embedded systems such as routers, gateways and wireless access points.
+We call this new threat Linux/Remaiten.
+ESET researchers are actively monitoring malware that targets embedded systems such as routers, gateways and wireless access points.
+Recently, we discovered a bot that combines the capabilities of Tsunami (also known as Kaiten) and Gafgyt.
+It also provides some improvements as well as a couple of new features.
+We call this new threat Linux/Remaiten.
+So far, we have seen three versions of Linux/Remaiten that identify themselves as versions 2.0, 2.1 and 2.2.
+Based on artifacts found in the code, the authors call this new malware “KTN-Remastered” or “KTN-RM”.
+In this blog we will describe the unique spreading mechanism of Linux/Remaiten, its different features, and the differences between the versions found in the wild.
+A prominent feature of Linux/Gafgyt is telnet scanning.
+When instructed to perform telnet scanning, it tries to connect to random IP addresses reachable from the Internet on port 23.
+If the connection succeeds, it will try to guess the login credentials from an embedded list of username/password combinations.
+If it successfully logs in, it issues a shell command to download bot executables for multiple architectures and tries to run them.
+This is a simple albeit noisy way of infecting new victims, as it is likely one of the binaries will execute on the running architecture.
+Linux/Remaiten improves upon this spreading mechanism by carrying downloader executables for CPU architectures that are commonly used in embedded Linux devices such as ARM and MIPS.
+After logging on via the telnet prompt of the victim device, it tries to determine the new victim device’s platform and transfer only the appropriate downloader.
+This downloader’s job is to request the architecture-appropriate Linux/Remaiten bot binary from the bot’s C&C server.
+This binary is then executed on the new victim device, creating another bot for the malicious operators to use.
+The Linux/Remaiten downloaders are small ELF executables embedded in the bot binary itself.
+When executed on the victim’s device, they connect to the bot’s C&C server and send one of these commands, followed by a new line:
+mips
+mipsel
+armeabi
+armebeabi
+The C&C will respond with an ELF bot binary for the requested architecture.
+Note that the TCP port used to connect to the C&C server is different from IRC server of the bot shown later.
+Figure 1 – Downloader requesting a bot binary from the C&C
+Figure 2 – Downloader connecting to C&C
+The downloader’s only job is to send one of the mentioned commands to the C&C server and write the response to stdout.
+In the case shown here, the command is mips.
+Figure 3 – Downloader requesting a mips architecture bot from the C&C
+When executed, by default, the bot runs in the background.
+Running it with the “-d” switch instructs it to stay in the foreground.
+Once started, the process changes its name to something that looks legitimate such as “-bash” or “-sh”.
+We have seen “-bash” used in versions 2.0 and 2.1, and “-sh” in version 2.2.
+Figure 4 – Bot startup
+Next the function create_daemon will create a file named “.kpid” in one of the predefined daemon directories (the first one it finds having write permissions) and write its PID to this file:
+Figure 5 – Daemon file directories
+If the “.kpid” file already exists, the already running malware process is killed based on the PID contained in the file.
+The file is then removed before a new “.kpid” is created, and the execution continues normally.
+Figure 6 – strace of the daemon pid file creation
+There is a list of C&C server IP addresses hardcoded in the bot binaries.
+One is chosen at random and the bot connects to it on a hardcoded port.
+The port changes from one variant to another.
+Figure 7 – Bot connecting to a C&C server
+If it successfully reaches the C&C server, the bot then checks-in on the IRC channel.
+The C&C should reply with a welcome message and further instructions.
+These instructions will be parsed and executed by the bot on the infected device.
+Figure 8 – C&C bot welcome message
+The bot can respond to various general IRC commands.
+They are listed in an array together with their function handler:
+Figure 9 – IRC commands
+The most interesting of these is the “PRIVMSG” command.
+It is used to instruct the bot to perform its various malicious actions such as flooding, downloading files, telnet scanning and so on.
+The commands that can be sent via “PRIVMSG” are also in a static array.
+Figure 10 – Available bot commands
+Most of these capabilities are from Linux/Tsunami with the remainder from Linux/Gafgyt.
+Here are some examples of the strings in the binary related to its malicious behavior.
+They have verbose descriptions which makes it quite easy to understand what they do.
+Figure 11 – Flooding capabilities
+Figure 12 – Telnet scanning, downloading a file, killing other bots
+As we mentioned before, Linux/Remaiten is unique in that it carries multiple small downloaders and can upload them to the victim device if its architecture matches one of the available downloaders.
+When executed, the downloader will request a bot binary from the C&C server.
+Figure 13 – Embedded payloads
+Figure 14 – Payload structure
+Figure 15 – Guessing telnet login credentials
+Remaiten’s telnet scanner starts when the C&C server issues the command “QTELNET”.
+Analysis reveal the description of that command by the malware author is correct: it is indeed an improved version Gafgyt’s telnet scanner.
+Telnet scanning is done in stages that can be boiled down to:
+Choose a random public IP address and connect to it on port 23
+Try username/password combinations
+Discover the victim’s architecture
+Send and execute the correct downloader
+The architecture is discovered by executing “cat $SHELL” on the victim’s device and parsing the result.
+The SHELL environment variable contains the path to the executable currently acting as the command line interpreter.
+If that file is an ELF executable, its header is parsed to determine its architecture.
+Figure 16 – Discover victim’s platform & check if downloader for the platform is available
+Figure 17 – Part of the function that parses the ELF header
+The bot will then choose the correct payload to send to the new victim device.
+Figure 18 – The function that chooses a payload based on the victim device’s architecture
+The first step is to find a writable directory.
+Linux/Remaiten has a list of the common paths where it should be able to write.
+Figure 19 – List of directories where the downloader might be saved
+Several empty executables are created: “.t”, “retrieve” and “binary”.
+The “retrieve” file will contain the downloader and “binary” the requested bot from the C&C server.
+The file “.t” file does not seem to be used in versions earlier that 2.2.
+Figure 20 – Prepare for payload transfer and its execution
+Linux/Remaiten has a strange way to create empty executable files: it copies the busybox binary (found on most embedded devices) and then empties it with the >file command.
+The downloader is transferred via telnet by issuing echo commands with each byte hex-encoded with the “\x” escape sequence.
+We have seen this technique before being used to spread malware between embedded Linux devices, such as in Linux/Moose.
+Figure 21 – Transfer the payload hexstring with echo
+Now that the downloader has been transferred, it will be launched to fetch the full Linux/Remaiten payload.
+The downloader requests a bot binary from the C&C and writes it to standard output, which is redirected to the “binary” file by the deployment command.
+Finally, the “binary” file is launched and voila, the new IRC bot is active.
+Figure 22 – Execute the downloader and the bot
+Before resuming the telnet scanning, the bot informs the C&C server of its progress.
+It sends the new victim device’s IP address, the successful username and password pair, and whether it infected the other device or not.
+Perhaps the botnet operators infect devices manually if the automatic method fails or collect statistics on the popularity of non-supported architectures?
+Figure 23 – Inform the C&C about the bot deployment status
+Another interesting command is “KILLBOTS”.
+When issued, the bot will enumerate running processes and decide which to ignore and which to kill based on a few criteria, but mainly because of their names.
+These process names can differ across bot versions.
+Figure 24 – A list of process names to kill
+Figure 25 – A list of process names to ignore
+Linux/Remaiten will only kill processes that were started from an interactive shell by looking at the process’s tty device number.
+It will also report the name of the killed process to its C&C server, perhaps to improve their whitelist and blacklist of process names.
+Figure 26 – The bot-killing process
+There are mostly just minor differences between bot client versions, such as additional process names to kill/ignore, downloader directories, and so forth.
+It is reasonable to assume that these and others can change with each build, even if the version mentioned in the strings stays the same.
+The downloader binaries embedded in the bot are the same in the versions we have analyzed except for the hardcoded IP addresses and port.
+One major difference in v2.2 is the fact that it also executes a wget/tftp command to download a shell script that downloads the bot binaries, just like Gafgyt usually does.
+The spreading code will try this method before transferring the downloader.
+Figure 27 – Inform the C&C that the bot was deployed via wget/tftp
+The shell script is distributed via another server, which was also providing the popular Gafgyt bots.
+Figure 28 – Shell script distributed via another server
+By looking at the al.sh file, this was the first time we stumbled upon bots for platforms such as PowerPC and SuperH.
+Although there are tools to cross-compile for multiple architecture, it is surprising to see the actors when into the trouble of compiling their malware for these architectures.
+They are ready for any situation.
+We are not sure what device is running under PowerPC or SuperH.
+Figure 29 – Bots downloaded by the shell script
+Figure 30 – Beginning of the shell script
+The C&C server used for version 2.0 had an unexpected welcome message: It contained a reference to the MalwareMustDie blog.

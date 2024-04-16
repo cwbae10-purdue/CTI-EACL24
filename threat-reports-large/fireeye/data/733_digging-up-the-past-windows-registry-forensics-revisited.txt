@@ -1,0 +1,189 @@
+FireEye consultants frequently utilize Windows registry data when performing forensic analysis of computer networks as part of incident response and compromise assessment missions.
+This can be useful to discover malicious activity and to determine what data may have been stolen from a network.
+Many different types of data are present in the registry that can provide evidence of program execution, application settings, malware persistence, and other valuable artifacts.
+Performing forensic analysis of past attacks can be particularly challenging.
+Advanced persistent threat actors will frequently utilize anti-forensic techniques to hide their tracks and make the jobs of incident responders more difficult.
+To provide our consultants with the best possible tools we revisited our existing registry forensic techniques and identified new ways to recover historical and deleted registry data.
+Our analysis focused on the following known sources of historical registry data:
+Registry transaction logs (.LOG)
+Transactional registry transaction logs (.TxR)
+Deleted entries in registry hives
+Backup system hives (REGBACK)
+Hives backed up with System Restore
+The Windows registry is stored in a collection of hive files.
+Hives are binary files containing a simple filesystem with a set of cells used to store keys, values, data, and related metadata.
+Registry hives are read and written in 4KB pages (also called bins).
+For a detailed description of the Windows registry hive format, see this research paper and this GitHub page.
+To maximize registry reliability, Windows can use transaction logs when performing writes to registry files.
+The logs act as journals that store data being written to the registry before it is written to hive files.
+Transaction logs are used when registry hives cannot directly be written due to locking or corruption.
+Transaction logs are written to files in the same directory as their corresponding registry hives.
+They use the same filename as the hive with a .LOG extension.
+Windows may use multiple logs in which case .LOG1 and .LOG2 extensions will be used.
+For more details about the transaction log format, see this GitHub page.
+Registry transaction logs were first introduced in Windows 2000.
+In the original transaction log format data is always written at the start of the transaction log.
+A bitmap is used to indicate what pages are present in the log, and pages follow in order.
+Because the start of the file is frequently overwritten, it is very difficult to recover old data from these logs.
+Since different amounts of data will be written to the transaction log on each use, it is possible for old pages to remain in the file across multiple uses.
+However, the location of each page will have to be inferred by searching for similar pages in the current hive, and the probability of consistent data recovery is very small.
+A new registry transaction log format was introduced with Windows 8.1.
+Although the new logs are used in the same fashion, they have a different format.
+The new logs work like a ring buffer where the oldest data in the log is overwritten by new data.
+Each entry in the new log format includes a sequence number as well as registry offset making it easy to determine the order of writes and where the pages were written.
+Because of the changed log format, data is overwritten much less frequently, and old transactions can often be recovered from these log files.
+The amount of data that can be recovered depends on registry activity.
+A sampling of transaction logs from real world systems showed a range of recoverable data from a few days to a few weeks.
+Real world recoverability can vary considerably.
+Registry-heavy operations, such as Windows Update, can significantly reduce the recoverable range.
+Although the new log format contains more recoverable information, turning a set of registry pages into useful data is quite tricky.
+First, it requires keeping track of all pages in the registry and determining what might have changed in a particular write.
+It also requires determining if that change resulted in something that is not present in later revisions of the hive to assess whether or not it contains unique data.
+Our current approach for processing registry transaction files uses the following algorithm:
+Sort all writes by sequence number descending so that we process the most recent writes first.
+Perform allocated and unallocated cell parsing to find allocated and deleted entries.
+Compare entries against the original hive.
+Any entries that are not present are marked as deleted and logged.
+In this example we create a registry value under the Run key that starts malware.exe when the user logs in to the system.
+Figure 1: A malicious actor creates a value in the Run key
+At a later point in time the malware is removed from the system.
+The registry value is overwritten before being deleted.
+Figure 2: The malicious value is overwritten and deleted
+Although the deleted value still exists in the hive, existing forensic tools will not be able to recover the original data because it was overwritten.
+Figure 3: The overwritten value is present in the registry hive
+However, in this case the data is still present in the transaction log and can be recovered.
+Figure 4: The transaction log contains the original value
+In addition to the transaction log journal there are also logs used by the transactional registry subsystem.
+Applications can utilize the transactional registry to perform compound registry operations atomically.
+This is most commonly used by application installers as it simplifies failed operation rollback.
+Transactional registry logs use the Common Log File Sytstem (CLFS) format.
+The logs are stored to files of the form <hive><GUID>.TxR.<number>.regtrans-ms. For user hives these files are stored in the same directory as the hive and are cleared on user logout.
+However, for system hives logs are stored in %SystemRoot%\System32\config\TxR, and the logs are not automatically cleared.
+As a result, it is typically possible to recover historical data from system transactional logs.
+The format of transactional logs is not well understood or documented.
+Microsoft has provided a general overview of CLFS logs and API.
+With some experimentation we were able to determine the basic record format.
+We can identify records for registry key creation and deletion as well as registry value writes and deletes.
+The relevant key path, value name, data type, and data are present within log entries.
+See the appendix for transaction log record format details.
+Although most data present in registry transaction logs is not particularly valuable for intrusion investigations, there are some cases where the data can prove useful.
+In particular, we found that scheduled task creation and deletion use registry transactions.
+By parsing registry transaction logs we were able to find evidence of attacker created scheduled tasks on live systems.
+This data was not available in any other location.
+The task scheduler has been observed using transactional registry operations on Windows Vista through Windows 8.1; the task scheduler on Windows 10 does not exhibit this behavior.
+It is not known why Windows 10 behaves differently.
+In this example we create a scheduled task.
+The scheduled task periodically runs malware.
+Figure 5: Creating a scheduled task to run malware
+Information about the scheduled task is stored to the registry.
+Figure 6: A registry entry created by the task scheduler
+Because the scheduled task was written to the registry using transacted registry operations, a copy of the data is available in the transactional registry transaction log.
+The data can remain in the log well after the scheduled task has been removed from the system.
+Figure 7: The malicious scheduled task in the TxR log
+In addition to transaction logs, we also examined methods for the recovery of deleted entries from registry hive files.
+We started with an in-depth analysis of some common techniques used by forensic tools today in the hopes of identifying a more accurate approach.
+Deleted entry recovery requires parsing registry cells in hive files.
+This is relatively straightforward.
+FireEye has a number of tools that can read raw registry hive files and parse relevant keys, values, and data from cells.
+Recovering deleted data is more complex because some information is lost when elements are deleted.
+A more sophisticated approach is required to deal with the resulting ambiguity.
+When parsing cells there is only one common field: the cell size.
+Some cell types contain magic number identifiers, which can help determine their type.
+However, other cell types, such as data and value lists, do not have identifiers; their types must be inferred by following references from other cells.
+Additionally, the size of data within a cell can differ from the cell size.
+Depending on the cell type it may be necessary to leverage information from referencing cells to determine the data size.
+When a registry element is deleted its cells are marked as unallocated.
+Because the cells are not immediately overwritten, deleted elements can often be recovered from registry hives.
+However, unallocated cells may be coalesced with adjacent unallocated cells to maximize traversal efficiency.
+This makes deleted cell recovery more complex because cell sizes may be modified.
+As a result, original cell boundaries are not well defined and must be determined implicitly by examining cell contents.
+A review of public literature and source code revealed existing methods for recovery of deleted elements from registry hive files.
+Variations of the following algorithm were commonly found:
+Search through all unallocated cells looking for deleted key cells.
+Find referenced deleted values from deleted keys.
+Search through all remaining unallocated cells looking for unreferenced deleted value cells.
+Find referenced data cells from all deleted values.
+We implemented a similar algorithm to experiment with its efficacy.
+Although this simple algorithm was able to recover many deleted registry elements, it had a number of significant shortcomings.
+One major issue was the inability to validate any references from deleted cells.
+Because referenced cells may have already been overwritten or reused multiple times, our program frequently made mistakes in identifying values and data resulting in false positives and invalid output.
+We also compared program output to popular registry forensic tools.
+Although our program produced much of the same output, it was evident that existing registry forensic tools were able to recover more data.
+In particular, existing tools were able to recover deleted elements from slack space of allocated cells that had not yet been overwritten.
+Additionally, we found that orphaned allocated cells are also considered deleted.
+It is not known how unreferenced allocated cells could exist in a registry hive as all related cells should be unallocated simultaneously on deletion.
+It is possible that certain types of failures could result in deleted cells not becoming unallocated properly.
+Through experimentation we discovered that existing registry tools were able to perform better validation resulting in fewer false positives.
+However, we also identified many cases where existing tools made incorrect deleted value associations and output invalid data.
+This likely occurs when cells are reused multiple times resulting in references that could appear valid if not carefully scrutinized.
+Given the potential for improving our algorithm, we undertook a major redesign to recover deleted registry elements with maximum accuracy and efficiency.
+After many rounds of experimentation and refinement we ended up with a new algorithm that can accurately recover deleted registry elements while maximizing performance.
+This was achieved by discovering and keeping track of all cells in registry hives to perform better validation, by processing cell slack space, and by discovering orphaned keys and values.
+Testing results closely matched existing registry forensics tools but with better validation and fewer false positives.
+The following is a summary of the improved algorithm:
+Perform basic parsing for all allocated and unallocated cells.
+Determine cell type and data size where possible.
+Enumerate all allocated cells and do the following: For allocated keys find referenced value lists, class names, and security records.
+Populate data size of referenced cells.
+Validate key ancestors to determine if the key has been orphaned.
+For allocated values find referenced data and populate data size.
+For allocated keys find referenced value lists, class names, and security records.
+Populate data size of referenced cells.
+Validate key ancestors to determine if the key has been orphaned.
+For allocated values find referenced data and populate data size.
+Define all allocated cell slack space as unallocated cells.
+Enumerate allocated keys and attempt to find deleted values present in the values list.
+Also attempt to find old deleted value references in the value list slack space.
+Enumerate unallocated cells and attempt to find deleted key cells.
+Enumerate unallocated keys and attempt to define referenced class names, security records, and values.
+Enumerate unallocated cells and attempt to find unreferenced deleted value cells.
+Enumerate unallocated values and attempt to find referenced data cells.
+The following example demonstrates how our deleted entry recovery algorithm can perform more accurate data recovery and avoid false positives.
+Figure 8 shows an example of a data recovery error by a popular registry forensics tool:
+Figure 8: Incorrectly recovered registry data
+Note that the ProviderName recovered from this key was jumbled because it referred to a location that had been overwritten.
+When our deleted registry recovery tool is run over the same hive, it recognizes that the data has been overwritten and does not output garbled text.
+The data_present field in Figure 9 with a value of 0 indicates that the deleted data could not be recovered from the hive.
+Figure 9: Properly validated registry data
+Windows includes a simple mechanism to backup system registry hives periodically.
+The hives are backed up with a scheduled task called RegIdleBackup, which is scheduled to run every 10 days by default.
+Backed up hives are stored to %SystemRoot%\System32\config\RegBack.
+Only the most recent backup is stored in this location.
+This can be useful for investigating recent activity on a system.
+The RegIdleBackup feature was first included with Windows Vista.
+It is present in all versions of Windows since then, but it does not run by default on Windows 10 systems, and even when it is manually run no backups are created.
+It is not known why RegIdleBackup was removed from Windows 10.
+In addition to RegBack, registry data is backed up with System Restore.
+By default, System Restore snapshots are created whenever software is installed or uninstalled, including Windows Updates.
+As a result, System Restore snapshots are usually created on at least a monthly basis if not more frequently.
+Although some advanced persistent threat groups have been known to manipulate System Restore snapshots, evidence of historical attacker activity can usually be found if a snapshot was taken at a time when the attacker was active.
+System Restore snapshots contain all registry hives including system and user hives.
+Wikipedia has some good information about System Restore.
+Processing hives in System Restore snapshots can be challenging as there may be many snapshots present on a system resulting in a large amount of data to be processed, and often there will only be minor changes in hives between snapshots.
+One strategy to handle the large number of snapshots is to build a structure representing the cells of the registry hive, then repeat the process for each snapshot.
+Anything not in the previous structure can be considered deleted and logged appropriately.
+The registry can provide a wealth of data for a forensic investigator.
+With numerous sources of deleted and historical data, a more complete picture of attacker activity can be assembled during an investigation.
+As attackers continue to gain sophistication and improve their tradecraft, investigators will have to adapt to discover and defend against them.
+Registry transaction logs contain records with the following format:
+Magic number (0x280000)
+Record type (1)
+Registry operation type
+Key path size
+Key path size repeated
+The magic number is always 0x280000.
+The record size includes the header.
+The record type is always 1.
+Operation type 1 is key creation.
+Operation type 2 is key deletion.
+Operation types 3-8 are value write or delete.
+It is not known what the different types signify.
+The key path size is at offset 40 and repeated at offset 42.
+This is present for all registry operation types.
+For registry key write and delete operations, the key path is at offset 72.
+For registry value write and delete operations, the following data is present:
+Value name size
+Value name size repeated
+The data for value records starts at offset 88.
+It contains the key path followed by the value name optionally followed by data.
+If data size is nonzero, the record is a value write operation; otherwise it is a value delete operation.

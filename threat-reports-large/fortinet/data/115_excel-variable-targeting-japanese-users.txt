@@ -1,0 +1,99 @@
+Over the course of the past few months, the FortiGuard SE group has been utilizing and enhancing the Fortinet machine learning systems to detect emerging threats.
+Recently, one of those machines detected an anomalous spike that led us to discover a malware campaign that had been using social engineering techniques to target Japanese citizens over the course of several weeks.
+Like most phishing campaigns, this attack begins with an email that tries to trick a recipient into opening an attachment – which in this case is a weaponized Excel document that contains malicious macros.
+However, during this investigation we uncovered anti-analysis techniques used by these attackers, as well as an Excel variable that is currently undocumented.
+The campaign consists of spam email sent to a recipient where the context of the email (loosely translated from Japanese) contains multiple variations of the same message subject that reads – [!!]
+Matter of May invoice – although various other subjects and contexts were also observed.
+Some messages include a statement from an individual that claims they are “very indebted” to the recipient, and that a reply is requested by the sender for the attached document:
+Another variation included four messages from a person named “MOTH.” Those messages are included below:
+Other variations included slightly different messages, such as being forever indebted to the recipient, as well as offering to provide the invoice as a .pdf file if needed.
+The message attachments are Microsoft Excel files that contain malicious macros.
+An example of such an attachment is shown below.
+Aside from targeting a specific country, what caught our attention with this attack was the collection of techniques used in the Excel macro itself.
+While they may not all be considered new, the authors clearly took great care in developing this attack.
+The first trick used is the typical fake picture, seen in the previous screenshot.
+Underneath, however, is something more sinister.
+The cell A1 of the spreadsheet actually contains a lengthy malicious string.
+When an attempt is made to copy this string, older versions of Excel will not be able to handle it.
+Diving into the macro itself, we attempted the usual analysis methods.
+For a quick view at what we were dealing with, we looked for the final payload and tried to simply create a regular MsgBox to see the final output.
+However, this failed, as shown in the example below:
+Not to be deterred, we then tried the method of writing the output to one of the other cells in the spreadsheet for easier analysis.
+Again, and surprisingly, we got a similar “Out of memory” error.
+Interestingly enough, the same problem occurred when we tried to write the output to an external file.
+As it turns out, the authors have actually found a way to incorporate anti-analysis techniques into the file to prevent analysts from using their usual quick-and-easy methods of deobfuscating macros.
+To figure out what was actually happening, we needed to perform a closer inspection of the macro.
+As with almost all malicious macros, once the spreadsheet has been opened this macro is launched automatically via the call to Workbook_Open().
+However, not too many macros actually check for Excel-specific variables, such as xlXmlExportValidationFailed.
+By doing this, the authors have ensured that the macro can only be executed within an Office Excel environment, which means that macro emulators may fail if they do not properly emulate specific Excel variables.
+This same trick is used in various locations throughout the execution of the macro.
+Moreover, this macro also uses the Application.International Excel property, which contains information about the current country/region, as well as international settings in its call to the Beta1() function.
+This eventually references the xlDate variable in Excel, which, oddly enough, is currently undocumented.
+The reason this variable is important will be made clearer in the next section.
+As seen above in oceran(), additional Excel variables are used as anti-emulator tricks.
+In addition, the Shell() command expects two parameters: first, the actual command, and second, the window style.
+The window style here is defined as Sgn(123.67) – 1, which is a fancy way of saying zero.
+Thus, whatever command is executed, the window will be hidden.
+The actual command is defined by the combined call to the Welcome() and WestAndS() functions.
+The WestAndS() function is used to deobfuscate the aforementioned lengthy string in Cell A1, while the Welcome() function decrypts it using the Beta1 key.
+As a reminder, the Beta1 key was determined by accessing international settings via the Application.International property with the undocumented xlDate variable.
+By default, the USA value for xlDate is 2.
+However, this value led to gibberish as this key could not properly decrypt the A1 string.
+As we had a small window for analysis, we decided that a quick brute force attack might prove more efficient rather than endlessly trying to figure out what xlDate actually is.
+A quick FOR loop with a stepsize of “3” (since the script called for a key of “Beta1 * 3”) was added to the macro in an attempt to brute force the correct payload.
+Finally, our strategy was successful:
+This decrypted line coincides with a Beta1 value of 81, which is apparently true for a standard Japanese system.
+The decrypted payload is as follows:
+Wmic ProcEss "caLL" CrEATe "pOwERsHeLL -NONiNteRaCTI -W 1 -ExecutiOnpoL BypAsS -NoProF &( $pSHOmE[21]+$PShOME[30]+'x')( "\"sal b sal;b c Iex;b v nEw-oBject;(v Io.coMPReSSIoN.dEFlAtEStrEAM([sYsteM.Io.mEmORystrEAm] [conVErT]::fRoMBasE64StRiNg('REDACTED BASE64STRING')"\"+ ([CHAR]44).TOStRInG() + "\"[io.cOMpReSsIOn.COmPreSSiONmOdE]::DEComPrESs )|%{v iO.StREAmReADEr( `$_"\"+ ([CHAR]44).TOStRInG() + "\"[tExT.encODinG]::ASciI)}|%{ `$_.READtOeND( )})|c"\" ) "
+Notice PowerShell’s freeform use of arguments.
+One does not have to specify an entire argument, such as “-ExecutionPolicy” or “-NonInteractive.” Even a partial match will be accepted as long as it is understood what argument is being specified.
+For example, specifying “-e” by itself is ambiguous since it can refer to both “-ExecutionPolicy” as well as “-EncodedCommand”, and will consequently produce an error.
+This technique is likely an evasion tactic to avoid detection engines that rely solely on finding specific patterns in the command line string.
+As for PowerShell deobfuscation, there are actually five layers of various obfuscation techniques embedded within one command.
+Getting to the bottom layer will be left as an exercise for the reader.
+Once there, however, it should look like the following:
+Another Japanese system check is performed here.
+It checks to see if the OS architecture is ビ before allowing the script to continue.
+ビ is the character for Katakana, and is a component of the Japanese language that allows for the transcription of words that are loaned or foreign to the Japanese language.
+The script makes heavy use of PowerShell aliases and string concatenation tricks.
+More interestingly, it also uses unconventional variable names, specifically names that start with a number, which surprisingly, is allowed in PowerShell.
+What this final layer eventually does is use the DownloadFile command to contact hxxps://berdiset.top/uploads/QuotaManager (located in Russia), and then save the corresponding PE file to $ENv:apPdAta\Outlook.srss.exe.
+Due to time constraints, we have not had time to complete our analysis on the downloaded file (Outlook.srss.exe), which appears to possibly be a BEBLOH/URSNIF variant (banking Trojan).
+This would not be surprise as we have frequently noted seeing the banking Trojan targeting Japanese systems in previous FortiGuard Weekly Threat briefs, including:
+January 5, 2018
+April 13, 2018
+June 22, 2018
+March 15, 2019
+Investigation into the mail headers showed that the following IP addresses were used in this campaign:
+93.147.115.90 93.58.112.48 79.11.236.101 79.11.173.200 165.51.245.201 130.0.161.134 39.45.30.114 79.7.176.43 31.197.238.214 79.3.19.107
+Much to our surprise, a whopping 80 percent of the IP addresses were located in just one country, Italy.
+The other two IP addresses originated from Pakistan (39.45.30.114) and Tunisia (165.51.245.201), respectively.
+Digging deeper, we were able to determine that these IP addresses had also been seen in other campaigns – specifically in botnet cases, which makes sense given the scope and variation of the distribution and the messages seen in the examples earlier.
+During our investigation, we discovered that these IP addresses have previously been associated with the Avalanche, Conficker, Cutwail, and Quant botnets, and the Smokeloader and Nivdort malware variants.
+It is likely that these machines are machines that belong to residential users or small businesses that are unaware they have been compromised.
+It is also an interesting part of a larger trend, detailed in our quarterly Threat Landscape Report for Q1 2019, that describes the common practice of different threat actors using the same infrastructures in their exploits.
+Based on our telemetry we observed that the majority of these attacks were concentrated in Japan, with a few anomalies in Asia and Europe,.
+However, we also observed one notable exception – a campaign emanating from the Italian IP address of 130.0.161.134, where high amounts of activity was targeting The Netherlands.
+While Japan is a well known target for BEBLOH/URSNIF, we were somewhat unsure as to why The Netherlands would appear so high on the list for this specific campaign, but data observed also shows that the sample: [cb0b8a2c1ca33d89a2181e58a0948bd88f478a39af45d0b54c53913cd89a5aba] has been trending in The Netherlands.
+And for what its worth, noted security researcher Peter Kruse tweeted the following information a week ago (at the time of writing), posting a similar observation of a possible Bebloh/URSNIF run affecting The Netherlands as well:
+As mentioned earlier, the sample 07c7ec61d9e4fe3af22a80fa206a019ed490aa37a1c1f6c46c3563701adc0510 was observed making calls to:
+hxxps://berdiset.top/uploads/QuotaManager
+which resolves to the following IP addresses observed for our datasets – [5.188.60.133] and [5.8.88.24] – both of which are hosted in Russia, and use DNSPOD.com, a Chinese Dynamic DNS provider.
+Interestingly enough, it has been observed in various reports that the URSNIF Trojan avoids all machines running operating systems with Russian or Chinese languages enabled.
+However, we are not entirely sure why the actors behind this recent campaign are using DNSPOD, other than for dynamic DNS hosting.
+Likewise, the China/Russia connection may be purely coincidental.
+Interestingly, however, this domain was only registered about a month ago – on May 12, 2019 – and our telemetry shows that samples referring to berdiset.top are active in Japan.
+Interestingly enough, we’ve also observed activity for 5.8.88.24 before, with the bulk of attacks focusing on Peru.
+We can see in the chart below that there is no activity at all, and then a sudden surge in the beginning of 2019.
+We don’t know the specifics of this campaign or have any further details, but it is interesting to note the trend for the associated IP address.
+FortiMail or other mail solutions can be used to block specific file types.
+FortiMail can also be configured to send attachments to our FortiSandbox solution (ATP), either on premise or in the cloud, to determine if a file displays malicious behavior.
+FortiGate Firewalls with Anti-Virus enabled alongside a valid subscription will detect and block this threat if configured to do so.
+FortiMail can also be configured with Content Disarm and Reconstruction to remove all macros for inbound Excel files, Office Documents and scripts within PDF files to neuter such threads before entering the network.
+FortiClient running the latest virus signatures will detect and block this file and associated files.
+The file(s) in this attack are currently being detected as:
+VBA/Agent.MUV!tr.dldr W32/Inject.ALRRV!tr
+All network IOC’s in this report are blacklisted by the FortiGuard Web Filtering Service.
+Learn more about FortiGuard Labs and the FortiGuard Security Services portfolio.
+Sign up for our weekly FortiGuard Threat Brief.
+Read about the FortiGuard Security Rating Service, which provides security audits and best practices.

@@ -1,0 +1,148 @@
+The strange behavior of a simple Windows application caught our attention and sparked the analysis by ESET of a previously undocumented malware.
+The strange behavior of a simple Windows application caught our attention and sparked ESET’s analysis of previously undocumented malware.
+A contact at the Norwegian HealthCERT — following a question about this from the regional healthcare provider Sykehuspartner — reached out to us asking about DNS queries to domains with the format [0-9a-f]{60}.smoke.
+There is no .smoke top level domain, at least as of the time of writing.
+The application responsible for that behavior is a very simple Birthday Reminder program.
+It actually works, but also has interesting features that are not explicitly disclosed to the user.
+We have seen the Birthday Reminder program download and execute additional components that hook DNS requests in order to inject ads into webpages.
+We have named this new threat DNSBirthday.
+It is also pretty clear that the authors of this malware wrote all of the components and do not simply resell compromised machines.
+For example, the C&C server is for all samples and many of the artefacts in the malware point to a project called RQZTech.
+Figure 1.
+Birthday Reminder interface
+We have only seen the Birthday Reminder installer downloaded from the following URL:
+hxxp://updates.rqztech.com/download?app=BirthdayReminder&aff_id=15124
+The aff_id parameter suggests distribution via an affiliate program, but we have been unable to confirm this.
+It could also be a decoy.
+ESET’s telemetry shows this threat is distributed fairly evenly around the globe with a few spikes in some countries such as the US, Spain, Japan and Italy.
+Figure 2.
+Worldwide distribution of DNSBirthday
+DNSBirthday is modular malware with multiple components.
+It took us some time to understand the whole scheme behind this malware’s operation and put all the pieces of the puzzle together.
+However, all the components have a few things in common:
+They communicate with just one C&C server (updates.rqztech.com) using JSON formatted messages over HTTPS.
+Most of the binaries are statically linked with OpenSSL and libcurl, as well as a JSON library.
+Most of the component names are prefixed with rqz.
+PDB paths in components have the form C:\Users\default.default-PC\Documents\Visual Studio 2013\Projects\rqz-[module-name]\Release\rqz-[module-name].pdb
+Figure 3.
+RQZTech homepage as of June 2nd 2017
+The authors chose to pin two certificates to prevent Man-In-The-Middle attacks.
+However, the server also responded to unencrypted HTTP requests, so it was possible to capture network traffic while debugging by changing the URL scheme of these requests to http.
+The certificates embedded in the executables are self-signed.
+The Not-before field shows that they were probably generated on the 16th of April 2016.
+We will go into more details of each component but first here’s an overview of how they are linked together.
+Figure 4.
+Overview of DNSBirthday’s components
+Although all of the components are PE executables, only a few are written to disk.
+The others are loaded and executed in memory using a custom PE loader implementation.
+BirthdayReminderSetup.exe is an 18MB NSIS package.
+This installer first determines whether the system is a 32- or 64-bit version and extracts several files to the specified install folder accordingly.
+After this, it achieves persistence by creating the value BirthdayReminder in the registry key HKLM\Software\Microsoft\Windows\CurrentVersion\Run with the path to the BRController.exe application.
+After all, how could it remind you of birthdays if it’s not continuously running?
+It even has an icon in the system tray notification area.
+The sole purpose of the component BRController.exe is to decrypt the br.dll.enc file into memory, load it and call rqz_stg1_init, one of its exported functions.
+The decryption algorithm used is AES-256-CBC, implemented via a statically linked OpenSSL library.
+The decryption key is generated in two steps.
+First, the SHA-256 hash of the logo.png file is computed.
+Then a simple XOR routine is applied to the hash.
+The first byte is XORed with the last and all other bytes are XORed with the first.
+The initialization vector (IV) is the first 16 bytes of the key which is then reshuffled by the same XOR routine used for the key.
+We call br.dll the unencrypted form of br.dll.enc.
+This library acts as the core component of this malware.
+First, br.dll creates a mutex Global\Global\RqzSingleInst and then creates a list of callable objects with explicit names such as dlExec, loader or even exfil.
+These callable objects, when invoked, can perform tasks like downloading executable files, optionally saving them to disk and executing them, or exfiltrating data to the C&C server.
+The component retrieves a unique bot identifier hardcoded in the BRController executable by searching for the sequence of bytes, 0xB00B1355 and then reading the 16 following bytes.
+Then it tries to launch the Birthday Reminder application graphical user interface and enters a loop to communicate with its C&C server.
+The first HTTP POST request made to the server (hxxps://updates.rqztech.com/update_check/) contains some basic information in JSON format inside the data parameter.
+Here is a tidied version of the first POST made to C&C server:
+This JSON contains the version of the malware (ver, 1.1.0-x32), the version of Windows (osver), the bot identifier (uuid), the number of times the malware tried to contact the server (checkinCount) and an array containing the status of the latest loaded component (compStatus).
+The server replies with a JSON array containing a list of parameters to pass to the different components.
+Although the request looks like a software update mechanism, what we have observed is that it is used to push malicious components to the victims.
+The first time the malware contacts the server, the latter replies with the following JSON (payload string is truncated for readability).
+Reply from C&C server:
+The response from the server shows three actions to be executed in succession.
+The first sets some environment variables using the callback component.
+The loader component is then called in order to decrypt and load the component rqz_info_gatherer in memory.
+The payload string is a base64-encoded and encrypted DLL (rqz_info_gatherer).
+The decryption routine is the same as that used to decrypt the br.dll.enc file.
+Once loaded, the now-decrypted component is called.
+After that, the malware sleeps for 8 hours.
+This module’s purpose is to collect some information about the machine and to send a report using the exfil component from br.dll.
+The exfil component makes an HTTPS POST request to hxxps://updates.rqztech.com/update_report/ with the bot uuid and payload.
+The payload parameter is a JSON object composed of two elements: data and sha256.
+The sha256 string is the hash of the data before it was base64 encoded.
+The data string is a base64-encoded JSON containing information about the computer.
+The following snippet is an example of a decoded report sent to the server (procStat is truncated for readability).
+Example report from the rqz-info-gatherer module:
+Most of these fields are pretty self-explanatory.
+The dirStat object contains the size in bytes of certain folders.
+Once sent, the server replies with just danke (German for “thank you”) which, interestingly, matches with the country name field in the public certificate.
+It has been observed that after a certain period of time (one or two weeks), the br.dll component downloads the rqz-dnsduvel-ldr component.
+duvel is (Old) Dutch and Frisian for “devil” so this probably means “devil DNS”.
+This component looks for browser processes such as iexplore.exe, chrome.exe and firefox.exe to inject malicious code inside them.
+Once a process is found, the module drops and executes an embedded executable in the %TEMP% folder (GetTempPathA).
+The name of the file is the process identifier (PID) of the process to inject code into, with the .tmp extension.
+This means that for every browser process to be injected, a copy of the executable file is dropped in a .TMP file in the temporary folder.
+The dropped binary uses the internal name rqz-dnsduvel-ldr-exe and both the PID of the process to be injected and a session identifier are passed to it as parameters.
+This component is an injector that uses Reflective DLL injection in order to load a DLL into the address space of another process.
+This executable also contains another executable, but unlike the rqz-dnsduvel-ldr module, the embedded binary is encrypted.
+Once again, the decryption routine is AES-256-CBC but this time the IV and key are hardcoded.
+The injector queries the server for a configuration file.
+The query is done via an HTTPS POST request to:
+hxxps://updates.rqztech.com/update_report/?update=fdac34d
+The POST parameters are, again, uuid and payload.
+payload is, again, a JSON object with a data and a sha256 key.
+The data string is the following base64-encoded JSON where procName is the browser to inject and sessionID is the cookie set by the second command line argument.
+Example report from rqz-dnsduvel-ldr-exe:
+The server replies with the following JSON configuration file (blockList array is truncated for readability).
+Example configuration for rqz-dnsduvel-ldr-exe:
+The full configuration with a complete “block list” is available on ESET’s Github.
+The blockList array contains approximately 500 domain names that usually host advertisements.
+The content of this configuration is stored in a file mapping backed by memory and named rqzduvel-checkin-payload created with CreateFileMapping(INVALID_HANDLE_VALUE, …​).
+The token field contains a domain name that is used by the malware to check whether the DNS server used is the one in the dnsServer field.
+DNSBirthday queries this domain and checks if the returned address is 127.0.0.1.
+The module retrieves the export ReflectiveLoader in the decrypted binary (rqz-dnsduvel), maps the library in the browser’s address space using WriteProcessMemory and calls CreateRemoteThread with the lpStartAddress parameter set at the retrieved export address.
+Once injected, the component will inform the C&C server if the injection was successful with a POST request to: hxxps://updates.rqztech.com/moduleapi/
+Injection result sent to the C&C server is as follows:
+The reason string can have the following values:
+The binary failed to open the victim process
+The injection was successful (process still running after 1 minute)
+The process has likely crashed and the injection did not succeed
+rqz-dnsduvel is the final stage and its purpose is to hook DNS resolver functions.
+The authors have likely borrowed some code in order to achieve the reflective DLL injection.
+They have also statically linked the NTHooklib project, which includes the udis86 library.
+NTHooklib is a library that provides a hooking engine.
+The component hooks the following DNS functions:
+getaddrinfo
+GetAddrInfoW
+gethostbyname
+GetAddrInfoEx
+The goal of the hook is to query an alternate DNS server when the query is for a domain name present in the “block list” of the configuration file.
+Every time the injected browser needs to resolve one of these domain names, the server set in dnsServer is used (176.31.106.50 here).
+Regardless of the queried domain name, while monitoring this, the IP address returned from that rogue DNS server was always either 188.214.30.97 or 188.214.30.98.
+The following code snippet is a loop replacing all the responses from the real getaddrinfo function with the IP address resolved by the rogue server.
+Figure 5. getaddrinfo hook function replacing results
+As mentioned previously, the domain names in the “block list” are related to advertisements, which leads us to think that the main purpose of this malware is to replace or inject advertisements in webpages.
+When queried for any files ending in .js, the server at 188.214.30.97 would always return the same file.
+The script adds a div element with id greenteainthesahara.
+Then it makes an HTTP POST request to the URL hxxp://ads.greenteamedia.net/ads and simply evaluates (eval) the response.
+The JavaScript we have observed from ads.greenteamedia.net contains code for different browsers and platforms and, interestingly, even for mobile phones.
+The main purpose of this script is to add an event listener on the page that opens a new browser window with an ad when a click is made.
+Figure 6.
+Malicious div added inside a web page
+Here is an example redirection chain we have observed.
+hxxp://ads.greenteamedia.net/tracker?id=58b87f2a2a61cf000a11f651&type=Popunder
+hxxp://go.oclaserver.com/afu.php?zoneid=788473
+hxxp://onclkds.com/afu.php?zoneid=788473
+hxxp://onclkds.com/?r=/mb/han&zoneid=788473&pbk2=fd0ac8ee88f5760db27385dc91765d976393347937513284046&auction_id=b322d474-a5bc-4757-bb28-6613427bd3e8&uuid=fffa3dff-f018-412b-95a9-1a9e915fa972&ad_scheme=1&ab=148&rotation_type=2&adparams=bm9qcz0w&x=1698&y=822&sw=1716&sh=927&wx=0&wy=0&ww=1716&wh=887&wiw=1698&wih=822&wfc=0&pl=http://onclkds.com/afu.php?zoneid=788473&drf=&np=0&pt=undefined&nb=1&ng=1&dm
+The rest of the chain changes and probably depends on the result of the ad bidding.
+It sometimes redirects to a drive-by download that could result in even more malware being installed.
+Authors of this malware have gone to great lengths, just to push unsolicited advertisements.
+As shown here, the authors have put a lot of effort into avoiding being detected, by including a PE loader, loading and decrypting components in memory, creating a modular architecture that allows updates and addition of more components, and using a pinned public key to secure their communications.
+However, some choices are hard to understand:
+Newer versions of some components contain the .pdb path, which was not present in older versions
+Most of the components are not written to disk, but the final stage rqz-dnsduvel-ldr-exe is
+The component rqz-dnsduvel-ldr-exe uses a hardcoded key and IV instead of deriving them from the hash of the logo.png file.
+The modularity of this malware allows for more features that perhaps we haven’t witnessed as yet.
+It is possible that the operators of this malware send other types of malware such as spyware to chosen victims.
+Some components could also be in development as we speak.

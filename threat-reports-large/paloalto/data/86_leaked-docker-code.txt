@@ -1,0 +1,83 @@
+The Unit 42 Cloud Threat Report: Spring 2020 focused on the practices of DevOps to determine where misconfigurations are happening in the cloud.
+Our research found a large number of DevOps services (e.g., SSH, Database, Code Repository) inadvertently exposed to the internet due to misconfigured infrastructure.
+This blog offers a detailed analysis of leaked code from Docker registries and how this, and other insecure infrastructure of misconfigurations, can lead to compromises in an organization’s security posture.
+Misconfigurations are the low hanging fruits that attackers continuously look for.
+A misconfiguration can put your entire cloud infrastructure at risk.
+Shift left is a practice of identifying vulnerable code and removing vulnerabilities in the early stage of the Software Development Life Cycle (SDLC).
+The idea is to integrate security measures into SDLC as early as possible, so that vulnerabilities and bugs can be removed before production.
+While the shift-left movement mainly focuses on securing the applications, the same concept can also be applied to infrastructure.
+An infrastructure vulnerability or misconfiguration can be as bad if not worse than an application vulnerability.
+With Infrastructure as Code (IaC) maturing, infrastructure can now be scrutinized for vulnerabilities before being created.
+In particular, we looked at the exposed Docker registries due to the misconfigured network access control.
+These registries contain the application source code and historical versions.
+When leaked, proprietary intellectual property can be stolen, malicious code can be injected, and operation critical data can be hijacked.
+We identified 2,956 exposed applications and 15,887 unique versions of the applications.
+The owners of these unsecured registries include research institutes, retailers, news media organizations, and technology companies.
+WARNING: Because Docker images contain application source code and business-sensitive data, it is crucial to restrict the access to Docker registries and ensure the integrity of the data.
+A Docker image contains a collection of files that can be deployed as a single container.
+Docker images incorporate the application code, dependent libraries, and operating system files in a single bundle that can run independently in an OS-agnostic environment.
+Docker registry is a server for storing and organizing Docker images.
+Inside each Docker registry, images are organized into repositories, where each repository holds the images of one application (e.g., httpd, nginx, WordPress).
+Each repository can also hold multiple versions of the application, where a unique tag identifies each version.
+As a result, Docker registry is like version-controlled storage for containerized applications.
+Docker registry supports three primary operations (pushing images, pulling images, and deleting mages), which are well-defined by the registry APIs.
+To store container images, one can set up an on-premise registry server or use a cloud-based registry service.
+On-premise registries can be easily created with the official registry container.
+The current Docker registry is maintained by open-source Moby Project.
+The system administrator is responsible for the storage infrastructure, DevOps pipeline integration, and access control.
+Most cloud service providers offer managed registry services, e.g., DockerHub, Amazon Elastic Container Registry (ECR), Azure Container Registry (ACR), and Google Container Registry (GCR).
+The cloud-based registries usually offer additional features such as GUI user interface, vulnerability scanning, and integrated access control on top of the native Docker registry.
+They ease the burden of managing and maintaining the registry infrastructure.
+Although setting up a Docker registry server is straightforward, securing the communication and enforcing the access control requires extra configurations.
+System administrators may unintentionally expose a registry service to the internet without enforcing proper access control.
+In this research, we are interested in finding these “misconfigured” registries and exploring the leaked data.
+Note that we collected only the metadata and did not attempt to access the file content.
+Docker registry includes a “Docker-Distribution-API-Version” header in every API response, even when the request is denied with a 401 unauthorized status code.
+With this header signature, we can search on Shodan and Censys for the Docker registries on the internet.
+Although Docker registries run on port 5000 (http) or 5001(https) by default, they can be exposed to any port.
+The benefit of querying Shodan and Censys using the header signature instead of the port number is that they return the matches across all the 300+ ports.
+Figure 1 describes how we identified and explored the unsecured registries.
+Step 1 uses the Shodan and Censys’ search API to find all the servers that have a “Docker-Distribution-API-Version” header in the response.
+Step 2 finds the actual Docker registry servers by sending the “check version” request and checking the response.
+A valid registry server should return its version number in the “Docker-Distribution-API-Version” header.
+E.g., docker-distribution-api-version: registry/2.0.
+A 200 status code indicates that the registry does not require authentication and a 401 status code indicates that the registry expects an authentication token in the WWW-Authenticate header.
+Step 3 tests if the pull operation is allowed by sending the “list repository” and “list tag” requests.
+A 200 status code indicates that the pull operation is allowed and a 401 or 403 status code indicates that authentication or authorization is required to pull images.
+Step 4 tests if the push operation is allowed by sending the “blob upload” request with a random repository name.
+This request asks the registry to initialize an image upload process.
+The registry returns an upload URL in the “location” header and status code 202 if the push operation is allowed.
+This upload session is then terminated with the “cancel upload” request.
+A status code 204 indicates the upload session is canceled successfully.
+Step 5 tests if the delete operation is allowed by sending an “image deletion” request with a random repository name and random image digest.
+We can tell if the delete option is allowed by checking the status code without actually deleting any image.
+If the delete operation is allowed but the image digest does not exist, status code 400 is returned with the error message “DIGEST_IMVALID”.
+If the delete operation is not allowed, status code 405 is returned with error message “UNSUPPORTED”.
+Our research identifies 941 Docker registries exposed to the internet and 117 registries accessible without authentication.
+There are a total of 2,956 repositories and 15,887 tags in these registries.
+Out of the 117 unsecured registries, 80 registries allow the pull operation, 92 registries allow the push operation, and 7 registries allow the delete operation.
+Without looking into the image content, we could attribute about 25 percent of the unsecured registries by reverse DNS lookup or cnames in the TLS certificates.
+The owners of these registries range from research institutes, retailers, news media organizations and technology companies.
+Some exposed registries have more than 50 repositories and 100 tags exposed.
+With all the source code and historical tags, malicious actors can design tailored exploits to compromise the systems.
+If the push operation is allowed, benign application images may be replaced with images with backdoors.
+These registries may also be used for hosting malware.
+If the delete operation is allowed, hackers could encrypt or delete the images and ask for ransom.
+As each registry is typically accessed by multiple clients, all the clients who pull and run images from the compromised registries immediately become vulnerable.
+Figures 2-5 summarize the findings in the exposed registries.
+Figure 2 shows the percentage of registries that implement the https or authentication header.
+Our focus is on the registries that do not require authentication headers.
+Figure 3 is a venn diagram of the allowed operations (pull, push, or delete) across the unsecured registries.
+Figure 4 shows a sample snapshot of the exposed repositories and tags.
+Figure 5 details the number of repositories and tags in the unsecured registries.
+It is shocking to see the amount of data leaked from these registers, not to mention the potential damage that lateral movements can lead to.
+In this blog, we showed that a misconfigured Docker registry could leak confidential data, lead to a full-scale compromise, and interrupt the business operations.
+The remediation strategy for this particular misconfiguration is straightforward, such as adding a firewall rule to prevent the registry from being accessed from the internet and enforcing authentication header in all the API requests.
+However, with an ever-increasing number of applications and complexity of infrastructure, security becomes a daunting job.
+Automated tools are needed to scan for vulnerabilities and monitor malicious activities constantly.
+The earlier the issues can be identified, the less chance they will be exploited in the production.
+Prisma Cloud provides a comprehensive solution to protect the entire software development life cycle from infrastructure security to application security.
+The focus on shift left and DevOps security also helps Prisma Cloud clients defend against the most advanced cyber attacks.
+Download the Unit 42 Cloud Threat Report: Spring 2020 for more research and best practices to implement in your organization.
+Unit 42 Cloud Threat Report: Spring 2020 Blog
+Unit 42 CTR: Sensitive Data Exposed in GitHub

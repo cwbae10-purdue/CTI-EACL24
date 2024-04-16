@@ -1,0 +1,98 @@
+A FortiGuard Labs Threat Analysis Report: This blog originally appeared on the enSilo website on November 14, 2016, and is republished here for threat research purposes.
+enSilo was acquired by Fortinet in October 2019.
+In this blog, we show AtomBombing modifications that enabled us to inject code into CFG-protected processes.
+In our last blog post, we showed AtomBombing against MSPaint.exe and, if you recall, at that stage the application crashed.
+Let’s pick up where we left off.
+We’ll place a breakpoint (windbg: bp) on KiUserApcDispatcher:
+We’ll place a breakpoint (windbg: bp) on KiUserApcDispatcher:
+0:009> bp KiUserApcDispatcher
+Ok, the breakpoint is set.
+Now let’s let the code execute until it hits the breakpoint (windbg: g):
+0:009> g
+Breakpoint 0 hit
+ntdll!KiUserApcDispatcher:
+77298d50 8d8424dc020000 lea eax,[esp+2DCh]
+Great, the process hasn’t crashed yet, and we have now stopped at our breakpoint.
+Looking at KiUserApcDispatcher we should probably resume the execution of the process until the call to ds: ___guard_check_icall_fptr:
+We’ll do this by executing until the next call (windbg: pc):
+0:001> pc
+ntdll!KiUserApcDispatcher+0x25:
+77298d75 ff15d0c13277 call dword ptr [ntdll!__guard_check_icall_fptr (7732c1d0)] ds:002b:7732c1d0={ntdll!LdrpValidateUserCallTarget (772aaa30)}
+I’ll try to step over this call (windbg: p), and guess what’s going to happen?
+0:001> p
+(44d4.37a8): Security check failure or stack buffer overrun - code c0000409 (!!!
+second chance !!!)
+ntdll!RtlFailFast2:
+7718b5a0 cd29 int 29h
+Let’s take a look at the call stack (windbg: k):
+0:001> k
+ChildEBP RetAddr
+007bf990 7716c7a2 ntdll!RtlFailFast2
+007bf9bc 7718aa88 ntdll!RtlpHandleInvalidUserCallTarget+0x73
+007bfa44 77178d7b ntdll!LdrpValidateUserCallTargetBitMapRet+0x3b
+007bfee8 770338f4 ntdll!KiUserApcDispatcher+0x2b
+007bfefc 77165de3 KERNEL32!BaseThreadInitThunk+0x24
+007bff44 77165dae ntdll!__RtlUserThreadStart+0x2f
+007bff54 00000000 ntdll!_RtlUserThreadStart+0x1b
+LdrpValidateUserCallTarget is CFG’s validation function.
+It checks whether the indirect call target (ECX) is CFG valid.
+Let’s have a look at ECX:
+0:001> u ecx
+ntdll!NtSetContextThread
+ECX points to NtSetContextThread, which is of course not a valid indirect call target because it can be and has been used to bypass CFG.
+What we need to do is mark NtSetContextThread as valid in the CFG bitmap.
+For more information on how to do this, please take a look at a previous article on CFG exceptions.
+Ok, so now that we took care of CFG, let’s try to run it again.
+This time no crash, but also no calc.
+Since there was no crash we can assume that NtSetContextThread was called, but for some reason the shellcode never executed.
+Let’s put a breakpoint on NtSetContextThread inside of mspaint.exe:
+0:000> bp NtSetContextThread
+0:000> g
+Breakpoint 0 hit
+ntdll!NtSetContextThread:
+771782f0 b872010000 mov eax,172h
+Now that the program stops at the beginning of NtSetContextThread, let’s try to let it execute until the return (windbg: pt).
+If everything works, the kernel should change the context of the thread and there should be no return.
+0:000> pt
+ntdll!NtSetContextThread+0xc:
+771782fc c20800 ret 8
+Obviously it didn’t work as well as we had hoped.
+The kernel did not change the context of the thread and we did not reach the return instruction.
+Let’s take a look at the NTSTATUS that the syscall returned by displaying the content of the register eax (windbg: r):
+0:000> r eax
+eax=c000000d
+Oh no, STATUS_INVALID_PARAMETER.
+Let’s take a look at the internals of NtSetContextThread (by looking at its implementation in the Windows kernel).
+We can see the following:
+NtSetContextThread calls PsSetContextThread
+PsSetContextThread calls PspSetContextThreadInternal:
+PspSetContextThreadInternal calls KeVerifyContextRecord:
+KeVerifyContextRecord calls CFG’s RtlGuardIsValidStackPointer.
+This function will check that the value of ESP in the CONTEXT structure passed to NtSetContextThread is valid.
+Let’s put RtlGuardIsValidStackPointer under our magnifying glass.
+RtlGuardIsValidStackPointer sets ESI to the value whose validity we’d like to check (lpContext->Esp).
+It then loads EAX with the address of the ETHREAD structure of the current thread, and then uses EAX (which now points to the current thread’s ETHREAD structure) to load ECX with the address of the current thread’s TEB:
+If ESI is located “below” the stack limit (ecx+8 points to the stack limit)…
+…or if ESI is located “above” the stack base (ecx+4 points to the stack base)…
+Return FALSE (=0)
+Return TRUE (=1)
+To put it simply, if the value passed to RtlGuardIsValidStackPointer is not between the stack base and the stack limit, the function returns FALSE.
+If it is between the stack base and the stack limit the function returns TRUE.
+Basically, this function checks whether the value of ESP in the CONTEXT structure that is passed to NtSetContextThread is really located within the stack of the current thread.
+After the call to RtlGuardIsValidStackPointer returns, we have some bitwise manipulation that will cause KeVerifyContextRecord to return STATUS_SUCCESS (0x00000000) if RtlGuardIsValidStackPointer returns TRUE (0x1), and STATUS_INVALID_PARAMETER (0xC000000D) if RtlGuardIsValidStackPointer returns FALSE (0x0).
+We have two options to bypass this protection mechanism:
+The TEB is stored in the user mode part of the virtual address space of the target process, and it has RW protection.
+We can change the values (StackBase and StackLimit) so that our ROP chain appears to be on the stack.
+We can query the StackLimit of the target process and place our ROP chain close to it.
+This way we won’t corrupt the actual data stored on the stack (which will be used once we restore execution to the hijacked thread) and CFG (along with other security products and mitigation solutions) will not flag our stack pivot.
+I decided to go with option 2.
+I used GetThreadSelectorEntry to query the address of the target process’s TEB, and then used ReadProcessMemory to read the StackBase and StackLimit.
+Generally speaking, stack pivoting is quite prone to detection by anti-exploitation tools.
+Moving the ROP chain to the stack makes this attack much more stealthy and harder to detect.
+A fully weaponized injection will also construct its ROP chain to bypass EMET-like mitigation.
+In order to avoid malicious use of this technique, we will not publish this code.
+Let’s try to inject our code into mspaint.exe one more time:
+Check out the PoC:
+Learn more about FortiGuard Labs threat research and the FortiGuard Security Subscriptions and Services portfolio.
+Sign up for the weekly Threat Brief from FortiGuard Labs.
+Learn more about Fortinet’s free cybersecurity training initiative or about the Fortinet Network Security Expert program, Network Security Academy program, and FortiVet program.

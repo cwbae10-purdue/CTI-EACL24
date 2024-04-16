@@ -1,0 +1,56 @@
+Malware authors have a solid track record in regards to creative Command and Control protocols.
+We’ve seen peer-to-peer protocols, some custom (Sality), some standard (Win32/Storm uses the eDonkey P2P protocol).
+We’ve seen binary protocols (Win32/Peerfrag, aka Palevo).
+We’ve seen other custom protocols that leverage other standard protocols such as HTTP (Win32/Georbot), DNS (Morto)and IRC (Win32/AutoRun.IRCBot.AK),
+Malware authors have a solid track record in regards to creative Command and Control protocols.
+We’ve seen peer-to-peer protocols, some custom (Sality), some standard (Win32/Storm uses the eDonkey P2P protocol).
+We’ve seen binary protocols (Win32/Peerfrag, aka Palevo).
+We’ve seen other custom protocols that leverage other standard protocols such as HTTP (Win32/Georbot), DNS (Morto)and IRC (Win32/AutoRun.IRCBot.AK), and others that leverage popular web services such as Twitter (OSX/Flashback).
+This analysis focuses on a threat that uses a different kind of protocol: the Extensible Messaging and Presence Protocol (XMPP) protocol for instant messaging, commonly known as the Jabber protocol.
+We have seen malware using XMPP before as a mean of data exfiltration (RSA FraudActon Research Labs wrote extensively about one such example at Zeus Trojan Leverages IM Software to Forward Stolen Online Account Data).
+However, this infection is different in that the entire Command-and-Control (C&C) infrastructure relies on the XMPP protocol and a free, public Jabber server for communications.
+While this threat is not new (Dr.
+Web has a short analysis in their virus encyclopedia here).
+ESET decided to publish this analysis since it presents a naive implementation that could otherwise be much more reliable and robust.
+Infection scale, installation and persistence
+We do not know the exact propagation vector of this threat.
+Our telemetry data shows that the infection scale is small but heavily concentrated in Ukraine.
+Once executed, Win32/JabberBot.A copies itself into the %windir%system32 directory with a pseudorandom filename and adds an entry in the Windows registry at [HKLMSOFTWAREMicrosoftWindowsCurrentVersionRun] in order to start itself whenever a user logs in to the system.
+The malware will also try to infect any removable device by copying itself to the root of the device using a hardcoded filename.
+While it looked like a random string at first glance, the intrepid eye can distinguish a pattern in it.
+2_luxaeternabytaenarongc3luxaeternabytaenaluxaeternabytaenaluxaeternabytaena.scr
+If you tokenize it this way: “luxa eterna by taenarong […]” and search on that, it leads to the following web page:
+Figure 1.
+Search result for a hardcoded filename.
+Hard to tell the reason this was chosen, your guess is as good as mine.
+It is also worth noting that no AUTORUN.INF file is created on the removable device, making this propagation technique poor to say the least.
+C&C protocol: leveraging XMPP
+To understand how the XMPP protocol is used by this threat, we need to explore some under-the-hood details of the protocol.
+This Wikipedia article for XMPP explains the JabberID (JID) Resource element, which is the key to communication with the C&C.
+In order to use Jabber instant messaging, you first need a user account on a given server, which starts with the format of an email address: <username>@<jabber server>.
+XMPP, however, allows users to log in multiple times simultaneously using the same JID, provided that the client specifies a different Resource identifier.
+This extended JID looks like <username>@<jabber server>/<resource>.
+In the case of Win32/JabberBot.A, a common user account is shared by all the infected hosts is trednet@jabber.ru.
+Each instance of the bot will generates a pseudorandom resource identifier.
+The botmaster most likely controls a master Jabber account on jabber.ru and has the user trednet@jabber.ru in its contact list.
+The XMPP protocol allows the botmaster to access to the list of resources available from another contact, which allows the botmaster to communicate with individual bots.
+Figure 2.
+Bots announcing their presence status.
+The communication protocol uses in-band XMPP messaging, with no encryption or authentication being used, even though Transport Layer Security (TLS) is supported by both the XMPP protocol and the jabber.ru service.
+The malware has the basic trojan horse commands:
+For some reason, the author created shortened versions of each command, maybe for some sort of backward compatibility or to save some electrons.
+The Upload and Download commands involve file transfers between both Jabber accounts: the transfers are done in-band of the XMPP text messaging protocol, in 4,000 bytes chunks of text encoded as base64 data.
+It does not use out-of-band binary transfers, most likely to avoid firewall and network address translation (NAT) issues.
+Conclusion
+This threat does not make use of binary packing to encrypt its files, nor does it perform any obfuscation or encryption of its network traffic.
+It relies on just two Jabber accounts on a free, low-profile Jabber service, which leaves it easily vulnerable to a full and complete takedown, given a minimal level of cooperation from jabber.ru.
+The Jabber protocol implementation used by the bot is also custom-written, where freely available libraries could have been used, instead.
+All these details lead us to the conclusion that this threat is not sophisticated at all.
+Some of my colleagues even suggested that this was merely a school exercise.
+Maybe it was just that.
+Nonetheless, it shows that XMPP can be used for reliable C&C infrastructure if a proper design was implemented.
+At time of analysis, the botnet seemed abandoned as less than 10 bots were observed.
+ESET still contacted the administrators of the Jabber server at jabber.ru, who took rapid action in taking down the accounts involved in this operation.
+We consider the C&C eradicated.
+Big hat tip to Benjamin Vanheuverzwijn for the entire technical analysis of this threat.
+MD5 hash of the analyzed file: 3d539ed8f15ce5d6a04c0d6720645893

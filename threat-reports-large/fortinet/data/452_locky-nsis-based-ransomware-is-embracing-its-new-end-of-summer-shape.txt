@@ -1,0 +1,57 @@
+Over the last few months we saw that Locky’s loader uses seed parameter to execute properly.
+This method was probably used to prevent sandboxing, since it will not execute without the correct parameter.
+Afterwards, we saw Locky shift itself from an EXE to Dynamic Link Library (DLL).
+We recently encountered yet another Locky development, where binary strains are using the Nullsoft installer package as its loader.
+In this post we will delve into how to unpack the final binary payload from its Nullsoft package loader.
+Using 7zip, we were able to decompress the package under Windows.
+We saw the plugin directory, script code file named [NSIS].nsi, and other component files.
+The archive contains “$PLUGINSDIR” directory.
+Under this directory there is a DLL file named “System.dll”, which is an NSIS system plug-in that allows the developer to call functions exported by the DLL.
+Figure 1: Decompressed Locky NSIS sample
+The first file of interest from the decompressed files is “[NSIS].nsi”.
+Most probably, this script will be executed when the NSIS executable has been loaded.
+Looking through the [NSIS].nsi script, it appears that is uses a lot of junk code as its obfuscation technique.
+Since it contains an NSIS System plugin, we could expect that a system command will be executed.
+Figure2: [NSIS].nsi script System call snippet
+As shown from the snippet in Figure 2, the procedure of a system call is in NSIS register “$6”.
+When we searched for references to this register in the script, we identified its system call procedures, which turned out to be the following:
+VirtualAlloc – allocate memory
+ReadFile – read file and store to the allocated memory
+EnumPageFiles – execute the allocated memory
+Figure 3: Procedure used in Sytem Command Call
+The first parameter in the ReadFile function is a file handle that had been previously opened.
+As you can see, this handle is stored in “ir2” register.
+Searching through references of this register, we found that the opened file is one of the component files from the decompressed NSIS package (which in this case the file “bkaRYpXL.OB”).
+We could also see from the script that this file has been opened with read mode.
+Figure 4: Code Snippet File Opened
+EnumPageFiles function’s first parameter is a callback routine, and the second parameter is user-defined data.
+From the script code, the first parameter points to the allocated memory, which in this case is “pr0” register, and the second parameter is another component file found from the decompressed NSIS package.
+Since the first parameter is a callback routine that will be executed, we expected that the previous component file opened, “bkaRYpXL.OB”, contained a shellcode:
+Figure 5: Shellcode Component File“bkaRYpXL.OB”
+Also the second parameter (in this case, “Sk8lrNOm.yfu”) is the encrypted payload.
+It uses EnumPageFiles API to trigger the execution of the shellcode component:
+Figure 6: EnumPageFiles Triggers to Execute Shellcode
+Its shellcode has multiple layers of decryption before getting to its intended routine.
+We expected that this shellcode would be responsible for decrypting the final payload:
+Figure 6: Multi- Layered Decryption Routine
+After its multi-layered decryption, an encrypted payload is then decrypted using a simple XOR with the hardcoded key found from the encrypted payload.
+The first 4 bytes are its decryption key, and the next 4 bytes are the size to be decrypted.
+The encrypted final binary payload starts at offset 0x08:
+Figure 8: Encrypted Payload
+The following code snippet shows the XOR routine:
+Figure 9: Payload Decryption
+NSIS (Nullsoft Scriptable Install System) is an open source system used to create installers.
+Because a lot of legitimate software uses this as its installer package, a generic detection would be prone to triggering False Alarm unless your scan engine can support unpacking the sample.
+In this scenario, the final binary payload is still encrypted, making it even more challenging to create generic signature even if the scan engine can unpack the NSIS executable sample.
+Furthermore, another possible reason for using NSIS is to evade AV detection, since the final binary payload will not be dropped on the disk but will be loaded directly in memory.
+Ever since its appearance, Locky has continued to come up with new tricks to avoid anti-virus analysis and coverage.
+It is important to keep track of and understand these changes in order to ensure that security solutions stay relevant and customers are protected.
+FortiGuard will continue to keep an eye on Locky and post information on this blog site as necessary.
+Our upcoming Virus Bulletin 2016 presentation, “Locky Strike: Smoking the Locky Ransomware Code” covers more details about this ransomware.
+IOC’s:
+190a0c346c1e0f01e3f6d5f1193daf6f40c66b4bec40ff19c87051f61a3eed9a - W32/Locky.NS!tr
+063ae99bd3412223a2bdb9d74e06f333c6735c9392f555234c02db9af5637d83 - W32/Locky.NS!tr
+-=FortiGuard Lion Team=-
+Appendix:
+Below is the decryption tool for the encrypted payload found in Locky’s NSIS package.
+https://github.com/fortiguard-lion/LockyNSISDecryptor/blob/master/nsis_payload_decryp.py

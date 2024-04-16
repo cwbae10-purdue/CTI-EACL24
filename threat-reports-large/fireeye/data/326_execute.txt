@@ -1,0 +1,60 @@
+You found a malicious executable!
+Now you've got a crucial question to answer: did the file execute?
+We'll discuss a few sources of evidence you can use to answer this question.
+In this post, we will focus on static or "dead drive" forensics on Windows systems.
+We will cover four main sources of evidence: Windows Prefetch, Registry, Log Files, and File Information.
+Windows Prefetch is a good place to begin looking for evidence of file execution.
+Microsoft designed Windows Prefetch to allow commonly used programs to open faster.
+By default, it stores information for the last 128 executed files in prefetch files found in "C:WindowsPrefetch".
+A prefetch file is named as "executable file name" + hash of file path + .pf.
+The prefetch file stores the first and last run dates, file path, number of times executed, and files loaded within the first ten seconds of process execution.
+So, if your malware filename / path hash shows up as a prefetch file named "DABEARS.EXE-12F3B52A.pf", then you know the file executed.
+Note: on Windows servers, Prefetch is disabled by default.
+As one would expect, the Windows Registry contains vast amounts of information on what goes on behind the scenes in Windows.
+Since the Registry is so large, the list below is not comprehensive, but it shows the main Registry keys we examine to determine file execution:
+Microsoft created the ShimCache, or "AppCompatCache" to identify application compatibility issues.
+The cache data tracks file path, size, last modified time, and last "execution" time (depending on OS).
+If a file is executed with Windows "createprocess," it is logged in the ShimCache.
+While a file's presence in the ShimCache does not 100% prove file execution, it does show Windows interacted with the file.
+The following keys contain ShimCache data: "HKLMSYSTEMCurrentControlSetControlSession ManagerAppCompatibilityAppCompatCache (XP) and "HKLMSYSTEMCurrentControlSetControlSession ManagerAppCompatCacheAppCompatCache" (Non-XP).
+For more information on the ShimCache, see Andrew Davis' blog entry here - or Mandiant's SANS DFIR conference presentation here.
+When a file is executed via Windows Explorer, the program shell creates an entry in the MUICache.
+There's a good write up of the process on the Windows Incident Response blog.
+Windows uses the MUICache to store application names as retrieved from the PE Version Information in its Resource Section.
+The information is stored in the following keys:
+"HKCUSoftwareMicrosoftWindowsShellNoRoamMUICache" (XP, 2000, 2003) and
+"HKCUSoftwareClassesLocal SettingsSoftwareMicrosoftWindowsShellMuiCache" (Vista, 7, 2008).
+The UserAssist tracks executables and links opened in Explorer.
+The UserAssist key tracks last execution time and number of times a file was run in the registry key: "HKCUSoftwareMicrosoftWindowsCurrentVersionExplorerUserAssist".
+Values under the UserAssist key, corresponding to the executable names and file paths, are encrypted with ROT13; as a result, you may miss evidence within this key if you conduct keyword searches prior to decoding.
+There are a number of tools to decrypt the key, including the RegRipper userassist.pl plugin, found here.
+There are a few logs you can analyze to determine file execution.
+Start with the Windows System Event Log, since this log records service starts.
+The event in Figure 1 shows an Administrator (SID="-500") executed the PSEXECSVC remote execution service:
+When a service starts, it usually executes the file specified in the ImagePath or a loaded service DLL.
+For example, the "Netman" service uses the legitimate file "netman.dll" when it executes.
+However, if the ServiceDll in the registry contains a path to a backdoor named "tabcteng.dll", the "Netman" service would execute "tabcteng.dll" instead.
+Be sure to validate the files in the ImagePath and ServiceDlls for any suspicious service starts.
+If Audit Process Tracking is enabled in the Windows Event Log audit settings, the Windows Security Event Log is a wealth of information about processes and can definitively prove file execution.
+Figure 2 and Figure 3 show the malicious file and associated process ID, as well as the parent process ID and username to aid in further investigation.
+Windows Vista+ records a similar process creation event, but the EventID is 4688.
+Auditing capabilities are more granular with newer versions of Windows and are integrated with Group Policy starting in Windows Server 2008 R2 and Windows 7.
+Advanced audit policy settings can be found here.
+There are too many vendors to cover in this post, but host-based IPS or AV product logs may show when a file is running and/or attempting an action on another file.
+Figure 4 contains an example event from a McAfee Access Protection log.
+The Windows Scheduled Task Log may confirm if the attacker used a scheduled task to execute malware.
+Scheduled Tasks are recorded in a log file named "SchedLgU.txt" as follows:
+In Windows Vista+, the scheduled task executions are also recorded in the log "Microsoft-Windows-TaskScheduler/Operational" event log under Event ID 200 and 201.
+Finally, if an application crashes, the Dr. Watson log may record a malicious task running.
+Another way to determine if a file was executed is to look for any output files.
+When you analyzed the malicious file, was it configured to create data?
+For example, if the malicious file you found is a keylogger and an associated keylog file is present on the system, the attacker likely executed the file.
+If the malware was configured to connect to a particular domain name, the browser history may have recorded the associated domain.
+Table 1 contains an example of two communication mechanisms captured in browser history from the same backdoor.
+To determine if a malicious file executed, analyze the file's functionality, and look for evidence of the resulting activity on disk.
+Malware functionality can also help you assess an attacker's motivation, end goals, and perhaps reveal additional malicious files.
+While this post covered the primary sources of evidence we use to detect file execution, there are many more Registry keys and other Windows files which provide evidence of malware execution, especially in Windows Vista and above.
+Similarly, information found in system memory can be even more valuable for proving file execution and may provide specific attacker commands and accessed resources.
+So please, if you find a malicious executable on a running system, be sure to capture the memory before doing anything else.
+You can capture and analyze memory with Mandiant Redline™.
+We will discuss more forensic artifacts in future posts, but feel free to direct message me on Twitter @marycheese.

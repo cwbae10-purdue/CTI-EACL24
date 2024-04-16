@@ -1,0 +1,68 @@
+ESET is seeing a new step of evolution for the Rovnix bootkit family.
+[More research from our colleagues in Russia]
+In the beginning of February we found a new modification of our “old friend” Win32/Rovnix (the dropper detected as Win32/Rovnix.B trojan), which is the first bootkit using VBR (Volume Boot Record) infection.
+An interesting fact is that Rovnix bootkit components were used in Win32/Carberp, the most widely spread banking trojan in Russia.
+You can get more information about modern Carberp evolution facts in our forthcoming presentation “Carberp Evolution and BlackHole: Investigation Beyond the Event Horizon” at CARO 2012.
+And now we are seeing a new step of evolution for the Rovnix bootkit family.
+We can see interesting tracking strings in the unpacked dropper:
+The version has been changed to 2.1, but we’ve seen the same strings before in the Win32/Carberp dropper with bootkit, allowing us to draw some conclusions:
+In the Win32/Carberp dropper we’ve seen version number 2.1 among debugging strings but in the latest samples version 2.5 is used.
+At the beginning of summer 2011 we noted the first modifications of Win32/Rovnix.A, while in the middle of that summer Rovnix started to be distributed without bootkit code.
+And at the same time we tracked the first testing of Command and Control (C&C) servers with a test version of Carberp using the same bootkit code as Rovnix.
+It may be that what we are seeing now is a new mass-testing bootkit and in the future this code may be re-used in another malware family.
+The Win32/Rovnix.B dropper is distributed, as in previous versions, by an affiliation program (Pay Per Install).
+Previously, it was mainly distributed from two domains – malwox.com and netox.biz – with affiliation programs.
+The new dropper (Win32/Rovnix.B) is no exception and after installation it reports status to C&C.
+After successful installation the dropper downloads from the C&C configuration file to perform the following further actions:
+The C&C addresses are not only direct IPs: we also found hardcoded domain names – havingbeothers.co.cc and appropriations.co.cc – in the co.cc subdomain zone:
+The main functions included in the bootkit’s payload are as follows: communicating with C&C, downloading additional modules, saving into the hidden file system and executing additional functionality.
+As we will see, the Rovnix bootkit framework has been evolving recently and the new version includes updates to the following components:
+malicious bootstrap code
+kernel-mode driver
+Generally the malicious bootstrap implements the same functionality as the code found in previous versions except that this time it is encrypted.
+There is a small stub for decryption of the rest of the code and for transferring control to the decrypted part.
+The point is that the decryption stub is polymorphic and thus each instance of the malicious bootstrap code differs from the others.
+Although the polymorphic engine used is relatively simple, this complicates detection and removal of the malware from the system:
+You may recall that in Win32/Rovnix.A, the malicious bootstrap code is the same on all the infected machines.
+Compared to the kernel-mode driver component of the previous Rovnix version (Win32Rovnix.A) the new one has been changed considerably.
+It seems that the developers of the malware haven’t wasted their time.
+Here are the key features introduced in the new version:
+self-defense mechanisms intended to prevent the malware from being detected by antivirus software have been introduced
+implementation of hidden storage to store configuration data for the payload has been added.
+The main functionality of the driver is the same as in previous version ­– it injects the payload into a target process in the system.
+The payload is stored in the driver’s binary module and is compressed with the aPlib library.
+To extract the module to inject into address space of specific processes, the malware looks for the ‘JF’ signature in free space between the section table of the executable and its first section.
+The signature signifies the beginning of the configuration data block, which has the following format:
+An example of such a data block is presented in the figure below:
+To inject the payload it employs a conventional technique which consists of the following steps:
+Registering LoadImageNotifyRoutine() and CreateProcessNotifyRoutine() using the standard documented kernel-mode API.
+This permits the malware to gain control each time a new process is created, or a new image is loaded into address of a process.
+Being able to monitor the created process in the system, the malware looks for the target process identified by image name.
+As soon as the target process is identified the malware maps the payload into its address space and queues an APC (Asynchronous Procedure Call) which results in transfer of control to the payload.
+Another interesting thing about the kernel-mode driver is that it implements self-defensive mechanisms to avoid detection by security software.
+It employs the same technique as used by one of the most sophisticated bootkits in the wild – Olmasco (MaxSS) – hooking IRP_MJ_INTERNAL_CONTROL handler of the hard disk miniport DRIVER_OBJECT.
+This makes it possible for the new modification of Rovnix to intercept all the read/write requests to the hard drive and thus protect critical areas of the hard drive from being read or overwritten.
+To be specific, it protects:
+The infected bootstrap code
+The stored kernel-mode driver;
+The hidden FS partition.
+Here is the code of the IRP_MJ_INTERNAL_CONTROL hook routine:
+Another significant and previously unseen feature that was introduced in the new modification of Rovnix is the hidden FS partition.
+The malware occupies some space either at the beginning or at the end of the hard drive.
+If there is 0x7D0 (2000 in decimal) free sectors or more before the partition with the lowest starting LBA (Logical Block Address) then Rovnix locates the hidden partition right after the MBR (Master Boot Record) sector and it extends over 0x7D0 sectors (almost 1MB).
+If there is not enough space at the beginning of the hard drive the malware tries to locate the hidden partition at its end.
+To access the data stored in the hidden partition, Rovnix uses the original IRP_MJ_INTERNAL_CONTROL handler which is hooked by itself.
+The handler is the most low-level hardware-independent interface to access data stored on the hard drive and as a result it is difficult to intercept its requests.
+The malware implements partition-transparent encryption with the RC6 encryption algorithm in ECB (Electronic Code Book) mode and key length 128 bits.
+The key is stored in the last 16 bytes of the very first sector of the hidden partition:
+The key is used to encrypt/decrypt the whole partition.
+Rovnix seems to use the VFAT file system to store files in the hidden encrypted partition.
+This file system is referred to as Virtual FAT, and is capable of storing files with long file names (up to 256 bytes).
+We can observe the following “VFAT 1.1” signature in the code snippet performing parsing of FAT structures:
+This fact is particularly interesting, as the malware implements a “real” file system, unlike Olmasco and TDL3/TDL3+/TDL4, which use hidden file systems with reduced functionality.
+Also, we can notice that implementing hidden storage to store payload and configuration data is quite a popular trend among malware developers.
+Such complex threats as:
+TDL3/TDL3+/TDL4
+Olmasco
+ZeroAccess
+And, now, Rovnix relies on its own mechanisms to store data.

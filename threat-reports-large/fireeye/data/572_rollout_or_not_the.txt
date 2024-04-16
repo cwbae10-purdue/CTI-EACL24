@@ -1,0 +1,192 @@
+Apple’s detailed app review process has resulted in greater security for iOS apps made available through the App Store.
+However, this review process can be lengthy, which negatively impacts developers who need to quickly patch a buggy or insecure app.
+As a result, we have seen the development of various third-party solutions that allow developers to remotely hot patch an iOS app on a non-jailbroken device without going through Apple’s review process.
+While iOS remote hot patching is a very recent concept and is still in its inception, we have seen fierce demand and an emerging market for such products.
+However, they are not without their own security risks.
+In our January blog, we discussed JSPatch, an open source hot patching solution.
+While JSPatch allows developers to provide better support to users by quickly fixing problematic apps, it potentially allows malicious actors to engage in attacks that evade current iOS security controls.
+In this episode, we take you on a tour of Rollout.io, a commercial (though currently with limited free access) solution that attempts to address the remote patching problem with an eye towards security.
+According to their website, Rollout is an Israel-based, venture capital-backed technology startup founded in 2014.
+The core product is a commercialized solution to the iOS patching problem that essentially allows developers to update their app’s behavior, following an app’s initial approval and release, without going through Apple’s App Store review process.
+Co-founder Erez Rusovsky stated that Rollout “created an SDK that allows you to remotely hot-patch native production applications”.
+Rollout’s mission statement further states that: Rollout.io’s mission is to bridge the gap between developers and their live apps.
+When a live app needs updating, app developers usually wait days and even weeks to get the new version out to their users.
+Rollout solves this problem by giving developers code-level access to their live apps.
+Rollout is aware of the concerns within the community that patching apps outside of the App Store could be a violation of Apple’s review guidelines and practices.
+Rollout notes both on their FAQ site and in a longer blog post that their process is in compliance.
+JSPatch, which we discussed in our previous blog, provides a relatively simple patching framework consisting of three Objective-C files to be imported to an iOS app to activate the remote hot patching capability.
+As a commercial offering, Rollout offers a software development kit (SDK) and infrastructure that supports patching for scale and efficiency.
+Rollout provides a simple overview of their process, but also gives us an insider look into the tech stack and the “under the hood” mechanics of their Rollout SDK through their technical blogs.
+For our analysis, we focus only on the dissection of the Rollout SDK.
+In a nutshell, Rollout SDK is built on the following three technologies: ● dSYM file ● Method Swizzling ● JavaScriptCore framework
+According to Rollout, the following steps are taken for an app to hook up with Rollout: The developer chooses to use Rollout SDK and imports the SDK into their app.
+The Rollout SDK parses the app code and generates the dSYM file (debug symbol file), which is uploaded to Rollout’s back end.
+The dSYM file is rendered in the developer portal and available to the app developer for use in reviewing and patching an app.
+The end result is rendered by Rollout’s developer portal and presented to the developers, allowing them to select and patch a function.
+Through the Rollout portal, the developer has easy access to all the defined classes (e.g.
+ViewController) and selectors (e.g., imagePickerController:didFinishPickingMediaWithInfo:) of the analyzed app, as shown in Figure 1.
+Figure 1: Rollout developer portal allowing the developer easy access to all defined classes and methods in the app The most common way to patch a bug in an existing function is to replace the faulty implementation of the function with a new, fixed one.
+But there are situations where a fix is needed in multiple places across the application.
+In this case, the best practice is to create a new function that encapsulates the shared routine.
+In Rollout, one can easily achieve this through the interface shown in Figure 2.
+Figure 2: Rollout developer portal allowing the developer to add a new method into a class Rollout also allows developers to resolve problematic situations such as when a method was renamed but still called from some code in the UI, which requires the developer to link the disconnect by a new wrapper method.
+In this case, selecting a function to be fixed (such as [ViewController imagePickerController:didFinishPickingMediaWithInfo:] shown in Figure 2) will display the JavaScript patch editing interface shown in Figure 3.
+Figure 3: Rollout develop portal providing a JavaScript editing interface for patch development
+Method swizzling is known to iOS developers as “black magic.” In short, method swizzling is an Objective-C runtime technique that allows one implementation of a method to replace an existing implementation of another method (of a class or instance) at runtime.
+The term “implementation” refers to the actual function pointer to the code (implementation) of the method.
+The Objective-C runtime maintains a struct called "objc_method" for each method of a class.
+This struct has the method name, the argument, the return types of the method, and the "implementation" of the method, which is represented by a pointer IMP pointing to a C function.
+Therefore, swizzling basically involves exchanging the value of the "implementation" field between the objc_method data of two different methods.
+Figure 4 and Figure 5 depict a visualization of the process: Figure 4: The original selector and its implementation mapping in class FortitudeViewController before swizzling Figure 5: The selector and implementation mapping in class FortitudeViewController after method swizzling In Figure 4, which shows the state before swizzling, each selector in Class FortitudeViewController contains a corresponding pointer IMP that points to its real implementation, which is a C function behind the scene.
+For instance, selector1 is an objc_method struct that contains pointer IMP1.
+The “magic” lies in the availability of three essential C functions in the Objective-C runtime: ● method_exchangeImplementations ● class_replaceMethod ● method_setImplementation The most common and intuitive way to perform a method swizzling is similar to what is shown in Figure 6.
+Figure 6: Example code showing method swizzling This code will turn the internal runtime relation of the relevant methods into the conceptual structure shown in Figure 5.
+This effectively allows one to replace an existing implementation of a function with a new one, thus leading to a new and uncharted behavior of an app at runtime.
+There have been many discussions about the pitfalls and dangers of utilizing this “black magic.” A primary focus is to avoid the unintended side effects of using the C function method_exchangeImplementations (shown above) by instead using class_replaceMethod and method_setImplementation.
+Further details are beyond the scope of this blog post.
+Apple does not seem to have provided any official documentation for the concept of method swizzling, despite documenting the associated runtime APIs.
+However, it is a general consensus within the developer community that method swizzling is permitted.
+It should be noted that to date, Apple does not appear to have rejected an app during its review process due to the use of method swizzling.
+The JavaScriptCore framework was introduced into iOS at version 7.
+It allows one to evaluate JavaScript programs from within a C-based program.
+It also lets users insert custom objects to the JavaScript environment.
+On iOS, it is similar to an Objective-C wrapper of WebKit’s JavaScript engine, thus extending the capability and power of scripting beyond a web client to the whole app.
+The following four classes form the cornerstone of the framework: ● JSVirtualMachine represents the virtual JavaScript runtime environment that allows JavaScript to run and to be executed.
+To initiate a virtual machine instance in Objective-C, one does the following: JSVirtualMachine *vm = [[JSVirtualMachine alloc] init]; ● JSContext talks to the above runtime, provides access to global objects that reside in the context, and performs the execution of JavaScript code.
+For example, in Objective-C, one can initiate a JSContext instance and declare a variable in the manner shown here: JSContext *context = [[JSContext alloc] initWithVirtualMachine:vm]; context[@”name”] = @”Jean-Luc”; context[@”organization”] = @”Enterprise”; ● JSValue is the class that represents arbitrary data in JavaScript.
+For instance, we have: JSValue *name = context[@”name”]; JSValue *organization = context[@“organization”]; NSLog(@”Captain Name: %@ \nOrganization: %@”, name, organization); ● JSExport is a protocol that allows one to expose parts of Objective-C classes and methods to JavaScript.
+The wrapper created through this protocol functions as a passthrough between the Objective-C runtime and the JavaScript runtime.
+This one object thus facilitates the sharing between the two execution contexts allowing code in one environment to change the states of the other.
+Rollout exposes to developers only a limited set of JavaScript APIs that can be permitted in the Objective-C runtime environment.
+Its API documentation shows the following essentials: ● R: the Rollout namespace object that allows integration with the Rollout SDK, the containing function, and the application’s runtime.
+Within which, it offers the functionality of the Foundation C function NSClassFromString, as shown in Figure 7.
+Figure 7: Portion of Rollout 'R' namespace
+● ObjcBox: encapsulates Objective-C NSObject instances.
+It allows a transformation from an Objective-C instance to a JavaScript value.
+There are two important functions, as shown in Figure 8: Figure 8: Portion of Rollout ObjcBox namespace
+The APIs provided by Rollout and the legitimate use cases they describe for their hot patching infrastructure are simple, limited, and benign.
+However, as with many well-intentioned solutions, the possibilities of misuse or abuse remain when malicious individuals think outside the box.
+In our blog on JSPatch, we outlined several attack capabilities that could be carried out against that technology, such as loading arbitrary public or private frameworks into an app.
+The types of capabilities we described for JSPatch also work against Rollout, though we do not provide specific examples here.
+Instead, we highlight a few additional scenarios specific to Rollout to avoid duplication.
+Example 1: Load arbitrary private frameworks and utilize unauthorized private APIs
+● Targeted private framework: /System/Library/PrivateFrameworks/CoreRecents.framework ● Targeted private API: [[CRRecentContactLibrary defaultInstance] maxDateEventsPerRecentContact] Figure 9 and Figure 10 show sample exploitation code and the associated console output loading the private framework CoreRecents.framework.
+Figure 9: Sample exploitation code for loading a private framework Console Output:
+Figure 10: Sample console output showing successful load of the framework Both this example and the following ones make use of Apple iOS private APIs.
+The pros and cons of the use of these private APIs by third party apps has been at the center of much debate.
+In general, common sense suggests that the use of Apple’s private APIs by third party apps is risky due to security risks as well as stability concerns (for example, unexpected behavior if Apple changes the internals of the private APIs).
+Despite Apple’s efforts to prohibit the practice of utilizing non-public APIs, it has proven difficult to identify their use when developers use obfuscation and other even more clever and sophisticated maneuvers.
+That said, when an app developer with malicious intent makes use of these private APIs, the use of the APIs will leave traces within the app code itself.
+This means the malicious code within the app is subject to potential discovery by Apple or a third party.
+However, with Rollout’s dynamic hot patching process, the intent – that is, the malicious code – can be separated from the app binary itself in the form of a hot patch.
+Rollout, as a remote hot patching solution, is not the only means one can resort to separating private API calls from the app binary, but it lowers the bar for malware developers to achieve so.
+● Targeted public framework: /System/Library/Frameworks/AVFoundation.framework ● Targeted private API: [AVCaptureDevice devices] Figure 11 and Figure 12 show sample code used to successfully access the iPhone’s cameras and microphone.
+Figure 11: Example exploit code loading public framework to access the private AVCaptureDevice API Console outputs three devices: Back Camera; Front Camera; iPhone Microphone.
+Figure 12: Console output showing access to the iPhone cameras and microphone Example 3: Test device for the presence of a targeted app The ability for one app to check for the presence of another app raises both privacy and security concerns (for example, checking for the presence of an app in order to exploit it).
+The primary method for obtaining a list of installed apps is through the private API [LSApplicationWorkspace allInstalledApplications].
+As we have seen, use of these private APIs is prohibited by Apple’s Developer Program License Agreement.
+Some app developers have sought other means to determine installed apps without using Apple’s private APIs.
+For example, iHasApp used the public API [UIApplication canOpenURL:] to identify installed apps based on their supported URL schemes.
+Unfortunately, the extensive usage of the API and associated detection method in a large volume of apps resulted in iHasApp and its derived framework being shut down by Apple, and the API being flagged during the app store vetting process.
+However, Rollout eliminates this constraint because the API can be called via a hot patch outside of the app itself.
+Figure 13 and Figure 14 show sample code using canOpenURL: to detect installed apps.
+Figure 13: Sample exploit code calling canOpenUrl Figure 14: Console output showing app detection
+Example 4: Make phone calls to premium numbers without consent By utilizing the public API [UIApplication openURL:], one can launch the native mobile phone app and make a phone call to an arbitrary premium number.
+This activity would be immediately visible to the user when the phone app interface was unexpectedly displayed.
+However, use of the exploit could be fine-tuned by applying environmental checks (for example, only initiate calls when the user is asleep) and maintaining a status of long running background process through background modes.
+Figure 15 and Figure 16 show sample code for dialing a premium number and the successful connection.
+Figure 15: Sample exploit code used to dial a premium phone number Figure 16: Console output showing successful call Example 5: Take screenshot without informing the user Figure 17, Figure 18, and Figure 19 show that through the patch, one can take screenshots of the current foreground screen by utilizing non-public API [UIImage createSnapshotWithRect:] without the user’s knowledge.
+The screenshots are saved in the sandbox of the application, which can be further exflitrated outside of the device.
+Figure 17: Sample exploit code showing the use of private API [UIImage createSnapshotWithRect:] to capture the screen
+Figure 18: Console output showing that the captured screenshot has been saved to the sandbox Figure 19: App sandbox content showing the captured images
+All of the above tests were performed on a device that runs iOS 8.4.
+Apple has released a number of iOS versions through the years to fix and close security holes reported by both industry practitioners and academic researchers.
+Most of the private or public APIs that could have been abused are protected through various access controls (e.g., entitlements to the Address Book) in newer versions of iOS.
+However, the reality is that there are a significant number of users who are not keeping their devices’ OS version up-to-date.
+The ramifications are that “old” attacks through private APIs, which are ineffective against iOS 8.4 or iOS 9, would still be effective against some devices.
+In our earlier blog on JSPatch, we highlighted three general attack scenarios using an iOS remote hot-patching vector.
+Of these, two are still present on Rollout in a similar fashion: 1.
+Precondition: 1) Embedded 3rd party ad SDK is malicious.
+a.
+Consequences: ad SDK has the right to write to the database, which allows it to change the behavior of the app.
+2.
+Precondition: 1) App developer is malicious.
+a.
+Consequences: app developers can perform stealthy persistent but temporary actions against the user including by utilizing Private APIs.
+It has been pointed out that an app developer with malicious intent will strive to find a way to distribute their malicious app regardless of the particular framework used.
+That is, no existing distribution method can fully guard against malicious intent.
+While we agree with this statement, we also believe it is important to understand how different distribution methods may help or hinder a malicious developer in deploying their malicious code.
+A developer wishing to distribute a malicious app through the App Store would need to slip the malicious code past the review process.
+The third-party hot patching frameworks developed to date do not include any review process, so it helps to understand how malicious patches could be distributed and where (or whether) they could be detected.
+A risk of hot patching frameworks is that because patches can be deployed ‘on the fly’, a developer could distribute a legitimate app, temporarily deploy a patch to carry out specific malicious activity, and then deploy another patch to revert the app back to its normal, non-malicious behavior.
+Because this activity can occur automatically in the background, users are highly unlikely to notice the change, and replacement of the malicious patch with a “clean” one could leave little evidence that anything suspicious had occurred.
+To put the threat scenario in perspective, we provide a visualization of such an attack to reinforce the concept and facilitate understanding.
+Synopsis Our fictional app FortitudeSeries was a new release of an iOS app that allows one to add filters to selected photos from the device photo gallery and save the edited photos back to the gallery.
+In order to offer the user a better experience with quality performance and stable software, we decided to use the Rollout.io service to maintain the ability to remotely hot-patch bugs and security issues should they be discovered in the future.
+After testing several patches, we identified several actions we could take outside of what the app was originally designed for.
+We first tried saving an original copy of all the filtered photos in the sandbox, and it was a quick success.
+We then became curious about the photos the user does not select for filtering, so we issued a new patch to capture a screenshot of the user’s photo gallery.
+This too was simple to achieve.
+Production Our fictional attack is demonstrated through three stages to show the following scenarios: ● Stage 1: Rollout patching is disabled in the backend.
+FortitudeSeries only exhibits its legitimate behavior.
+A user selects a photo from the photo gallery by pressing the button “Select A Photo”.
+Once the photo is selected, the console outputs “Filtering the selected image” and the photo gallery view is dismissed.
+The app’s Documents directory does not hold any data, therefore, it remains empty.
+Figure 20 shows the source code of the main view controller of FortitudeSeries.
+Figure 20: Objective-C code for the core implementation of fictional app FortitudeSeries ● Stage 2: Rollout patch is enabled with the code shown in Figure 21.
+The user restarts the app and performs the same sequence of actions.
+The app’s Documents directory keeps a record of the selected photos and labels them with the timestamp of the photo that was selected.
+Figure 21: Rollout patch code for saving a copy of the user selected photo in the sandbox ● Stage 3: Rollout patch is enabled with different code, as shown in Figure 22.
+The user restarts the app and performs the same sequence of actions described above.
+The app takes a screenshot of the photo gallery and saves a copy to the sandbox Documents directory using the same naming scheme presented above.
+Figure 22: Rollout patch code for capturing a screenshot of the photo gallery in stealth Once the data is in the sandbox of the app, the app may deal with it however it wants.
+A conceivable approach is to exfiltrate it to a developer-controlled server.
+It should not be surprising that this can be done via a Rollout patch script that executes at runtime without Apple’s knowledge.
+The operation of the demo is therefore done in the following three stages: ● Stage 1: Develop FortitudeSeries in Objective C and Rollout; deploy it to a user device to allow the user filter selected photos; check the Rollout patch; perform the expected actions on the installed app; check the console log; check the sandbox Documents directory; ● Stage 2: Enable Rollout patch with script for scenario I; restart the app; perform the expected actions on the installed app; check the console log; check the sandbox Documents directory; ● Stage 3: Comment out the patch script for scenario I and enable script for scenario II; restart the app; perform the expected actions on the installed app; check the console log; check the sandbox Documents directory.
+Primed with the above depiction, it should be easy to understand the recorded demo below even without a narrative.
+The chances of a successful man-in-the-middle (MITM) attack through the use of poor encryption (or no encryption) of the patch script content can be reduced significantly through secure implementation of the app and any supporting hot patching framework.
+To prevent patches from being tampered with, Rollout invested in the following security measures: ● The app retrieves the patch data from Rollout.io server through HTTPS.
+This significantly lowers the chances of being a target of MITM attacks.
+● The patch data is signed by a Rollout.io private key and therefore can only be decrypted by a key that’s known to the iOS app.
+The above protection ensures that data is secure in transmission.
+However, once the patch data lands on the device, it is decrypted accordingly and stored in the sandbox in plaintext.
+Figure 23 shows the directory #APP_SANDBOX/Library/Caches/#APP_ID containing a specific database Cache.db that contains data resulting from the hot patch network communications.
+Figure 23: File structure view of the directory encompasses the database of patch data All patches that have been pushed to production and received by the client app are stored as a record in the table cfurl_cach_receiver_data as shown in Figure 24.
+Figure 24: DB table cfurl_cach_receiver_data containing all records of production patches Each patch is stored in the receiver_data column in JSON format.
+The JavaScript code is mapped to the key “configuration” in based64 format.
+For example, the highlighted data blob in Figure 24 contains the based64 encoded content shown in Table 1: Table 1: base64 content from patch database Its corresponding ASCII format is the data is shown in Figure 25.
+Figure 25: Decoded base64 content Given Rollout’s existing security measures such as HTTPS and asymmetric encryption, as well as iOS’s sandbox, this weakness is a minor issue.
+Since there are other attack vectors that can be more easily exploited (for example those described in our threat scenario I and II), a third party library may be less motivated to tamper the patch to their advantage.
+Should circumstances change and one chooses to do, this weakness is really to be leveraged.
+Rollout’s web site states that its product is “trusted by thousands of mobile app developers”.
+As Rollout provides a solution for a problem that is unique to iOS developers, we can speculate that all its customers are iOS app developers at this point.
+Though a few have been highlighted on their main page, the exact number of App Store-approved apps that use Rollout SDK is unknown.
+We performed a scan using FireEye’s infrastructure in late 2015 and found 130 apps that have been or still are in the App Store using Rollout as a remote hot patching solution.
+This number has since grown to 245 as of Jan. 19, 2016.
+As opposed to apps that adopted JSPatch as the remote hot patching solution, which are predominantly Chinese apps for Chinese speaking users, apps that use Rollout are mostly marketed towards English speaking users.
+Many offer localization for a variety of languages.
+There are no distinct features among these apps; they span a variety of categories including education, social networking, magazines and newspapers, lifestyle, photo and video, games and more.
+Most of the apps have very low user adoption in the App Store at this point.
+The most popular app seems to have accumulated a download record of 62,869 times, while the vast majority have no popularity rating on file.
+At the time of this writing, we have not confirmed any malicious activity related to any app that uses the Rollout SDK.
+We are simply reporting on potential vulnerabilities and avenues for misconduct that could potentially be exploited when using this tool.
+iOS remote hot-patching through a non-Objective-C language to effectively evade the Apple review process – a process that has so far largely led to a safe and clean app ecosystem – is now a reality.
+Our analysis has placed JSPatch and Rollout under the spotlight as examples of two hot patching frameworks with very different characteristics:
+JSPatch is developed by a Chinese developer; Rollout.io is provided by an Israel-based company.
+JSPatch is open sourced; Rollout.io is a commercial product.
+JSPatch is adopted mostly by Chinese app developers; Rollout.io is marketed to English speaking or international developers.
+JSPatch and Rollout.io offer different syntax and capabilities for JavaScript code.
+The infrastructures are far from the same.
+Despite differences in their implementation, both are similar in that they potentially allow a developer to turn an innocuous looking app into something malicious – all while circumventing Apple’s App Store vetting process.
+What’s more, the underlying “biology” is the same for the two solutions: the combination of JavaScriptCore framework and method swizzling.
+When conducting our research, we contacted Rollout regarding the issues described in this post.
+We gratefully acknowledge Rollout’s responsiveness and assistance in addressing them.
+As a result, Rollout has indicated that they will prevent developers from accessing iOS private APIs and private frameworks in their future releases of the product so that all patch code is subject to the same types of checks as those in the Apple review process.
+With Rollout’s upcoming release, the attack examples shown here would be thwarted.
+The current limitations of the App Store review process and the desire from developers for a faster solution means that hot patching, as a process, is unlikely to go away any time soon.
+We hope that by describing these underlying risks, patch framework developers will institute additional security controls to ensure that they are providing developers with convenience and productivity in iOS app development all while maintaining a clean and safe ecosystem.
+In this ecosystem, iOS users are the least able to protect themselves and, consequently, the most vulnerable.
+When it comes to user security, it is difficult to decide which single stakeholder should assume the responsibility of maintaining and sustaining a safe and clean iOS mobile environment.
+While Apple has come a long way in keeping its mobile users safe from malware, the task has become increasingly difficult.
+It is not outrageous to expect third party library or framework providers to offer extra security to ensure their services are not being abused.
+While we do not have a definite solution for this complicated issue, we believe a system that functions as follows could potentially increase iOS user security: 1) App developers providing to Apple a list of the third party libraries and frameworks that they use, 2) The underlying technologies of third party libraries and frameworks being provided to Apple, and 3) Third party library or framework providers improving security to ensure their services are used as intended.

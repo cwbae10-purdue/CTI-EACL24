@@ -1,0 +1,67 @@
+ESET researchers examine the evolution of bootkit threats targeting 64-bit Windows over 2011.
+The year 2011 could be referred to as a year of growth in complex threats.
+Over the course of this year we witnessed an increase in the number of threats targeting the Microsoft Windows 64-bit platform, and bootkits in particular.
+Here is a self-explanatory diagram depicting the evolution of bootkit threats over time:
+And now we'll go into more detail on specific malware types.
+As we predicted in 2010, TDL4 (Win32/Olmarik) has been evolving over 2011.
+Its developers attempted to bypass the KB2506014 security update, which addressed a vulnerability allowing abuse of WinPE mode.
+TDL4 could be referred to as the first widely spread bootkit targeting 64-bit systems.
+In order to get control before the OS loader does, it overwrites MBR code while leaving the partition table untouched.
+This can be seen in the figure below:
+When the malicious boot code receives control it locates TDL4’s hidden storage and continues the boot process using the malware’s bootkit components.
+At the beginning of 2011 a brand new bootkit, Win32/Olmasco (also known as MaxSS), appeared in the wild.
+This new malware family is based on enhanced techniques developed and evolved within the TDL4 family.
+Unlike TDL4, Win32/Olmasco modifies the partition table of the disk rather than patching MBR code.
+It looks for an empty entry in the partition table and free space at the end of the hard drive in order to create a new hidden partition containing payload and configuration information.
+The next figure depicts the way partitions are laid out on the infected hard drive:
+Here is the beginning of the Win32/Olmasco VBR (Volume Boot Record):
+The VBR of the malicious partition mimics the VBR of the legitimate NTFS partition: this approach makes Win32/Olmasco stealthier and therefore more difficult to detect.
+Early in 2011 a new 64-bit ZeroAccess (Win32/Sirefef) modification appeared in the wild.
+Unlike TDL4 and Win32/Olmasco it doesn’t implement bootkit functionality.
+Although there is a version of the malware targeting 64-bit systems, it doesn’t contain a kernel-mode driver.
+The only ZeroAccess version which does include a driver targets x86 systems only.
+For this reason, the machine-infection algorithm is different for 32- and 64-bit Operating System versions.
+On x86 systems ZeroAccess behaves like the TDL3 rootkit.
+It infects a kernel-mode boot start driver by completely overwriting the driver with its own code.
+As a result, at boot time the system loads the malicious driver, not the original, legitimate code.
+In order to protect itself against security software and to conceal the fact that the driver was overwritten it sets up low-level hooks in the storage device driver stack.
+Infection works differently on a 64-bit OS.
+Since there is no kernel-mode 64-bit driver, the malware drops consrv.dll library into the “systemrootsystem32” directory and registers it as part of the Windows Subsystem, which the Session Manager Subsystem (smss.exe) process (trusted system process) has to load during system startup .
+The list of subsystems which need to be loaded is stored under the Required value of the “HKLMSYSTEMCurrentControlSetControlSession ManagerSubSystems” registry key.
+If one of the components of “required” subsystems is missing the system is rendered unbootable.
+This issue should therefore be taken into account while removing the threat from the system: deleting consrv.dll without applying corresponding changes to the registry key will break the system.
+In 2011 a new bootkit – Win32/Rovnix – established a new trend: Modifying the VBR and Bootstrap Code (Win32/Rovnix, Win32/Carberp).
+Using such a technique allowed malware to bypass many security and antivirus programs since the feature makes detecting and removing these threats more difficult.
+Another interesting fact is that the bootkit builder for VBR bootkits like Win32/Rovnix was offered for sale.
+For instance, Win32/Carberp – one of the most dangerous banking trojans – was upgraded to include bootkit functionality.
+Its developers started testing the for-sale bootkit in the end of the summer.
+We also observed that more and more complex threats started using their own hidden storage and avoided relying on services provided by OS.
+This approach allows malware to keep its payload and configuration data secret where antivirus and security software is less likely to find it.
+To conclude this article, we compare briefly the hidden file systems of the most sophisticated of these threats: Win32/Olmasco, TDL4 and ZeroAccess.
+As the successor of TDL3 and TDL3+ this family of malware inherits almost all the features of its predecessors regarding the storage of payload modules.
+It reserves some space at the end of the hard drive for housing its file system, the contents of which are protected by low-level hooks and an RC4 stream cipher.
+We performed much more in-depth analysis of TDL4 in the white paper “Evolution of TDL: Conquering x64”.
+The Win32/Olmasco developers went even further in the design and implementation details of its hidden file system.
+Generally, Olmasco’s system resembles a schema which is used by TDL4 but with additional enhancements:
+A supporting hierarchy with files and folders;
+Verification of file integrity to check if its components are corrupted
+Better management of internal file system structures.
+Unlike the TDL4 hidden file system, which is only capable of storing files, the system implemented in Win32/Olmasco could store both files and directories.
+The root directory is denoted with the backslash symbol ‘’, as is usual with Microsoft systems.
+For instance, if we look at the VBR of Win32/Olmasco’s hidden partition we notice that its code loads a file with “boot” name from the root directory ‘’:
+In addition, upon reading a file from the file system Win32/Olmasco performs some checks in order to detect corruption of file contents.
+An additional field was introduced into the data structure with CRC32 checksumming of the file contents.
+If Win32/Olmasco detects that a file is corrupted it removes the corresponding entry from the file system and frees the occupied sectors.
+This is shown in the figure below:
+Since the file system implemented in Win32/Olmasco is more mature than that implemented in TDL4, it therefore requires more efficient management in terms of free space usage and manipulation of data structures.
+Therefore some special files were introduced to help support file system integrity:
+$bad
+$bitmap
+Here is the code for Win32/Olmasco’s file system initialization routine:
+Both of these files are at the same hierarchical level in the root directory and are not accessible for payload (i.e., they’re for system use only).
+The purpose of these files is to store information about unused space and sectors containing corrupted data (just as files with the same names are used in NTFS).
+Another reason for introducing these files is to make the file system resemble NTFS more closely, so as to confuse security software.
+Yet another malware family that implements its own hidden storage is the ZeroAccess rootkit.
+Like TDL4 and Win32/Olmasco, ZeroAccess stores its payload and configuration information in a custom hidden file system.
+In this case, however, the contents of the hidden storage are saved into a file in the OS file system rather than directly into hard drive sectors.
+For this reason, ZeroAccess creates the directory “WindowsDir$NtUninstallKB_BotId$BotId” into which payload and configuration information is stored.

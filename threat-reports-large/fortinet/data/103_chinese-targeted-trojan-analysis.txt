@@ -1,0 +1,186 @@
+A FortiGuard Labs Threat Analysis Report
+FortiGuard Labs uncovered a new campaign targeted at Chinese-speakers using malware that bypasses normal authentication by exploiting known WinRAR file (cve-2018-20250) and RTF file (cve-2017-11882) vulnerabilities.
+This attack uses a watering hole attack strategy to target Chinese-speaking users by delivering malware through a hacked Chinese news site.
+Based on our analysis, the campaign also appears to be experimental because it uses so many different techniques and tools to target this end user community.
+We first discovered this backdoor malware campaign in 2017, and over the years it has continued to upgrade its functionalities.
+In this article, we will first analyze how this malware is delivered.
+We will then analyze the functionalities and C2 connection of the malware, and describe its development.
+The originally hacked Chinese news site mentioned above is located in the US, where it is used to distribute Chinese news to Chinese-speaking individuals living overseas.
+To protect the news site, we will obscure any related identifying information.
+We will also refer to it as victim1 in the remaining parts of this article.
+When we first found the hacked site, malicious phishing links had already been injected into it.
+Those links are faked as victim1’s introduction information.
+In addition, there is a “Contact to our Twitter” link, which is really a phishing Twitter login page.
+There is also a malicious script running on victim1.
+If we normalize and deobfuscate the JavaScript script, as seen in Figure 3, we find that this script first checks cookie data to ensure that access is coming from a Windows system.
+Second, it checks for the existence of “___utma”, a cookie used to distinguish users and sessions in Google Analytics.
+If found, it would mean the actor wants fresh access to victim1.
+It then dynamically downloads a script from hxxps://click.clickanalytics208.com/s_code.js?cid=239&v=243bcb3d3c0ba83d41fc to victim1.
+This injected script is then able to execute arbitrary JS script delivered from the URL.
+We also found an analysis report mentioning a fake update campaign related to this URL.
+However, we didn’t observe attacks with this script during our research.
+For more details, here is the report.
+An attack begins with an exploit targeted at a vulnerable WinRAR file (cve-2018-20250).
+This exploit extracts another exploit for the vulnerable RTF file (cve-2017-11882).
+We show the flow of this attack below.
+There are two routes for this backdoor malware to infect the system.
+1.
+WinRAR (cve-2018-20250) exploit extracts backdoor
+We can observe that this “.rar” file is really an “.ace” file, and that it has a corresponding unpacking path located in the blue square of figure 4.
+The file uses the WinRAR exploit to extract conf.exe to the Startup folder so it can be executed at system booting.
+However, this seems like a mistake or a test, because conf.exe is extracted correctly only when the username is “test”.
+Interestingly, we also found that conf.exe is infected by Sality, an infamous file infector malware.
+When conf.exe is executed, both the backdoor payload in conf.exe and the Sality infector shellcode will be executed at the same time.
+2.
+RTF (cve-2017-11882) exploit downloads backdoor
+The extracted “.doc” file is really an “.rtf” file.
+It triggers the Microsoft Equation Editor, runs regsvr32.exe to connect to 154.222.140.49, and then downloads the next stage - a malicious script named 123.sct.
+The executed 123.sct script downloads “hxxp://154.222.140.49/qq.exe” to “C:\\Windows\Temp\conf.exe”.
+This conf.exe is different from the previous one.
+It is a backdoor for malware without the Sality infection.
+We also found another download script in 123.sct that accesses “hxxp://154.222.140.49/calc.exe”.
+It uses this URL to download a clean Windows 64bit file, and it was likely used by the developer to debug the whole infection flow.
+The Sality-infected backdoor payload is the same as the download qq.exe.
+We find that both the backdoor malware code and the Sality code are running when the malware is executed.
+We also observed the following connections when this sample runs, though we haven’t observed any further activities from the Sality C2 servers.
+In this section we will analyze the backdoor payload in depth.
+Both of the executable samples we found in this campaign (dropped and downloaded) have the same backdoor functionalities.
+When they are running, they allocate memory and dynamically load a malicious DLL.
+There are also three export functions, which are shown in the following figure.
+Again, we found a default “test.dll”, which indicates the malware is still under development.
+1.
+DealC
+This function collects system information sends it to it C2 server repeatedly.
+2.
+DealR
+This function is for malware installation.
+There are two kinds of installation.
+The first one registers the malware to “HKCU\Software\Classes\Folder\Shell\test\Command” to add a shortcut to the copied malware in the context menu.
+The second one registers the malware to “HKCU\Software\Microsoft\Windows\CurrentVersion\Run” with the path “[%PROGRAMDATA%]\Mpclient.exe” for persistence.
+Interestingly, it also checks to see if its name is kphonewiz (Kingsoft Phone Wizard) or kminisite (Kingsoft Hot News Mini Site).
+Both of the software names come from Chinese software created by Kingsoft.
+This further indicates that this backdoor malware is targeting a Chinese audience.
+3.
+DealS
+Before running the main part of the backdoor malware, DealS loads Windows libraries.
+It does this to gather the Windows API call function addresses to generate a function table in memory.
+All the library names and function names are encoded using a simple character table via shifting specific index.
+It then saves its installation path from the registry “Software\Microsoft\Windows\CurrentVersion\Run” file to the file “[%PROGDATA%]/Destro”.
+This malware contains stealthy functionalities designed to collect system information and send information to its C2 server.
+It can also download files and create a reverse shell for further attacks.
+Backdoor functionalities:
+Collects system information
+Collects disk hardware information
+Collects a directory list under a specific directory
+Collects a file list in a specific directory
+Collects an installed program list
+Collects a processes list
+Collects data from a different application, such as Skype, Fetion, SogouInput, SogouDesktopBar, etc.
+Collects network adapter information
+Searches for files
+Collects screenshots
+Creates a reverse shell
+Downloads files
+Gets a collected file MD5 hash
+Collects clipboard text
+Collects CPU information
+This backdoor malware reads its C2 IP address from a constant RVA address.
+In this campaign, it tries to connect to the following C2 address: 122.112.245.78.
+There are two connection types for this malware: TCP with port 55556 and UDP with port 8000.
+Let’s check the backdoor C2 connection in Figure 7.
+First, the malware connects to 360.cn to read 100 bytes of data, but it always gets a “404 Not Found” message.
+We can observe the content check in Figure 13.
+The first 5 bytes in the content should be something like: “0x11 0x22 [Data] 0x33 0x44”.
+If the content check passes, the data will be saved and used in the C2 data header.
+However, during our testing the content check always failed, and seems useless.
+It then connects to http://icanhazip.com to acquire the IP address of the victim system.
+After collecting this information, it connects to its C2 to send information and get possible further commands.
+The backdoor’s C2 connection data is encrypted and decrypted by RC4.
+It uses a hardcoded encryption key.
+A custom header would then be inserted into the data’s head.
+Then the data would be encrypted by the RC4 algorithm and sent to the C2.
+We find that the first 8 bytes of the header are assigned as a constant value.
+As we analyzed the source more, we found this value is checked by the malware’s RC4 decryption function.
+If the check does not pass, the data does not need to be decrypted.
+Instead, this is a symbol for the malware to ensure the data is encrypted using the RC4 algorithm.
+The next 4 bytes are then created using a MAC sum calculation function, and they are possibly used to identify victims.
+To distinguish the different types of stolen data or information, ”content-type” is used in the connection data from the victim to the C2 server.
+There is a thread for receiving and handling the command from the C2 server.
+We have observed the following content-types in the malware:
+Figure 17 shows an example of the content-type usage.
+There are other headers used to describe the content.
+“time” is the data creation time.
+“ackfile” means the file used to save this data.
+“content-length” means the whole data size.
+The C2 command uses some tricks to trigger a corresponding function to resolve its request.
+An example of the request for changing monitored file type is shown in the following figure.
+At the offset 0x0D of the C2 request data, 0x2E in the red square of Figure 18 will be used as a function index to call the corresponding function.
+We found that this backdoor malware has been in use since 2017.
+The following is the timeline of its development.
+Interestingly, we found this backdoor malware always uses a Chinese-native software name to lure a victim to execute it.
+At first, it was simply an executable, but that was changed to a DLL version in 2018.
+The DLL version of the backdoor is encrypted and saved in the data section of a loader program.
+When the loader runs, the backdoor DLL is decrypted and loaded for running.
+We found that the latest sample is uploaded with the name “XLAccount.dll”.
+It has an interesting new functionality to collect information of a VPN tool, called “Shadowsocks”, which is used in China for going over the Great Firewall of China.
+“XLAccount.dll” is as a known module belonging to Xunlei Game Box, a web game platform developed by Xunlei.
+FortiGuard Labs investigated a campaign centered around a hacked Chinese news site.
+Threat actor(s) hacked the news website and injected fake links.
+A phishing link was also injected onto the same website.
+As of the time of this writing, its dynamically loaded malicious script is still running.
+The backdoor malware used in this campaign has been seen in the wild since 2017, and samples use regular Chinese application names.
+In this campaign, this backdoor malware exploits two different vulnerabilities, cve-2018-20250 and cve-2017-11882, to force victims to install a backdoor.
+While we analyzed its functionalities and C2 connections in this blog, it is still under active development and adding new functionalities to improve its ability to steal more information and data.
+FortiGuard Labs will continue to monitor the development of this malware and related campaigns.
+-= FortiGuard Lion Team =-
+Fortinet users are protected from the malicious threats mentioned in this article with the following solutions:
+Files are detected by FortiGuard Antivirus
+Malicious and Phishing URLs are blocked by the FortiGuard Web Filtering Service
+WinRAR exploit sample:
+bbf36d18436c8993d2c2dc3ee2095db6bb23ece287568ebb31040124733367ee -
+MSOffice/CVE_2017_11882.A!exploit
+RTF exploit sample:
+88d13e9bb6a644bf258b353afdf48bbd83c8490d01f16b9b3731bf4a62eb4b30 - MSOffice/CVE_2017_11882.A!exploit
+123.sct:
+4614b2f398d17fe231fd690eeb5b842ea5135a504ee3f464daacbe55d669c2c0 - VBS/Agent.NUC!tr.dldr
+Backdoor malware:
+7692617edaeb5598c8a3653c44ad85aca5cf61cd7effcd4ae88af1eb057d8f08 - W32/Malicious_Behavior.SBX
+6dc753cd93e1e5f205676b545dd1b9f81277f17c147a2e1bb5692560154f3ab9 - W32/Sality.E
+25a2dee5c5e9d537def7a9027a799815c5796fe7513978b0335ec46ea8ac6698 - GenericRXBJ.PX!tr
+46043089b8242b8b0066f7694faad8d353be1e564df1a28831102038b08859f8 - W32/Generic.AC.3F15F3!tr
+e326393f0609c91a1c83b1a53c8be050966bf0d2414d0156476c27762214c752 - W32/GenKryptik.CTVY!tr
+a66ec1ab17f71659965edd7aa4187ef776ca730a8c19439533c14f80ff6b45a8 - W32/GenKryptik.DGHA!tr
+93d3201a560b34613327af582c76bb08cea9e74d1e02f2915b76d901e0d0b98c - W32/GenKryptik.CANP!tr
+db1b203f2d169afadf026d470bc2d462ec13cfdf6fa4f3e990a460570188080e - W32/Kryptik.GHFL!tr
+1567b42c3f95faf9a67e9b698ad80c8192cc0382ede5b42412cb6f18ddf52d25 - W32/Agent.PHR!tr.spy
+263a967112ee6eeb15503f4a8327bda58cebac4e8e565447f300483f8fe0179a - W32/Agent.PHR!tr.spy
+18082e681361d6994ab39d8bd5615de5cceafce49fa29f4771fabe2b97f65fd0 - W32/Kryptik.GRIG!tr
+C2 URLs:
+hxxp://154.222.140.49/123.sct - Malicious
+hxxp://154.222.140.49/qq.exe - Malicious
+hxxps://click.clickanalytics208.com/s_code.js?cid=239&v=243bcb3d3c0ba83d41fc - Malicious
+122.112.245.78:8000 - Malicious
+122.112.245.78:55556 - Malicious
+218.31.126.140:8000 - Malicious
+218.31.126.140:55556 - Malicious
+Phishing URL:
+hxxps://www.twitter.hnwfj.com/login/ - Phishing
+Sality C2 URLs:
+hxxp://althawry.org/images/xs.jpg?62ba3=3639483 - Malicious
+hxxp://althawry.org/images/xs.jpg?68697=2993697 - Malicious
+hxxp://www.careerdesk.org/images/xs.jpg?6b4db=2637090 - Malicious
+hxxp://www.careerdesk.org/images/xs.jpg?63cf2=3679362 - Malicious
+hxxp://arthur.niria.biz/xs.jpg?63d8b=1635884 - Malicious
+hxxp://arthur.niria.biz/xs.jpg?6983e=3889710 - Malicious
+hxxp://amsamex.com/xs.jpg?640d7=1229445 - Malicious
+hxxp://amsamex.com/xs.jpg?6a441=3046855 - Malicious
+hxxp://apple-pie.in/images/xs.jpg?6c18d=4427650 - Malicious
+hxxp://apple-pie.in/images/xs.jpg?2ae562=28112340 - Malicious
+hxxp://ahmediye.net/xs.jpg?67f06=4257340 – Malicious
+hxxp://ahmediye.net/xs.jpg?6b69d=3959685 - Malicious
+hxxp://ampyazilim.com.tr/images/xs2.jpg?67994=3394720 - Malicious
+hxxp://g2.arrowhitech.com/xs.jpg?66deb=421355 - Malicious
+hxxp://g2.arrowhitech.com/xs.jpg?6e6c8=2713776 - Malicious
+Learn more about FortiGuard Labs and the FortiGuard Security Services portfolio.
+Sign up for our weekly FortiGuard Threat Brief.
+Read about the FortiGuard Security Rating Service, which provides security audits and best practices.

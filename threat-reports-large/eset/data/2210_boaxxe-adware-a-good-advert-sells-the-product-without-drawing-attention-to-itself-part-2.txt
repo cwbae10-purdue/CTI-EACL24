@@ -1,0 +1,183 @@
+In this post, we examine the complex it fits into a larger click fraud ecosystem, where users can be redirected either automatically, or through search engines browsing, to advertisement websites.
+(This blog post’s title is based on David Ogilvy’s quote).
+In the previous blog post we set Win32/Boaxxe.BE’s binary distribution context through an affiliate network named partnerka.me.
+We also explained how it fits into a larger click fraud ecosystem, where users can be redirected either automatically, or through search engines browsing, to advertisement websites.
+It is now time for us to dig into the Win32/Boaxxe.BE binary program.
+First, we will explain its installation process, then how and why it maintains its own DNS cache, and finally its click fraud implementation.
+We will start by describing the way Win32/Boaxxe.BE installs its different components onto the machine.
+Roughly summarized, this process follows the three steps described in the image below:
+Win32/Boaxxe.BE arrives as a Visual Basic executable with a companion file named “setup.dat“, both inside an NSIS installer that will simply decompress them and execute the binary.
+After various checks on the environment to detect emulators or debuggers, this program extracts a BMP image from its code section.
+An example of this image is shown below:
+The image’s data is then decrypted into a new executable, which once executed will itself decrypt the last code layer.
+This “image container” technique is likely used to make antiviruses believe the encrypted code should not be considered for analysis, being part of an image.
+Finally, the companion file “setup.dat” is RC4-decrypted with a key contained in this file itself, then decompressed with the aPLib library, and its relative CALL and JMP instructions are reconstructed with the E8/E9 transformation to get the final binary file.
+In order to manipulate search engine results for its implementation of user-initiated click fraud, Win32/Boaxxe.BE needs to have precise control over the user’s browser.
+The way it is implemented varies according to the targeted browser.
+Currently Win32/Boaxxe.BE manipulates Chrome and Firefox through browser extensions, whereas Internet Explorer is controlled with in-memory hooks that will be set up by the final payload binary.
+We are now going to explain the installation of Chrome and Firefox extensions, and we will cover later their actual working.
+A Chrome extension is normally distributed as a signed .CRX file, which can be installed simply by opening it with the browser.
+But for development purposes it is also possible to install “unpacked” extensions, which means copying the extensions files into the right place and modifying Chrome settings to load the extension.
+This last method is the one used by Win32/Boaxxe.BE.
+The process begins with the RC4-decryption of different data blobs contained in the binary, giving:
+The extension’s manifest, a JSON object containing extension’s metadata:
+The extension’s name in the manifest will be chosen from the list of installed applications on the machine, based on a hardware-specific value.
+In others words, each machine infected will use a different name for the extension.
+This type of hardware-dependent choice is commonly used by Win32/Boaxxe.BE, as we will see.
+Then, the manifest declares two JavaScript files.
+The first one is a background script that will run in the extension process for the lifetime of the extension.
+The second one is a content script that will be injected into each webpage matching the associated “matches” parameter (all webpages in this case).
+Finally, the extension asks for permission to access all webpages (“http://*/*”,”https://*/*”) and various Chrome APIs so as to manipulate the browser.
+The extension’s code itself, is composed of three different files.
+Firstly, the background script:
+This script is made of around 100 lines of obfuscated code and contains the core extension’s logic.
+Secondly, the content script:
+This script simply sends a message with the current URL and referrer to the registered event listeners, and executes the answer.
+Thirdly, a JSON object, named JSON_PAYLOAD thereafter, composed of four fields.
+Before dropping the scripts, all values of the form “@@STRING@@” in the background script will be replaced, in particular:
+“@@TOKEN@@” is replaced by the base64 encoding of the RC4-encryption with the key “tokencryptkey” of a plain-text string.
+This string is typically something like “u:14AB8569 w:1234 p:1 c:5b b:32 v:0”, where the different parameters’ are:
+“@@LOGIC@@” is replaced by the base64 encoding of the RC4-encryption of JSON_PAYLOAD with the previous @@TOKEN@@ value as key.
+Finally, the three files (manifest, background and content scripts) are dropped into the usual Chrome directory for extensions.
+The actual installation of the extension in Chrome is done by modifying the extensions.settings JSON object contained in the “Preferences” file in Chrome’s directory.
+This file contains – among others things – all installed extensions.
+Win32/Boaxxe.BE inserts the following lines to declare its extension:
+And… that’s it!
+At this point the extension’s JavaScript code will be loaded in Chrome.
+The ease of this installation process may seem surprising, but Google has recently announced that starting in January 2014 installation of unpacked extensions will only be possible when the browser is in developer mode.
+The necessary files for a Firefox extension are decrypted:
+install.rdf, the extension’s manifest:
+The “id”, “name”, “version”, and “creator” fields will be filled with hardware-dependent values.
+For sake of this example, let’s assume “id” will be set to “{1234}”, and “name” to “Microsoft Office”.
+chrome.manifest, which will be decrypted and filled in the following way:
+This file declares the extension’s JavaScript code – the “component” line – and then ensures that the extension will be loaded and will receive a notification at Firefox’s startup.
+The extension’s code itself, which is contained in one JavaScript file.
+The actual code is dropped in a similar manner as for Chrome, with the replacement of the same @@STRING@@ variables
+Finally, the three files (install.rdf, chrome.manifest and the JavaScript file) are dropped into the usual Firefox directory for extensions.
+In order to install the extension in Firefox, the following two operations take place in Firefox’s “Profile” directory
+Declare the extension’s path in the “extensions.ini” file.
+Check if an extension with same id is already present in the SQLite database “extensions.sqlite“.
+If yes, an update is made to the table to point to the newly installed version.
+If no, the extension is inserted into the table.
+And… that’s it!
+Similarly to Chrome, the simplicity of such an installation process can be surprising.
+It’s worth mentioning that Win32/Boaxxe.BE installs its Chrome and Firefox extensions as visible, and thus they will appear in the extensions panel.
+The objective of Win32/Boaxxe.BE installation step 3 is to fetch the final binary payload that will run on the machine.
+To do this, a network message is built with the following form:
+In the red box we see a binary header composed of four fields:
+The message checksum
+The payload length
+The message type
+The affiliate ID
+In the blue box we find the message payload, which concatenates the following plain text parameter
+The message is RC4-encrypted with a 244-byte pseudo-randomly generated key.
+Then, this key is encrypted with a RSA public key contained in the binary, and finally the encrypted message and this newly encrypted key are encoded in base64.
+The final result is sent over HTTP to a hardcoded IP address.
+The remote server normally gives back an HTML page, though it can also refuse to serve a machine that has asked too often.
+This HTML page just contains a body with a base64 encoded value.
+Once decoded, it appears to be a custom container structure with two Windows libraries inside:
+DLL1 is a trampoline library that will be registered to run at each startup in the context of regsvr32.exe.
+Its main purpose is to decrypt the second DLL and to maintain a hook on the system to ensure its loading in all processes.
+DLL2 is the actual Win32/Boaxxe.BE payload; it will be stored on the machine hard drive in an RC4-encrypted form with a key derived from the hard drive volume serial number and other hardware specific values.
+In other words, without knowing the exact hardware used on the machine it will be hard to decrypt the library (a type of cryptographic key generally known as environmental key).
+This is the moment the Installs column of the partnerka.me website statistics is incremented, but only if it is the first time a machine with such a “u” field value requests the payload.
+It should be noted that depending on the security products running on the machine – detected with their process names and indicated to the binary distribution server in the “v” parameter –specific protections are applied to the binaries in order to avoid detection.
+For example, when ESET products are running on the machine, the received payload will be protected by the commercial protector Themida.
+At this point, DLL1 will always run on the system in the context of regsvr32.exe and will set a hook on WH_CALLWNDPROC events.
+Simply put, it means this library will be loaded in all GUI processes receiving messages for their windows, a very common operation for such processes.
+Each time it has been loaded in a process, DLL1 will decrypt DLL2 and call its main function.
+Among the different operations implemented by DLL2 we will describe the custom DNS cache system it maintains, the user-initiated click fraud module and finally the automated click fraud module.
+When DLL2 is loaded into a browser (IE, Firefox or Chrome) it starts maintaining its own DNS cache, which is its own association between domain names and IP addresses.
+The purpose of this custom cache system is to avoid network detection based on DNS requests, as we will see.
+The cache rests upon two data structures:
+The first one is the cache itself – noted as DNS_CACHE thereafter – which is a list of 0x60 byte entries.
+An example of this structure’s state is shown below:
+Each entry contains information related to one domain name, which can be either legitimate (meaning not related to Boaxxe) or malicious, for reasons that will become apparent later.
+More precisely, it is composed of:
+The domain name itself, preceded in the first byte by its length.
+A “domain purpose” field (indicated in red for entry 1), distinguishing legitimate domain names from malicious ones.
+The IP address (boxed in blue).
+As we will explain below, this address is not the one associated with the domain from a network point-of-view.
+A “already resolved” field (boxed in green)
+The timestamp in Windows OLE 64 bit format (boxed in black) of the last successful resolving.
+The second structure is actually a compacted version of the previous one:
+It’s a map containing a maximum of 256 entries of 24-bytes width each.
+The key (enclosed in blue) is a checksum of a domain name stored in the cache, then comes the last known IP address associated with it and finally two timestamps describing the interval during which the domain was seen active.
+This structure is stored in a particular Windows registry key, and is updated regularly from the DNS cache in memory.
+Thus the cache update processing does not start from scratch each time but reuses previously collected information stored in the registry key.
+When DLL2 runs for the first time on the machine – in the context of regsvr32.exe – the DNS cache is empty.
+At this point, a set of around 500 legitimate domain names is RC4-decrypted from DLL2’s data.
+Then, the program chooses a subset of these domains based on a hardware-specific value.
+This allows the program to fill the cache with different legitimate domain names on each infected machine.
+Finally, when DLL2 gets loaded in the context of a browser for the first time, it adds some malicious domains – usually four – to the cache, according to the affiliate ID value.
+Why would the malware need different and legitimate domain names in its cache on each infected machine?
+Because it will generate a different series of DNS requests for clean domain names at each cache update, and thus make it hard to build a reliable Win32/Boaxxe.BE network detection based on DNS requests.
+The program will regularly check each entry of its cache and update it if 24 hours have passed since the last update.
+As we might expect, it will then make a DNS A request for the domain name, but interestingly the IP address received will not be the one stored in the cache (and used later for communications).
+Indeed the last 3-bytes of the received IP address will be RC4-encrypted with the hardcoded key “ANKS” in order to get the “real” IP address associated with the domain.
+Let’s take an example: if you query a DNS server for the domain thegreerfive.biz – a malicious domain used by Win32/Boaxxe.BE – you will get 31.240.6.70 as an answer, which is 1F F0 06 46 in hexadecimal, but the real IP address of the server associated with the domain is 31.193.0.178, which is 1F C1 00 B2, because the RC4-encryption of F0 06 46 with the key “ANKS” gives C1 00 B2.
+Win32/Boaxxe.BE’s operators only control the “real” IP address, and thus this technique allows their domain names to be associated with innocent IP addresses.
+In other words, the analysis of Win32/Boaxxe.BE’s related domain names is totally useless without knowing the key used to get the real IP addresses.
+User-initiated click fraud refers to the rerouting of users when they click on search engines results.
+It allows Win32/Boaxxe.BE to provide high-quality traffic to advertisement websites, as it reroutes real users – and not robots – to advertisement websites related to their interest (the keywords for which they searched).
+The logical working of this activity is summarized below.
+The blue text indicates the user’s actions, and the red text shows Win32/Boaxxe.BE’s actions.
+In step 1, the user looks with search engines for a certain keyword K, and gets back a list of related websites.
+At the same time, Win32/Boaxxe.BE sends K to its own search engine which also returns a list of related websites.
+In the event that there are no websites suitable for this particular keyword, no redirection occurs.
+In step 2, the user clicks on a legitimate result in its browser, and gets back the corresponding webpage.
+But after the user’s click, Win32/Boaxxe.BE forces the browser to reconnect to one of its own results.
+In practice the user has no time to see the webpage he clicked on, and directly ends up on the webpage selected by Win32/Boaxxe.BE.
+For Chrome and Firefox, the user-initiated click fraud operation is implemented in the extensions we previously described the installation process, whereas for Internet Explorer it is based on hooks in memory.
+The extension’s operation is similar for both browsers; therefore we will only describe it for Chrome.
+Recall that the Chrome’s extension is composed of two JavaScript files: the background script, the single instance of which will run permanently, and the content script, the single instance of which will run for each webpage.
+At startup, the background script will decrypt JSON_PAYLOAD and evaluate its “c” field, which contains the core extension logic.
+This code declares an array containing the targeted search engines.
+All these search engines receive keywords from the user as parameters in GET requests and this is the place from where Win32/Boaxxe.BE gathers them.
+In order to do so, the extension’s code first declares the URL’s parameter containing the keyword for each search engine, with the possible subpages used for search requests.
+Here is the list of the targeted search engines in December:
+So a request for the URL “www.google.com/search?q=cat“ will match the line 1 of the previous array, and the keyword “cat” will be extracted from the URL and then sent to Win32/Boaxxe.BE’s doorway search engine, which has been searchpagex.com (and searchpagex.org for Firefox) during the last months.
+Also, a whitelist of web sites is declared: Wikipedia, Facebook, Twitter.
+The user will not be redirected when he clicks on one of these domains in its search results.
+This allows Win32/Boaxxe.BE to be more stealthy, as the user would probably suspect that something is wrong if, for example, he ends up on an advertisement website when he clicks on a Wikipedia URL (because he knows what the Wikipedia website should look like).
+Finally, some event listeners are set up with Chrome APIs to process each newly visited URL – provided by the content script previously described – and to activate the redirection logic if it matches a targeted search engine.
+The answer from Win32/Boaxxe.BE’s search engine is a JSON object containing URL(s) in the form “searchpagex.com/c?t=BASE64ID”.
+When visited, such URL will start a chain of redirections through an advertisement network ending on a website related to the keyword they searched for.
+In parallel to this user redirection activity, the extension will, every hour, poke a specific URL – contained in the “c” field of JSON_PAYLOAD – to ask for a new version of JSON_PAYLOAD
+In order to implement the user-initiated click fraud activity in Internet Explorer, Win32/Boaxxe.BE hooks in memory the Windows API functions HttpAddRequestHeadersA, CreateWindowExW and DrawTextExW.
+The hooks are simply jumps to Boaxxe’s code inserted at the functions’ entry points.
+Roughly summarized, the code then provides URLs visited by the user to a specific Boaxxe’s thread.
+This thread implements a similar logic to that we previously described for the Chrome extension.
+It filters the same list of search engines URLs in order to extract from them the keywords searched for.
+The only difference is that it does not send these keywords to its own search engine, but to a malicious IP address stored in the custom DNS cache.
+The answer from the server – RC4-encrypted as usual – has the following form in plain text:
+The “u” parameter provides the URL to which the user should be redirected, whereas the “r” parameter contains the referrer to use for this request, which is a URL served by Win32/Boaxxe.BE’s search engine, containing the affiliate ID and the keyword entered by the user.
+Setting this referrer field allows Boaxxe’s operators to be paid by the advertisement network as if the user directly searched for the keyword in the doorway search engine, as we will explain later.
+Automated click fraud refers in this context to the silent browsing of advertisement websites, without any real user interaction.
+In order to do so, an Internet Explorer process is regularly launched by an instance of Win32/Boaxxe.BE running in regsvr32.exe.
+This new process is not visible to the user thanks to the Internet Explorer “-Embedding” parameter, and tries to be as stealthy as possible.
+First, it modifies various Internet Explorer settings, for example to disable navigation sounds, or remove restrictions on downloading files.
+It also creates a thread that will continuously monitor both execution time and the memory used by this process; if the time is too long or the memory too big – meaning the machine is overloaded – it terminates the execution.
+Finally, it hooks the MessageBeep API function to prevent it from making noise.
+Secondly, it adds to its DNS cache a group of hard coded domain names, according to the affiliate ID value.
+Then, it sends a request to one of them – with the usual RC4/base64 transformation – whose answer contains the necessary information to launch the automated click fraud.
+For example:
+The important parameters are:
+At this point the process will browse the “u” URL with its referrer header sets to “r”.
+The URL usually starts a redirection chains – usually 4 or 5 hops – thanks to the HTTP 302 response code.
+The last HTML page visited is then analyzed by the code to extract any links inside.
+Each of these links will then be visited, with a maximum of “n” pages visited in total.
+At various points during this activity, the process sleeps for certain amounts of time, defined by the “t” parameter, likely in order to mimic human behavior on the advertised websites.
+Finally, after each page visited the process makes a HTTP GET request to a website chosen from a small list of common websites (Google, Facebook, Twitter…).
+This allows the malware to “hide” click fraud requests among usual network traffic.
+We have described in this blog post a complex threat named Win32/Boaxxe.BE, whose purpose is to redirect traffic to various websites in order to be paid as an advertiser.
+In particular, we described how Win32/Boaxxe.BE
+Performs user-initiated click fraud that monitors the keywords typed by the user in search engines to reroute him to advertisement websites related to his interests.
+Performs automated click fraud that silently browses various advertisement websites.
+Maintains a custom DNS cache system in order to avoid network detection and make investigation by security analysts harder.
+SHA-1 Hashes
+NSIS Dropper 2AD7D28E726516DC4B5768F3A6E3CCB65BE70429
+19907BC92459177D3B1C79485828024E5DF57630
+setup.dat 602B280EF014312FDD28658EBFFA120E39BB74E0
+3AC4C250294D27215767A5F96A07EBCE17419FE1
+Chrome Extension 6DB7F622219B33936694A2B797561A60E759B2A0 (background.js)

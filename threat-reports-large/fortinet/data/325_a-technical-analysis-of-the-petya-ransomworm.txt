@@ -1,0 +1,75 @@
+Yesterday, a new ransomware wreaked havoc across the world.
+This new malware variant, which combines the functionality of ransomware with the behaviors of a worm, is being called Petya, Petrwrap, and even NotPetya, since researchers are still investigating as to whether its ability to modify the Master Boot Record of a targeted machine is based on the Petya family of malware.
+Fortinet has designated this new hybrid form of malware as a ransomworm, and this outbreak was reported to use the same worm mechanism to spread across the Internet as WannaCry, which contributed to the global scale of this outbreak.
+This post will discuss some of the technical aspects of this ransomworm that have been investigated by FortiGuard Labs.
+For this blog we will refer to this ransomworm as Petya.
+It is detected as W32/Petya.EOB!tr.
+You can read our last blog related to this topic here.
+The malware arrives as a DLL, with its malicious actions found in the first exported function.
+When executed, the first thing it does is enable three token privileges: SeShutdownPrivilege, SeDebugPrivilege, and SeTcbPrivilege.
+Figure 1.
+Adjusting token privileges.
+It then checks the running processes by performing a hash on the process name.
+Part of the hash algorithm is as follows:
+Figure 2.
+Hashing algorithm for process names.
+It then checks if the resulting value is either of the following, and then sets some flags accordingly:
+0x2e214b44 = avp.exe
+0x6403527e = ccSvcHst.exe
+0x651b3005 = NS.exe
+After checking the running processes, it then gets its own filename.
+Figure 3.
+Getting its own filename.
+This is important as it will use this later as a sort of killswitch.
+After this, Petya checks its commandline.
+We have not fully explored this part of the malware to determine what arguments it expects.
+Nevertheless, we are able to continue our analysis even without those arguments.
+It then checks if its flag for the adjusted token privileges is 2.
+This means that the SeDebugPrivilege has been enabled.
+If so, it skips two function calls (which we will look at later), and then proceeds to shut down the system.
+Figure 4.
+Checking its privilege flag.
+In the figure above, we can see that if the flag is not 2, Petya calls two functions.
+Going into the first function, which we have called Msub_CreateWindowsFile, we can see that it checks if a file exists (via PathFileExistsW).
+If it does, then it branches into code that calls ExitProcess, thereby terminating the malware.
+Researchers have identified this function as a possible “killswitch.”
+Figure 5.
+The “killswitch”.
+In order to force the malware to call ExitProcess, we need to find the name of the file it is checking for.
+Looking again at the code, we see that the file name is stored in a memory location called pszPath.
+Figure 6.
+Path to be checked.
+To see what is stored in this memory location, we need to enter into the function that we have called Msub_AppendToWindir.
+Figure 7.
+Inside the Msub_AppendToWindir function.
+In the screenshot above, the full path and filename of the DLL that we have used in our tests is C:\_Virus\Petya.dll, which was returned in the code shown previously in Figure 3.
+Let’s walk through the code shown above in Figure 7:
+The first API call, PathFindFileNameW, returns Petya.dll (removes the directory name).
+The second API call, PathCombineW, combines the hardcoded path C:\Windows to this file name, resulting in C:\Windows\Petya.dll.
+The third API call, PathFindExtensionW, with C:\Windows\Petya.dll as the parameter, returns the address of the extension name (.dll).
+This address is stored in the register EAX.
+In the code underlined above, the malware stores the value 0x00 to this address, effectively terminating the string.
+The string is now changed to C:\Windows\Petya.
+It then exits the function.
+Looking back at Figure 5, we now know what is being checked in the call to PathFileExistsW.
+In our example, it would be C:\Windows\Petya.
+If this file exists, the malware then goes to the call to ExitProcess.
+This is not a straightforward killswitch like in WannaCry, since the filename that an intended victim receives may change.
+As this is an ongoing analysis of a new, active threat, FortiGuard Labs will continue to update this blog as more information becomes available.
+MD5: 71b6a493388e7d0b40c83ce903bc6b04
+AV Signature:
+W32/Petya.EOB!tr
+W32/Agent.YXH!tr
+Other signatures are being investigated.
+IPS Signature:
+MS.SMB.Server.SMB1.Trans2.Secondary.Handling.Code.Execution
+Created
+Mar 14, 2017
+Last Updated
+Jun 05, 2017
+In addition, Fortinet’s WannaCry IPS rules appear to protect against exploits targeting these vulnerabilities.
+Fortinet teams are verifying this claim.
+Sandbox Detection:
+Fortinet Sandbox (FSA) detects this attack.
+TOR Communications:
+Block TOR Outbound traffic via AppControl signatures.

@@ -1,0 +1,52 @@
+Part II.
+Technical details (PDF)
+UEFI (or Unified Extensible Firmware Interface) has become a prominent technology that is embedded within designated chips on modern day computer systems.
+Replacing the legacy BIOS, it is typically used to facilitate the machine’s boot sequence and load the operating system, while using a feature-rich environment to do so.
+At the same time, it has become the target of threat actors to carry out exceptionally persistent attacks.
+One such attack has become the subject of our research, where we found a compromised UEFI firmware image that contained a malicious implant.
+This implant served as means to deploy additional malware on the victim computers, one that we haven’t come across thus far.
+To the best of our knowledge, this is the second known public case where malicious UEFI firmware in use by a threat actor was found in the wild.
+Throughout this blog we will elaborate on the following key findings:
+We discovered rogue UEFI firmware images that were modified from their benign counterpart to incorporate several malicious modules;
+The modules were used to drop malware on the victim machines.
+This malware was part of a wider malicious framework that we dubbed MosaicRegressor;
+Components from that framework were discovered in a series of targeted attacks pointed towards diplomats and members of an NGO from Africa, Asia and Europe, all showing ties in their activity to North Korea;
+Code artefacts in some of the framework’s components and overlaps in C&C infrastructure used during the campaign suggest that a Chinese-speaking actor is behind these attacks, possibly having connections to groups using the Winnti backdoor;
+The attack was found with the help of Firmware Scanner, which has been integrated into Kaspersky products since the beginning of 2019.
+This technology was developed to specifically detect threats hiding in the ROM BIOS, including UEFI firmware images.
+Before we dive deep into our findings, let us have a quick recap of what UEFI is and how it was leveraged for attacks thus far.
+In a nutshell, UEFI is a specification that constitutes the structure and operation of low-level platform firmware, so as to allow the operating system to interact with it at various stages of its activity.
+This interaction happens most notably during the boot phase, where UEFI firmware facilitates the loading of the operating system itself.
+That said, it can also occur when the OS is already up and running, for example in order to update the firmware through a well-defined software interface.
+Considering the above, UEFI firmware makes for a perfect mechanism of persistent malware storage.
+A sophisticated attacker can modify the firmware in order to have it deploy malicious code that will be run after the operating system is loaded.
+Moreover, since it is typically shipped within SPI flash storage that is soldered to the computer’s motherboard, such implanted malware will be resistant to OS reinstallation or replacement of the hard drive.
+This type of attack has occurred in several instances in the past few years.
+A prominent example is the LowJax implant discovered by our friends at ESET in 2018, in which patched UEFI modules of the LoJack anti-theft software (also known as Computrace) were used to deploy a malicious user mode agent in a number of Sofacy \ Fancy Bear victim machines.
+The dangers of Computrace itself were described by our colleagues from the Global Research and Analysis Team (GReAT) back in 2014.
+Another example is source code of a UEFI bootkit named VectorEDK which was discovered in the Hacking Team leaks from 2015.
+This code consisted of a set of UEFI modules that could be incorporated into the platform firmware in order to have it deploy a backdoor to the system which will be run when the OS loads, or redeploy it if it was wiped.
+Despite the fact that VectorEDK’s code was made public and can be found in Github nowadays, we hadn’t witnessed actual evidence of it in the wild, before our latest finding.
+During an investigation, we came across several suspicious UEFI firmware images.
+A deeper inspection revealed that they contained four components that had an unusual proximity in their assigned GUID values, those were two DXE drivers and two UEFI applications.
+After further analysis we were able to determine that they were based on the leaked source code of HackingTeam’s VectorEDK bootkit, with minor customizations.
+Rogue components found within the compromised UEFI firmware
+The goal of these added modules is to invoke a chain of events that would result in writing a malicious executable named ‘IntelUpdate.exe’ to the victim’s Startup folder.
+Thus, when Windows is started the written malware would be invoked as well.
+Apart from that, the modules would ensure that if the malware file is removed from the disk, it will be rewritten.
+Since this logic is executed from the SPI flash, there is no way to avoid this process other than eliminating the malicious firmware.
+Following is an outline of the components that we revealed:
+SmmInterfaceBase: a DXE driver that is based on Hacking Team’s ‘rkloader’ component and intended to deploy further components of the bootkit for later execution.
+This is done by registering a callback that will be invoked upon an event of type EFI_EVENT_GROUP_READY_TO_BOOT.
+The event occurs at a point when control can be passed to the operating system’s bootloader, effectively allowing the callback to take effect before it.
+The callback will in turn load and invoke the ‘SmmAccessSub’ component.
+Ntfs: a driver written by Hacking Team that is used to detect and parse the NTFS file system in order to allow conducting file and directory operations on the disk.
+SmmReset: a UEFI application intended to mark the firmware image as infected.
+This is done by setting the value of a variable named ‘fTA’ to a hard-coded GUID.
+The application is based on a component from the original Vector-EDK code base that is named ‘ReSetfTA’.
+Setting of the fTA variable with a predefined GUID to mark the execution of the bootkit
+SmmAccessSub: the main bootkit component that serves as a persistent dropper for a user-mode malware.
+It is executed by the callback registered during the execution of ‘SmmInterfaceBase’, and takes care of writing a binary embedded within it as a file named ‘IntelUpdate.exe’ to the startup directory on disk.
+This allows the binary to execute when Windows is up and running.
+This is the only proprietary component amongst the ones we inspected, which was mostly written from scratch and makes only slight use of code from a Vector-EDK application named ‘fsbg’.
+It conducts the following actions to drop the intended file to disk:

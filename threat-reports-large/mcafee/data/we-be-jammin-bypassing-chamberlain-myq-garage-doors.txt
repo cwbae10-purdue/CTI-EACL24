@@ -1,0 +1,104 @@
+The idea of controlling your garage door remotely and verifying that everything is secure at home, or having packages delivered directly into your garage is enticing for many people.
+The convenience that many of these IOT devices provide often persuades consumers away from thinking about the possible security concerns.
+McAfee Advanced Threat Research recently investigated Chamberlain’s MyQ Hub, a “Universal” garage door automation platform.
+The way Chamberlain has made this device universal is via a Hub, which acts as a new garage door opener, similar to the one that you would have in your car.
+This allows the MyQ Hub to retrofit and work with a wide variety of garage doors.
+We found that Chamberlain did a fairly good job of securing this device, which is typically uncommon for IOT devices.
+However, we discovered that there is a flaw in the way the MyQ Hub communicates with the remote sensor over radio frequencies.
+From an attack perspective there are three main vectors that we began to look at: local network, remote access (API, or third-party integration), and RF communications between the sensor and the Hub.
+The first thing we attempted was to gain access to the device via the local network.
+A quick port scan of the device revealed that it was listening on port 80.
+When attempting to navigate to the device at port 80 it would redirect to start.html and return a 404 error.
+No other ports were open on the device.
+The inside of the Chamberlain MyQ Hub
+Disassembling the Hub revealed a small SOC (system on a chip) module that was handling the Wi-Fi and web communications and a secondary PIC microcontroller which was responsible for controlling the RF side of things for both the garage door and the remote door sensor.
+The MyQ Hub listed on FCC’s website also included a Bluetooth module that was not present on the two MyQ Hubs that we purchased.
+The UART connection was disconnected or not enabled, but the JTAG connection worked to communicate directly with the main Wi-Fi module.
+With the JTAG connection we were able to dump the entire contents of the flash chip and debug the system unrestricted.
+The main Wi-Fi module was a Marvell microcontroller that was running a RTOS (Real Time Operating System), which acts much different than a normal Linux system.
+While it will still run predefined applications, RTOS’ usually don’t have a filesystem like traditional systems do.
+We extracted the entire contents of the Marvell microprocessor, and were able to analyze the assembly and determine how the web server behaves.
+From looking through the web server code we were able to identify how the device is setup through the local API as well as finding some interesting, albeit not very useful commands that we could send.
+Local API commands
+There were more URLs that we found to be accessible and some additional API paths, but nothing stood out as a good place to start an attack from.
+At this point we decided to investigate the other attack vectors.
+We didn’t spend too much time looking into the third-party attack vector and remote API since it becomes sort of a gray area for researching.
+While we were testing with the /sys/mode API call we were able to put the device into a soft factory reset, where we were able to attempt to add the device to a different account.
+From capturing the SSL traffic on the mobile application, we were able to see that it was failing since the serial number was already registered to another account.
+We used a technique called SSL unpinning to decrypt traffic from the Android application; we’ll post a future blog explaining this process in greater detail.
+One thing that we wanted to try was to modify the Android app to send a different serial number.
+Since we don’t believe that the device ever cleared the original garage door information, we could have potentially opened the device from the new account.
+However, this is all speculation and was not tested because we didn’t want to access the remote API.
+The last vector we looked at was RF.
+We began trying to break down the frequency modulation between the remote door sensor and the Hub.
+We originally thought it was some sort of FSK (frequency shift keying) where data is transmitted digitally.
+If the signal is in one frequency the corresponding bit is 0 and if the signal is shown on another frequency the bit is 1.
+This idea was thrown out since the MyQ remote sensor was using 3 different frequencies not just two.
+Looking at the door sensor’s FCC filing we noticed a particularly helpful revision that they made.
+OOK stands for “On OFF Keying” and is another method of encoding digital bits into RF.
+OOK will either be sending a signal (1) or not sending a signal (0).
+This means both the transmitter and receiver must be synchronized.
+On Off Keying Graphical Representation
+Here is the binary representation for the signal captured from the MyQ remote door sensor.
+This is a tightly zoomed-in window of the entire signal.
+One full message captured, each color is a different frequency
+aaaaaaaa559999aa59655659a6965aa9a99996aa6aa0aaaaaaaa55a9699a6566696699555a6a5556966555500aaaaaaaa559999aa59655659a6965aa9a99996aa6aa
+We can observe the state transmission captured from all three frequencies and converted to hexadecimal.
+It’s easy to identify data patterns within the transmission, as represented in color above, but we were never able to crack it to arbitrarily transmit false states from our SDR (Software Defined Radio).
+We also noticed that the RF engineers at Chamberlain had security in mind not only by separating the signal into three separate frequencies, but also by implementing rolling codes.
+You may be familiar with the rolling code technique from things like your standard garage door opener or your car key fob.
+Rolling code devices prevent an attacker from directly capturing a signal and replaying it.
+This is prevented by the signal containing a unique identifier that is noted by the receiver and if the receiver ever sees that signal with the unique ID again it will ignore it.
+The way attackers have overcome rolling code devices is by a method called “Roll Jam.” An attacker will jam the rolling code signal from the transmitter, blocking it from ever making it to the receiver, while simultaneously capturing the valid rolling code and storing it.
+This way the attacker now has an unused and valid rolling code that the receiver has never seen before.
+The caveat to this method is that normally the victim will notice that either the garage door or car didn’t unlock.
+A stealthier method to Roll Jam is always capturing the latest code and replaying the latest signal minus 1.
+This way the car or door will open but the attacker still owns the latest code for their use.
+The MyQ also had a rolling code implementation that we were able to develop a variant of this technique against.
+We took the concept of jamming the original code from the receiver by transmitting a large amount of “noise” directly adjacent to the valid signal frequency.
+This causes the receiver in the MyQ Hub to overload and not hear the valid signal.
+However, with the precision of the SDR, we were able to ignore the noise that we are transmitting and store the signal.
+This was further complicated by the fact that there were three frequencies that we had to simultaneously listen for and jam.
+If you are interested in this FHSS (Frequency Hopping Spread Spectrum) Roll Jam technique, please read our white paper.
+Within the research related to Chamberlain Garage Door Hub described in this blog, the only interference was to unlicensed spectrum radio frequency for the minimum period while the garage door hub was transmitting state signal, and there was no interference with any communications signal licensed or authorized under the Communications Act or FCC rules.
+This technique worked, but since the remote sensor and the MyQ Hub always have the advantage in RF landscape, it was unreliable.
+The jamming aspect of the attack worked nicely; however, since we are outside of the garage and the remote sensor and the Hub are both located within the same garage, it is harder to jam and listen at the same time with the garage door and walls acting as barriers.
+With higher powered radios, frequency-tuned antennas, and disregard for FCC’s laws, the jamming of the remote sensor could take place at a much further distance than we were able to test in our lab environment.
+A waterfall view of the remote sensor signal (red) and jamming (black)
+With our jamming working reliably, we confirmed that when a user closes the garage door via the MyQ application, the remote sensor never responds with the closed signal because we are jamming it.
+The app will alert the user that “Something went wrong.
+Please try again.” This is where a normal user, if not in direct sight of the garage door, would think that their garage door is indeed open, when in reality it is securely closed.
+If the user believes the MyQ app then they would do as the application indicates and “try again” – this is where the statelessness of garage doors comes into play.
+The MyQ Hub will send the open/closed signal to the garage door and it will open, because it is already closed, and it is simply changing state.
+This allows an attacker direct entry into the garage, and, in many cases, into the home.
+Since now the garage door is really open the attacker probably doesn’t want to leave the state as-is, notifying the victim that something went wrong again.
+Putting the garage door into a closed state and allowing the app to clear the error will put the victim at ease.
+This could be executed either by a replay from a previously captured closed signal, or, in the most simplistic manner by removing the remote sensor from the Velcro on the garage door and placing it in the vertical position, signaling to the Hub that the door closed successfully.
+Attack Reproduction State Flowchart
+We also realized that in a real-world scenario, an attacker wouldn’t likely sit outside of a garage all day, so we decided to automate the attack.
+We used GNU radio to implement a JIT (just in time) method of jamming where the SDR will sit dormant listening on the MyQ’s three separate frequencies.
+The moment it notices that the remote door sensor is beginning a transmission, it will dynamically enable and start jamming of the signal.
+GNU Radio JIT Jamming and State Capture over 3 Simultaneous Frequencies
+This expands the use cases of this type of attack by being able to create a small device that could be placed out of sight near the garage door.
+This technique is also described in more detail in our FHSS white paper.
+The JIT jamming makes it very difficult to locate the device using RF triangulation and allows it to be better equipped for battery operation.
+While this may not be too common for individuals using the MyQ Hub, recall the earlier reference to third-party partnerships with MyQ for garage delivery.
+Another possible attack would be when a delivery driver uses the application.
+The primary reason users sign up for this service is the concept of a package delivery to a secure location (garage) even when they are not home.
+The victim can be absent from the property yet have access via the MyQ app over the internet to open or close the garage door if a delivery driver uses the MyQ hub for an in-garage delivery.
+A determined hacker could pull this attack off and the victim may have a higher probability of believing that the door may in fact be open.
+We disclosed our findings in full to Chamberlain on 9/25/2019, including detailed reproduction steps for the jamming attack.
+We also talked to Chamberlain on this issue with the third-party delivery drivers and how it could fit into this attack model.
+After extensive testing and validation of the issue, the vendor released an update to the myQ App as of version 4.145.1.36946.
+This update provides a valuable warning message to users indicating the garage door state may not be accurate, but it does not eliminate the user from remotely controlling the door itself.
+The beauty of IOT devices are that they solve problems that we have learned to deal with.
+After we experience the convenience and the way these devices can automate, secure, or assist in our lives it is hard to see them ever going away.
+This ease and automation often overshadows the potential security threat that they may pose.
+Even simple enhancements to manual products over time have this effect; take for example the now-legacy garage door opener in your car.
+The ability to capture and replay the basic signals transformed the threat from physical to digital space.
+While the Chamberlain MyQ Hub ultimately produces a generally more secure method of accessing garages than its predecessors, consumers should be aware that any extension of a technology platform, such as using WiFi, a mobile app and FHSS RF transmissions, also extends possible threat vectors.
+We would like to finish by commenting that the likelihood of a real-world attack on this target is low, based on the complexity of the attack and installation footprint.
+We have discussed this with Chamberlain, who has validated the findings and agrees with this assessment.
+Chamberlain has made clear efforts to build a secure product and appears to have eliminated much of the low-hanging fruit common to IoT devices.
+This vendor has been a pleasure to work with and clearly prioritizes security as a foresight in the development of its product.
+NOTE: Within the research related to Chamberlain Garage Door Hub described in this blog, the only interference was to unlicensed spectrum radio frequency for the minimum period while the garage door hub was transmitting state signal, and there was no interference with any communications signal licensed or authorized under the Communications Act or FCC rules.

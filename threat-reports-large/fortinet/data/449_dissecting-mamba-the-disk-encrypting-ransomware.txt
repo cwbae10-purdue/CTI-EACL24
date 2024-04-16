@@ -1,0 +1,123 @@
+Another new ransomware has joined the file-encrypting bandwagon.
+Only this time, instead of choosing what types of files to encrypt, it has decided to join the league of a few others and encrypt the entire disk directly using an open-source tool called DiskCryptor.
+This is not the first time that disk-encrypting ransomware has hit the spotlight.
+Earlier this year, Petya ransomware wreaked havoc by encrypting disks through the master file table (MFT), denying access to user files.
+Unlike that former attack, however, this new ransomware fully encrypts the entire disk, including its data, leaving the system totally unusable unless a ransom is paid.
+Fitting to its capability to incapacitate systems, it has been named after a venomous snake, the Mamba.
+This article examines functionalities and techniques used by the malware that most reports fail to include, and which we believe are worth mentioning, in addition to describing a scenario of what might happen after a user decides to pay the ransom.
+Diving into the realm of disk permissions and encryptions can get very complex due to implementation issues.
+Thus, writing code from scratch to encrypt a disk can easily become a nightmare.
+For this reason, a practical solution is to instead use an already stable third-party tool with an already stable method of disk encryption, easy implementation, and strong decryption protection.
+Fortunately (or unfortunately), there is a free tool out there called DiskCryptor, which provides the exact capabilities needed by the disk-encrypting ransomware.
+It’s a lazy solution, but still a clever one.
+Included in the installed components is the tool’s GUI version.
+This tool boasts multiple encryption algorithms that can be cascaded for multi-level protection.
+Fig.1 DiskCryptor main GUI and supported encryption algorithms
+The main executable does not fully execute without a parameter – in this case, the password.
+This entails the existence of another component which generates a password, which we have yet to uncover.
+So for the sake of this article, a test password was used.
+Once the appropriate password is supplied, Mamba shows versatility in its support of both 32-bit and 64-bit environments by installing the appropriate DiskCryptor components to the path, “C:\DC22\”.
+Fig.
+2 Installed components
+For persistence, the executable is then installed as a service named “DefragmentService,” using the password as parameter.
+Fig.
+3 Mamba installs itself as a service using a test password
+Prior to its full disk encryption, it also encrypts all mapped network drives to further increase the extent of its damage.
+Apparently, enumerating mapped network drives using the “net use” command differs slightly between generations of Windows Operating Systems, primarily due to UAC (User Access Control) on newer versions.
+Fig.
+4 Check Version
+For newer versions of Windows (Vista or later), where UAC feature exists, the malware runs the command via Task Scheduler.
+This way, the malware is ensured to get a more accurate list of mapped network drives from both the Administrator and the regular user contexts.
+To access password-protected network drives it uses a free tool: Netpass by Nirsoft.
+This tool is used to recover network passwords stored in the system.
+Lists of found drives and network passwords are listed in "netuse.txt” and “netpass.txt,” respectively, which are located on the same directory.
+Fig.
+5 Executing “net use” command for old and new OSes
+Fig.
+6 Using “net use” command via Run as Administrator and Task Scheduler
+Fig.
+7 Netpass in GUI mode
+The files are encrypted by executing the component file mount.exe with elevated privilege using the previously created administrator account.
+But this time, it uses a custom algorithm consisting of a series of XOR and shift operations.
+The key used for the encryption supplied to the main executable is simply a part of the password.
+An MD5 hash value of the key is first obtained using Microsoft’s CryptoAPI before converting it to a string.
+To complicate the reversal of the actual password/key, only half (16-bytes) of the string value is used by the encryption.
+Fig.
+8 Routine for executing Mount.exe with elevated privilege
+Fig.
+9 Hashing password to MD5 string value
+Fig.
+10 File encryption routine
+Fig.
+11 Encrypted files on a mapped network drive
+As mentioned previously, the malware author made their job easy by using a third-party tool to install a custom boot loader and to fully encrypt the disks.
+It got even easier when the author decided to hard-code the number of disks to encrypt, blindly attempting to encrypt them one by one, when in fact there’s a command, “-enum”, which can be used to enumerate the drives using the DiskCryptor itself.
+Fig.
+12 Enumerating drive using dccon.exe -enum
+Fig.
+13 Disk Encryption using dccon.exe and a test password
+Fig.14 Hard-coded parameters for encrypting disks (max.
+10)
+The custom bootloader is installed using the following command:
+Fig.15 Installing DiskCryptor bootloader
+In the next step of the process, the author pulled off another trick.
+Executing this command in this way installs the bootloader using the DiskCryptor’s default configuration.
+It then prompts the user to enter the password with the simple obvious words, “enter password:“ So the question is, where does the accompanying ominous ransom note come from?
+We inspected the main executable to see if the change configuration command, “-config” was used, and there was no sign of it.
+As it turns out, to change the password message prompt, the resource of the DiskCryptor component, dcapi.dll, was directly modified.
+This saves the malware extra code executions for changing the configuration itself.
+Fig.16 Modified resource of dcapi.dll
+This seemed to imply that the ID used is not unique for each infected machine, which also suggests that there is only one password for all infections.
+Supporting this supposition is the fact that the main executable does not have any C&C-related functions to request or receive a password or a unique ID for the infected system, although it is possible that the missing component we cited previously may have been responsible for this.
+Upon a forced reboot, the user is left with only a ransom note and a locked unusable machine unless a payment is made.
+Using DiskCryptor to inspect the disks after encryption reveals that an XTS-AES algorithm was used.
+Fig.
+17 Information of the encrypted disks
+Fig.
+18 Dump of the disk before and after the encryption
+After the installation of the boot loader and the encryption of the disks, the installed service sleeps for 5 hours – the maximum time required for the encryption process.
+When complete, the malware partially removes its traces and leaves the installed DiskCryptor before rebooting the system, regardless of the encryption’s progress.
+This means, for encryption of very large disks, those of which would take more than 5 hours to finish, partial encryption may lead to permanent data corruption.
+Fig.
+19 Partial routine for removing some components
+As it is a rare occurrence that we can simulate a scenario wherein a user pays the ransom, we are taking this opportunity to do so based on a few assumptions.
+Let’s assume that a user pays the ransom and is lucky enough to be even given a real password.
+Let’s also assume that the crooks only provide, as promised in the ransom note, the “decryption key” - the password required by the boot loader to actually load the operating system, which we now know is also the same password used for the disk encryption.
+To assume they would provide additional decryption tools is another story.
+Let’s further assume that the user paid for the ransom, obtained the password, and loaded the operating system successfully.
+As a result, the malware has cleaned itself up and will no longer run at every startup.
+All is well, right?
+Not really.
+In the scenario we just outlined, the user is still left with encrypted disks and mapped network drives - not to mention the annoying “You are Hacked” note on every boot up.
+The encrypted disks and the boot loader can be manually restored using DiskCryptor, since the user has the password.
+Maybe that’s the plan for leaving the tool installed.
+But if so, that would be a terrible service, even for a ransom malware, which usually restores the system to its previous state (though often leaving the malware intact.)
+It is rare to find a ransom malware that fully encrypts disks.
+and there is a practical reason for that.
+It is true that with this method there is a greater sense of system control, since it can render entire systems totally unusable.
+That alone can significantly add to the frightening factor.
+However, its’ impractically slow encryption process seems to outweigh these advantages.
+For this reason, unless the encryption process can be sped up dramatically, we believe that a trend that would transition ransomware from file-type based to full-disk encryption is unlikely.
+However, the emergence of this new ransom malware family demonstrates that criminals continue to be creative with the methods they use to encrypt user data, as well as trying new ways to make their lives easier by using publicly available tools to carry out their malicious intents.
+We expect to see more of this trend even with other malware families simply because it is easy and convenient.
+-= FortiGuard Lion Team =-
+IOC’s
+SHA256
+74336da7eb463092a5f1bca3071f96b005f52e6df5826f8b0351e10537ba0459 (“Defragment” service) - W32/Mamba.TLD!tr
+2c087e8e93728d7a75902be0ad4124fbb874b64e0d81a7918c63046df9a76eed (Mount.exe) – W32/Mamba.TLG!tr
+ddda02cbc333b607fdbe4f1b2c4bc10dcc8dde90202cdc531ebf134071a28aaa (modified dcapi.dll) – W32/Mamba.TLF!tr
+Added Files:
+%SystemDrive%/DC22/dcapi.dll
+%SystemDrive%/DC22/dccon.exe
+%SystemDrive%/DC22/dcinst.exe
+%SystemDrive%/DC22/dcrypt.exe
+%SystemDrive%/DC22/dcrypt.sys
+%SystemDrive%/DC22/mount.exe
+%SystemDrive%/DC22/netpass.exe
+%SystemDrive%/DC22/netpass.txt
+%SystemDrive%/DC22/log_file.txt
+%SystemDrive%/DC22/netuse.txt
+Added Registries:
+HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\DefragmentService
+HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\dcrypt
+Added “mythbusters” administrator account

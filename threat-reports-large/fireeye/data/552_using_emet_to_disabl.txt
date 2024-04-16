@@ -1,0 +1,137 @@
+UPDATE (July 7): This post has been updated in advance of a Black Hat 2016 presentation.
+Microsoft’s Enhanced Mitigation Experience Toolkit (EMET) is a project that adds security mitigations to user mode programs beyond those built in to the operating system.
+It runs inside “protected” programs as a Dynamic Link Library (DLL), and makes various changes in order to make exploitation more difficult.
+EMET bypasses have been seen in research and past attacks [2, 3, 4, 5, 6, 7, 8].
+Generally, Microsoft responds by changing or adding mitigations to defeat any existing bypasses.
+EMET was designed to raise the cost of exploit development and not as a “fool proof exploit mitigation solution” [1].
+Consequently, it is no surprise that attackers who have read/write capabilities within the process space of a protected program can bypass EMET by systematically defeating each mitigation [2].
+If an attacker can bypass EMET with significantly less work, then it defeats EMET’s purpose of increasing the cost of exploit development.
+We present such a technique in the section New Technique to Disable EMET.
+Microsoft has issued a patch to address this issue in EMET 5.5.
+After discussing this new technique, we describe previously documented techniques used to either bypass or disable EMET.
+Please refer to the appendix if you’d like to know more about what kind of protections are implemented by EMET.
+EMET injects emet.dll or emet64.dll (depending upon the architecture) into every protected process, which installs Windows API hooks (exported functions by DLLs such as kernel32.dll, ntdll.dll, and kernelbase.dll).
+These hooks provide EMET the ability to analyze any code calls in critical APIs and determine if they are legitimate.
+If code is deemed to be legitimate, EMET hooking code jumps back into the requested API.
+Otherwise it triggers an exception.
+However, there exists a portion of code within EMET that is responsible for unloading EMET.
+The code systematically disables EMET’s protections and returns the program to its previously unprotected state.
+One simply needs to locate and call this function to completely disable EMET.
+In EMET.dll v5.2.0.1, this function is located at offset 0x65813.
+Jumping to this function results in subsequent calls, which remove EMET’s installed hooks.
+This feature exists because emet.dll contains code for cleanly exiting from a process.
+Conveniently, it is reachable from DllMain.
+Prototype of DllMain : BOOL WINAPI DllMain( _In_ HINSTANCE hinstDLL, _In_ DWORD fdwReason, _In_ LPVOID lpvReserved );
+Note that the first parameter provides the base address of the DLL.
+The second provides the parameter that the PE loader uses to communicate if the DLL is being Loaded or Unloaded, 1 or 0 respectively.
+If the fdwReason is 1, the DLL knows that it is being loaded and initializes.
+If the fdwReason parameter is 0 (DLL_PROCESS_DETACH), emet.dll initiates the unloading code, thus it simply goes through the exit routine assuming that it’s being unloaded, and it removes its hooks and exception handlers, thereby simply removing EMET’s checks.
+Note that this will not remove EMET from memory; it just ensures all of its protections are disabled.
+This kind of feature could exist in any detection-oriented product, which relies on user-space hooks, and in order to make sure the product does not break, there has to be an unloading routine that removes all protection checks.
+EMET’s DllMain can be found through a small Return Oriented Programming (ROP) gadgets chain shown in the next section, which just jumps to the DllMain with the right parameters to unload EMET protection checks.
+BOOL WINAPI DllMain (GetModuleHandleA("EMET.dll") , DLL_PROCESS_DETACH , NULL);
+The GetModuleHandleA function is not hooked by EMET since it is not considered as critical Windows API.
+We use this function to retrieve the base address of emet.dll.
+Since the PE header is located at the base address, we have to use it to find the address of the DllMain to send the required parameters.
+The function behind removing EMET hooks is located at offset 0x27298, which is shown in Figure 1.
+Figure 1: Function at offset 0x27298 responsible for removing EMET hooks
+First, the function loops through all Detoured_API structures, and zeroes out the DetouredFunctionPrologue for each associated Detoured_API_Config structure.
+The Detoured_API structure, depicted below, is a linked list that tracks whether an API is actively detoured and references the DetouredAPIConfig:
+struct Detoured_API { BOOL isActive; // isActive field shows the hooking status, Active: 0x1 PVOID DetouredAPIConfig; // pointer to Detoured_API_Config structure PVOID nextDetouredAPI; // pointer to the next Detoured_API structure };
+The Detoured_API_Config structure (partially shown below) stores information about the detour and its original API.
+struct Detoured_API_Config { PVOID DetouredWindowsAPI; // pointer to the detoured Windows API PVOID EMETDetouringFunction; // pointer to where EMET protection implemented PVOID DetouredFunctionPrologue; // pointer to the Windows API prologue ... }
+The DetouredFunctionPrologue contains a copy of the original API prologue, followed by a jump to the remainder of the original API.
+After clearing the DetouredFunctionPrologue in all Detoured_API_Configs, the function in Figure 1 calls Patch_Functions.
+Patch_Functions walks the Hook_Config linked list structure partially shown here:
+struct Hook_Config { PVOID nextHookConfig; // pointer to the next Hook_Config BOOL isActive; // isActive field shows the hooking status, Active: 0x1 PVOID ptrEffectiveFunction; // pointer to EMETDetouringFunction or non-detoured API PVOID DetouredWindowsAPI; // pointer to the detoured Windows API PVOID EMETDetouringFunction; // pointer to where EMET protection implemented … };
+For each Hook_Config, Patch_Functions restores the original API prologue as seen in Figure 2.
+Patch_Functions retrieves the size and address of the original function prologue from EMETDetouringFunction, and passes the values to memcpy.
+After each API is restored to its original state, Patch_Functions changes ptrEffectiveFunction to point directly to the original API.
+Figure 2: Code that removes detours
+After looping through all the detoured APIs and patching them with memcpy, you see that all the detours in Windows APIs are gone, as show in Figure 3 and Figure 4, before and after respectively.
+Figure 3: Before calling DllMain with unloading parameters
+Figure 4: After calling DllMain with unloading parameters
+EMET then continues to disable EAF and EAF+ protections.
+In the function at offset 0x609D0, EMET zeros out and reinitializes CONTEXT structure, and manipulates debugging registers (as shown in Figure 5).
+However, at the end of the function, EMET calls NtSetContextThread, which results in zeroing out the debugging registers, and hence disabling EAF and EAF+ protections.
+Figure 5: EAF & EAF+ disabling code
+Finally, at the end of the function at offset 0x60FBF, EMET calls the function located at offset 0x60810 that calls RemoveVectoredExceptionHandler to remove the defined vectored exception handler, which has been added using AddVectoredExceptionHandler.
+Using an old and patched vulnerability, CVE-2011-2371, we built ROP gadgets on top of an already existing exploit, and executed it with EMET protections enabled.
+After our ROP gadgets called the DllMain function of EMET.dll with parameters (EMET.dll base address, 0, 0), we returned to execution, and all the detours placed in the hooked Windows APIs were gone along with EAF and EAF+ protections.
+Previous techniques used to bypass EMET protections generally exploit design and implementation flaws, were possible because of some module or API was left out and not secured.
+We will describe a few of these bypass techniques.
+Since LoadLibrary is a critical API, EMET 4.1 raises an exception if it gets called with either a return or jump instruction, but Jared DeMott showed that calling LoadLibrary API with a call instruction instead of jumping or returning bypasses EMET LoadLibrary protection [2].
+The LoadLibrary API is monitored in order to prevent loading UNC paths (i.e.
+\\evil\bad.dll).
+Aaron Portnoy showed that this could be bypassed by using MoveFile API (which is not monitored by EMET 4.0) to download a DLL file that can then be loaded by LoadLibrary API [3].
+Caller check protection in EMET 4.1 is used to prevent ROP gadgets by checking if a critical Windows API has been called with a call instruction, return instruction, or jump instruction – the latter two are widely used in ROP gadgets.
+DeMott showed a way to bypass caller check protection by executing a legitimate call to the critical API function [2].
+Instead of calling VirtualAlloc API directly with a return or jump instruction (which will cause EMET to raise an exception), DeMott used a call instruction to VirtualAlloc API in one of the loaded modules, and by returning to the address of that call instruction, the critical Windows API gets called without having EMET get in the way.
+Critical Windows API functions are located in kernel32.dll, ntdll.dll and kernelbase.dll; EMET 3.5 was hooking the functions exported by the first two modules, but not for kernelbase.dll.
+Shahriyar Jalayeri used this fact to execute VirtualProtect API located in the kernelbase module to make the memory writable and executable [4].
+However, after EMET 4.0 was released, the Deep Hooks protection is hooking even the lowest level of critical Windows API functions.
+Jalayeri also bypassed EMET by using the _KUSER_SHARED_DATA structure (which has a fixed address) located in 0x7ffe0000, wherein at offset 0x300 there is a SystemCallStub pointer that points to KiFastSystemCall, which is the typical way to execute sysenter instruction.
+With that, he was able to call any system call by specifying its number in the EAX register (e.g.
+0x0D7 for ZwProtectVirtualMemory).
+Additionally, Jalayeri was able to deactivate EMET completely by patching the function prologue with a return instruction to make it ineffective.
+EAF protection uses debug registers to place breakpoints on accesses of exported functions in modules such as kernel32.dll, ntdll.dll and kernelbase.dll.
+These breakpoints can be bypassed using a shellcode that uses the import access table instead of the export access table (since this protection is applicable for export access table only).
+Unlike bypasses, which circumvent protections, disabling EMET turns off its protections entirely.
+For example, EAF (and EAF+ partially) can be disabled by clearing hardware breakpoints (i.e.
+zero out the debugging registers).
+Piotr Bania used the undocumented Windows APIs NtSetContextThread and NtContinue to achieve this, but since NtSetContextThread is hooked by EMET, one should first disable other EMET protections to make NtSetContextThread usable [5].
+Offensive Security found that most of EMET 4.1 protections first check the value of an exported global variable located at offset 0x0007E220 in emet.dll; if that variable’s value is zero, then the protection body proceeds without interfering with the caller code [6].
+It turned out that the global variable is the global switch used to turn on/off EMET protections, and by having that variable in a writable data section, attackers can craft ROP gadgets to zero out that variable easily.
+After doing some analysis, we found that EMET v2.1 has the same global switch located in the offset 0xC410, and because of this we suspect that EMET has the global switch weakness from the earliest versions of EMET by having the global variable in fixed addresses.
+This was the case until EMET 5.0 was released.
+Offensive Security found that in EMET 5.0, Microsoft put that global variable on the heap within a large structure (i.e.
+CONFIG_STRUCT) with the size of 0x560 bytes [7].
+However, the same concept is still applicable since there is a pointer to the CONFIG_STRUCT structure located in a fixed offset 0x0AA84C.
+As a protection, EMET was encoding this pointer value with EncodePointer function, and every time the EMET protection needed to check that value, it would decode it with DecodePointer function to get the CONFIG_STRUCT address.
+Zero out CONFIG_STRUCT+0x558 turns off most of EMET protections.
+Additionally, to turn off EAF and EAF+ they used unhooked pointers to NtSetContextThread stored at CONFIG_STRUCT+0x518.
+In EMET 5.1, Offensive Security found that the global variable holds encoded pointer values to some structure (i.e.
+EMETd), which is stored in the offset 0xF2A30 [8].
+The EMETd structure has a pointer field to the CONFIG_STRUCT structure that holds the global switch at the offset CONFIG_STRUCT+0x558 as additional protection layer to the pointer’s encoding.
+EMET 5.1 uses the cpuid instruction to XOR the returned values with the encoded pointer’s values.
+To decode CONFIG_STRUCT, they used the code in the offset 0x67372 of emet.dll, which decodes the EMETd structure and then returns back the decoded pointer of CONFIG_STRUCT.
+Since the global switch (i.e.
+CONFIG_STRUCT+0x558) is stored in a read-only memory page, Offensive Security found a way to change that by using unhooked pointers stored in EMET at fixed addresses.
+They used an unhooked pointer to ntdll!NtProtectVirtualMemory stored at CONFIG_STRUCT+0x1b8 to mark it as a writable memory page, so they can zero out the global switch at CONFIG_STRUCT+0x558.
+For disabling EAF and EAF+, they have used the unhooked pointer to NtSetContextThread stored at CONFIG_STRUCT+0x518, the same as what they did in disabling EMET 5.0.
+This new technique uses EMET to unload EMET protections.
+It is reliable and significantly easier than any previously published EMET disabling or bypassing technique.
+The entire technique fits within a short, straightforward ROP chain.
+It only needs to leak the base address of a DLL importing GetModuleHandleA (such as mozcrt19.dll), instead of full read capabilities over the process space.
+Since the DllMain function of emet.dll is exported, the bypass does not require hard-coded version-specific offsets, and the technique works for all tested versions of EMET (4.1, 5.1, 5.2, 5.2.0.1).
+The inclusion and accessibility of code to disable EMET from within EMET creates a significant new attack vector.
+Locating the DllMain and calling it to shutdown all of EMET’s protections is significantly easier than bypassing each of EMETs protections as they were designed, and consequently undermines their value.
+Special thanks to: Michael Sikorski, Dan Caselden, Corbin Souffrant, Genwei Jiang, and Matthew Graeber.
+EMET has evolved throughout the years, and a brief description of features is provided here:
+Structured Exception Handling Overwrite Protection (SEHOP): Provides protection against exception handler overwriting.
+Dynamic Data Execution Prevention (DEP): Enforces DEP so data sections such as stack or heap are not executable.
+NULL page allocation: Prevents exploitation of null dereferences.
+Heap spray allocation: Prevents heap spraying.
+Mandatory Address Space Layout Randomization (ASLR): Enforces modules base address randomization; even for legacy modules, which are not compiled with ASLR flag.
+Export Address Table Access Filtering (EAF): Normal shellcode (e.g.
+Metasploit shellcode) iterates over the exported functions of loaded modules to resolve critical Windows API functions, which are normally exported by kernel32.dll, ntdll.dll and kernelbase.dll.
+EMET uses hardware breakpoints stored in debugging registers (e.g.
+DR0) to stop any thread which tries to access the export table of these modules, and lets the EMET thread verify whether it is a legitimate access.
+Imported mitigations from ROPGuard to protect against Return Oriented Programming (ROP).
+Load Library Checks: Prevents loading DLL files through Universal Naming Convention (UNC) paths.
+ROP Mitigation - Memory protection checks: Protects critical Windows APIs like VirtualProtect, which might be used to mark the stack as executable.
+ROP Mitigation - Caller check: Prevents critical Windows APIs from being called with jump or return instructions.
+ROP Mitigation - Stack Pivot: Detects if the stack has been pivoted.
+ROP Mitigation - Simulate Execution Flow: Detects ROP gadgets after a call to a critical Windows API, by manipulating and tracking the stack register.
+Bottom-up ASLR: Adds entropy of randomized 8-bits to the base address of the bottom-up allocations (including heaps, stacks, and other memory allocations).
+Deep Hooks: With this feature enabled, EMET is no longer limited to hooking what it may consider as critical Windows APIs, instead it hooks even the lowest level of Windows APIs, which are usually used by higher level Windows APIs.
+Anti-detours: Because EMET places a jump instruction at the prologue of the detoured (hooked) Windows API functions, attackers can craft a ROP that returns to the instruction that comes after the detour jump instruction.
+This protection tries to stop these bypasses.
+Banned functions: By default it disallows calling ntdll!LdrHotpatchRoutine to prevent DEP/ASLR bypassing.
+Additional functions can be configured as well.
+Certificate Trust (configurable certificate pinning): Provides more checking and verification in the certificate chain trust validation process.
+By default it supports Internet Explorer only.
+Introduced Attack Surface Reduction (ASR): Allows configuring list of modules to be blocked from being loaded in certain applications.
+EAF+: Similar to EAF, it provides additional functionality in protecting the export table of kernel32.dll, ntdll.dll and kernelbase.dll.
+It also detects MZ/PE reads and whether the stack pointer points somewhere outside of the stack boundaries or if there is a mismatch between the frame and the stack pointer.
+[1] “Inside EMET 4.0” by Elias Bachaalany, http://recon.cx/2013/slides/Recon2013-Elias%20Bachaalany-Inside%20EMET%204.pdf [2] “Bypassing EMET 4.1” by Jared DeMott, http://labs.bromium.com/2014/02/24/bypassing-emet-4-1/ [3] “Bypassing All of The Things” by Aaron Portnoy [4] "Bypassing EMET 3.5's ROP Mitigations" by Shahriyar Jalayeri, https://github.com/shjalayeri/emet_bypass [5] "Bypassing EMET Export Address Table Access Filtering feature" by Piotr Bania, http://piotrbania.com/all/articles/anti_emet_eaf.txt [6] "Disarming Enhanced Mitigation Experience Toolkit (EMET)" by Offensive-Security, https://www.offensive-security.com/vulndev/disarming-enhanced-mitigation-experience-toolkit-emet/ [7] "Disarming EMET v5.0" by Offensive-Security, https://www.offensive-security.com/vulndev/disarming-emet-v5-0/ [8] "Disarming and Bypassing EMET 5.1" by Offensive-Security, https://www.offensive-security.com/vulndev/disarming-and-bypassing-emet-5-1/

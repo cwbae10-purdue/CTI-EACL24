@@ -1,0 +1,179 @@
+I was recently sent an email by someone who was hit with a new species of ransomware.
+This one encrypted all of the documents on the system, attached the extension .vscrypt to the end, and changed the desktop wallpaper to a ransom note written in Russian.
+Here are my findings…
+…when executed, drops the following files onto the system: [It pretends to be an installer for Windows Media Player 9 (English).]
+It immediately executes Video_codec.exe and svchost.exe.
+svchost.exe and CSCA1.DLL were written in Delphi.
+These files all use the same packer written in Visual Basic 6 of all things.
+The packer uses Blowfish, and has a giant blob of a Base64 encoded EXE file embedded in it which it drops to disk, and then that
+does something else, and blah blah blah, I got around it on the first try.
+Whomever compiled this packer, appears to have a German Locale, based upon paths like: C:\Programme\Microsoft Visual Studio\VB98\VB6.OLB (Free_update.exe is a keylogger by the way.)
+The VSCrypt ransomware is svchost.exe in this case.
+And these are the files it drops when executed:
+So what does it do?
+VSCrypt (svchost.exe) searches each directory on the system, for the following files:
+For each file like this it finds, it encrypts it using the Control Sum Cript Algorithm v1.0 (CSCA1.DLL) with the password Fantazma1518061DgFgvFdvHyfvFdWwlm876Ql, more on this below.
+Adds a .vscrypt to the end of the filename, and deletes the original.
+At the end of this process, it drops shantazh.jpg and sets [HKEY_CURRENT_USER\Control Panel\Desktop] ConvertedWallpaper = "C:\vsworkdir\shantazh.jpg" in the registry — setting the desktop background to the «шантаж» or blackmail note.
+I went through the effort of typing this in while translating, so here is the text of the message in the shantazh.jpg file.
+I don't speak Russian very well, so please forgive me if I made any typos.
+Mail: [email protected] icq 481095
+ах да чуть не забыл не стирайте файлы с расширением
+vscrypt если сотрете вернуть зашифрованую информацию станет не возможно
+Удачи искренне ваши Trojan encoder и КОРРЕКТОР
+It basically says that either a person or a program named Trojan Encoder (I can't tell) has encrypted your files, and if you want to get them back, they're selling CORRECTOR for the affordable price of US$10 or about 350 Rubles.
+(Update: better translation here)
+So here, I'll save you the US$10…
+This is an additive stream cipher, which generates it's keystream by repeatedly taking the CRC32 sum of a shuffled string (the password).
+The shuffling algorithm takes the first byte of the password, and moves it to the end.
+Then for the next call, it takes the second byte of the password, and moves that to the end.
+And then the third byte, moved to the end.
+And so on, until it reaches the end of the string, then it goes back to the first byte and moves that to the end, and so on.
+Intuitively, if you shuffle a deck of cards this way, it'll eventually unshuffle itself (since you always swap with the same position).
+For a deck of 38 cards, or a password of 38 characters, the pattern will cycle after only 1110 shuffles.
+Making the password longer won't help, it's not linear; 50 characters will cycle after 735 shuffles, and 65 characters will cycle after 448 shuffles.
+(But if you want to try this experiment with a deck of 52 cards, It's going to take 32,844 card swaps to get the cards back into their original order.)
+So, basically the number of permutations before you cycle is this sequence: A051732 Number of interlacings (or shuffles) required to restore deck of n cards to original order times (n-1) (i.e.
+a(n)*(n-1)).
+(Thanks to Andrea for finding that for me.)
+So, with a four byte CRC32 of this shuffled password, the keystream cycles every (1110*4)=4440 bytes.
+You just XOR
+bc 2f 25 80 ae f8 53 e4 c3 0b 1d c9 68 9b 8f
+… with your data to encrypt or decrypt it.
+Here's a link to the full keystream if you're curious: Download vscrypt_keystream.bin Statistics about this keystream appear below.
+<speculation>I believe that it's possible to recover the password, given only the keystream from this cipher.
+(Just hand the program you want to crack a file full of nulls to get the keystream.)
+You can easilly figure out the length of the password from the cycle length of the keystream.
+And CRC32 is very linear, you can reverse the function and get some of the original bits out.
+With a zillion CRC's for each permutation, and with knowledge of which eight bits of the key are being shuffled each time.
+It should be possible to just write a big linear equation to solve for the key, given only the keystream.</speculation>
+Also, any repeated CRC32's in the stream, also indicate that there is a letter (octet) which appears at least twice.
+(When the two identical octets get moved to the end (positions (length) and (length-1), and it's permutation number (length - 1 - (offset MOD length)) then the two swap with themselves, giving the same CRC result.
+The password
+Fantazma1518061DgFgvFdvHyfvFdWwlm876Ql for example, the letter v does this.
+The letter v appears in the string Fantazma1518061DgFgvFdvHyfvFdWwlm876Ql at positions 20, 23, and 27 (counting up from 1, this is math not computer science).
+So, there is some kind of mathamatical relationship between the numbers: 20, 23, 27, 38, 331, 332, 886, 887, and 1110.
+But I haven't figured out what it is yet.
+So, yeah, even if you can't just rip the password out of the EXE, treating this cipher as a black-box, I believe that key recovery is possible with only knowledge of the keystream.
+In the first draft of this, I had a disassembly of most of the code out of C:\vsworkdir\CSCA1.DLL, with some commentary by me of what things were doing.
+But then I discovered the source code for CSCA1.DLL on the «Блог программистов» (Programmer's Blog), which is much more understandable than my marked up disassembly.
+Source Code: csca1.zip and this is the article that rpy3uH (the author) wrote about it: Шифровка с помощью пароля.
+Улучшаем алгоритм шифрования (Encoding with password.
+We improve the coding algorithm.
+[or something like that] I don't really speak Russian, so I wasn't sure at first if this was just an analysis of CSCA1.DLL by someone else, or the origin.
+It seems to refer to some earlier article about a cypher that's not as good at this one, but I can't quite figure out where that is.)
+Anyway, I hacked together a vscrypt decoder in perl.
+It needs some work, but I spent less than an hour on this.
+I don't recommend that you use this at all, but if you're writing your own decoder, this is something to work from.
+perl vsdecrypt.pl foo.txt.vscrypt foo.txt
+perl vsdecrypt.pl inputfile outputfile
+use lib qw( blib/lib lib );
+exit(0); #Don't really use this script, it's a demo for other programmers.
+my $infile = shift; #TODO: check for missing arguments.
+my $outfile = shift;
+sysopen(IN , $infile , O_RDONLY); binmode(IN );
+sysopen(OUT, $outfile, O_WRONLY|O_CREAT); binmode(OUT);
+my $key = "Fantazma1518061DgFgvFdvHyfvFdWwlm876Ql";
+# I'm sure there must be a more clever way to do this in Perl
+sub permutate {
+my $offset = shift;
+my $key = shift;
+$offset = $offset % (length($key)-1);
+my $beginning = substr($key, 0, $offset);
+my $middle = substr($key, $offset, 1);
+my $end = substr($key, $offset+1);
+$key = $beginning .
+$end .
+$middle;
+#for (my $i=0; $i < 60 ; $i++) {
+# $key = permutate($i,$key);
+my $offset = 0;
+while (0!=sysread(IN, $inbuf, 4)) {
+$key = permutate($offset++,$key);
+$outbuf = unpack("V",$inbuf) ^ Archive::Zip::computeCRC32($key,0);
+syswrite(OUT, pack("V",$outbuf), 4);
+# TODO: Deal with last one, two, or three bytes.
+There is also a free tool written and distributed by Dr.
+Web: ftp://ftp.drweb.com/pub/drweb/tools/te37decrypt.exe
+I can't endorse it, but I'm sure that it works better than my Perl script
+That's something completely different.
+That's GPCode and I'm going to write something up on it soonish.
+If you suddenly found yourself in the situation where all of your documents are encrypted with .encrypt at the end of the filename.
+Stop using the machine immediately, yank the plug if you have to.
+Your files still exist in the newly created empty space of the filesystem.
+You can undelete your files if you don't overwrite them first.
+If you catch this early enough, I think it is also possible to dump the memory from the system, and pull the encryption key out of it.
+(I haven't tested this yet.)
+If you don't know how to do a memory dump of your system, you're better off just pulling the plug and going the undelete route.
+Oh and if you are hit by this, and you do undelete the malware that did this, please send me a sample.
+<julia→fireeye.com>
+This is all of the entropy that is really in vscrypt…
+echo -n Fantazma1518061DgFgvFdvHyfvFdWwlm876Ql | stan
+General statistics for the stream, bytes 38
+Arithmetic mean: 86.473684 ~ 0x56(V)
+Median: 97.000000 ~ 0x61(a)
+Chi-Square test: 464.269556
+Entropy per byte: 4.346226
+Correlation co.: 0.442653
+Pattern length 1, different 23, total 38, bytes 38, depth 6
+- Pattern range
+0x30(0): 0x00000001 - 0x7a(z): 0x00000001
+- 10 most used patterns
+0x46(F): 0x00000004 0x31(1): 0x00000003 0x61(a): 0x00000003
+0x76(v): 0x00000003 0x38(8): 0x00000002 0x36(6): 0x00000002
+0x67(g): 0x00000002 0x64(d): 0x00000002 0x6d(m): 0x00000002
+Pattern length 2, different 35, total 37, bytes 38, depth 9
+- Pattern range
+0x3036(06): 0x00000001 - 0x7a6d(zm): 0x00000001
+- 10 most used patterns
+0x7646(vF): 0x00000002 0x4664(Fd): 0x00000002 0x4661(Fa): 0x00000001
+0x3135(15): 0x00000001 0x3036(06): 0x00000001 0x3531(51): 0x00000001
+0x3138(18): 0x00000001 0x3144(1D): 0x00000001 0x3830(80): 0x00000001
+And these are the stats for the whole generated keystream.
+Notice that 0xf3d26e79 and 0x0f5d95b6 appear twice in the stream.
+See the stuff above about the letter v.
+stan -p 4 vscrypt_keystream.bin
+General statistics for the stream, bytes 4440
+Arithmetic mean: 128.209685
+Deviation: 73.703444 ~ 0x49(I)
+Chi-Square test: 276.303657
+Entropy per byte: 7.953987
+Correlation co.: -0.029830
+Pattern length 1, different 256, total 4440, bytes 4440, depth 16
+- Pattern range
+0x00( ): 0x00000019 - 0xff( ): 0x00000013
+- 10 most used patterns
+0x2f(/): 0x0000001e 0x10( ): 0x0000001d 0x48(H): 0x0000001d
+0x1b( ): 0x0000001b 0x12( ): 0x0000001b 0xe0( ): 0x0000001b
+0xfb( ): 0x0000001a 0x00( ): 0x00000019 0x94( ): 0x00000019
+Pattern length 2, different 4285, total 4439, bytes 4440, depth 28
+- Pattern range
+0x0005( ): 0x00000001 - 0xfff6( ): 0x00000001
+- 10 most used patterns
+0x00cd( ): 0x00000003 0x948b( ): 0x00000003 0x20bb( ): 0x00000002
+0x0be4( ): 0x00000002 0x0921( !
+): 0x00000002 0x04f8( ): 0x00000002
+0x01c2( ): 0x00000002 0x08a7( ): 0x00000002 0x07f0( ): 0x00000002
+0x1dc9( ): 0x00000002
+Pattern length 3, different 4432, total 4438, bytes 4440, depth 31
+- Pattern range
+0x000592( ): 0x00000001 - 0xfff609( ): 0x00000001
+- 10 most used patterns
+0xf3d26e( n): 0x00000002 0xd26e79( ny): 0x00000002
+0x4d7fc2(M ): 0x00000002 0x00cdc5( ): 0x00000002
+0x0f5d95( ] ): 0x00000002 0x5d95b6(] ): 0x00000002
+0x00c1b1( ): 0x00000001 0x006fe1( o ): 0x00000001
+0x001b3e( >): 0x00000001 0x000592( ): 0x00000001
+Pattern length 4, different 4435, total 4437, bytes 4440, depth 30
+- Pattern range
+0x0005921a( ): 0x00000001 - 0xfff60921( !
+): 0x00000001
+- 10 most used patterns
+0xf3d26e79( ny): 0x00000002 0x0f5d95b6( ] ): 0x00000002
+0x0b1dc968( h): 0x00000001 0x094b425f( KB_): 0x00000001
+0x01603ee9( `> ): 0x00000001 0x00cdece4( ): 0x00000001
+0x00c1b1f0( ): 0x00000001 0x006fe10f( o ): 0x00000001
+0x001b3e2b( >+): 0x00000001 0x0005921a( ): 0x00000001
+Julia Wolf @ FireEye Malware Intelligence Lab
+Questions/Comments to research [@] fireeye .
+com

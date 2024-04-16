@@ -1,0 +1,71 @@
+In December 2019, Amazon Web Services (AWS) announced the availability of Amazon Elastic Block Store (EBS) direct APIs, giving AWS customers granular (block-level) access to snapshots (incremental backups), which were once considered a fairly opaque EBS format.
+These new APIs have been helpful in disaster recovery (DR) scenarios: In the event of an AWS regional outage or outage of a specific customer’s AWS environment, disaster recovery companies need access to data in order to restore company operations.
+The most efficient way to do this is to copy the data directly from AWS and only copy the data that’s changed over time.
+These APIs now allow disaster recovery companies to do so.
+Tools to take advantage of these APIs are evolving quickly.
+AWS is actively releasing supporting tools on GitHub for customers.
+Notably, disaster recovery software provider Veeam integrated this new API into its technology in July.
+Discussions around the APIs’ applications have appeared scarce since then, but according to a blog published at the time of their release, “Programmatic Access to EBS Snapshot Content,” “These APIs are designed for developers of backup/recovery, disaster recovery, and data management products and services, and will allow them to make their offerings faster and more cost-effective.”
+But this release of EBS direct APIs is not limited to potential DR applications.
+In relation to the work of Crypsis (a Palo Alto Networks company that provides cybersecurity professional services including digital forensics and incident response (DFIR), offensive security and proactive work), EBS direct APIs could be used to interact with AWS in ways not previously seen.
+Generally, with large-scale innovation come people who will try to optimize, compromise or defend with it.
+In this blog, we will examine how EBS direct APIs could potentially be used defensively and for analysis within DFIR matters, as well as cover additional security considerations.
+As we mentioned, supporting tools to use EBS direct APIs are just beginning to be released by AWS, and as such, do not cover the wide range of applications we will be discussing in this blog.
+Because of the importance of these APIs and their impact on the security world, we have also created tools, provided at the end of this blog, to assist others in utilizing EBS direct APIs’ security potential.
+Prior to the release of EBS direct APIs, EBS snapshots were incremental, point-in-time backups of volumes (similar to hard drives).
+If your company has ever taken an Amazon Machine Image (AMI) of a server in AWS, that would have generated a collection of snapshots.
+The snapshots are stored in Amazon S3, but they cannot be fetched or used like typical S3 objects.
+We commonly heard about this in our interactions with customers.
+Based on feedback that customers would like to interact with their EBS volumes in a different manner, AWS released EBS direct APIs, increasing accessibility.
+EBS direct APIs make this block data content (the actual bytes) available to authorized API users directly, addressing the previous issue.
+They also potentially challenge some existing assumptions around how snapshots are handled when customers are conducting security monitoring.
+Note several of these operational capabilities follow a central theme we’ve seen driving previous tool innovation – simplification.
+Previously, an Amazon Elastic Compute Cloud (EC2) instance and conversion from snapshot to volume (or a similar workflow) was required in order to read snapshot data.
+In other words, what used to take an instance is now accomplished with an API call.
+Across the security industry, some key security and forensics software has been released via versioned AMIs.
+When this occurs, a developer can intentionally, or more frequently, accidentally, insert hard-coded secrets files, like passwords or keys, into the release.
+When the version is released, that data is then exposed, resulting in a potential security incident, a compliance violation or a disruption to business-critical workflows.
+When in an efficient environment, these AMIs may not be built by a human at all (e.g., packer.io), to avoid having the code/configuration be automatically audited.
+EBS direct APIs now allow you to compare against the previous-version release for hard-coded keys, passwords, etc.
+This now gives developers and organizations additional certainty prior to the release of an update that there are no secrets or sensitive information hard coded within this version.
+With the ability to see incremental data, it becomes a gigabyte-scale (or less if you’re especially quiet on-disk) transaction, rather than a terabyte-scale transaction.
+In our own testing, Crypsis took a normal Ubuntu 20.04 LTS image and made a few modifications – deploying an AWS credentials file, moving them around on disk, creating a user and resetting a user password.
+It’s worth noting that, by design, a public image’s underlying snapshots don’t respond to the EBS direct APIs, so we worked off our own private base image.
+We then logged in, moved a hard-coded secrets file on disk and snapshotted it again.
+We compared the two snapshots and automatically found the hard-coded secrets within nine seconds.
+The entire scan, if it was on the last possible block, was 34MB.
+We were able to achieve a similar result with a snapshot that was two snapshots distant with a backdoor Linux user.
+The Linux password “shadow” entry we generated in the test environment was detected.
+Prior to this API release, Crypsis had investigated AWS compromises where the client was prepared enough to have a snapshot of a server both immediately before and after a compromise – a helpful situation for any forensic comparison, inside or outside of the cloud.
+These snapshots could produce a useful, differential result through a variety of software when converted to a volume.
+However, there were limitations:
+You had to have an EC2 instance.
+You needed to create volumes from the snapshots.
+You then got two bit-by-bit volumes of the “before-and-after” state, and could compare them at that point.
+Like most similar engagements, you had to actually have a solution to compare the two.
+Many DFIR options require time and resources, particularly when implemented at scale, and the four situations listed above are no exception.
+With the release of the EBS direct APIs, not only can you download the incremental bytes of the latest snapshot, but you can also list changed blocks with a single API call, possibly allowing investigators to immediately identify what bytes changed during the course of compromise.
+They simply have to belong to the same server or be similarly related to one another.
+Theoretically, it’s possible that an authorized researcher could take a forensic image directly off EBS direct APIs rather than restoring and mounting it, but (1) Crypsis is thus far unaware of a reliable way to identify “parents” of snapshots simply based off of the snapshot ID, and (2) the development effort would need to go into ensuring they’re stitched together properly on disk.
+Due to this, most companies would probably prefer to just pay for the EC2 imaging server as it stands today.
+As the EBS direct APIs allow for the block-by-block exploration of snapshots, customers should only assign these identity and access management (IAM) permissions to IAM users and roles which require them.
+For example, if an IAM user with the ebs:GetSnapshotBlock permission attached was compromised, an attacker could download snapshots directly to their local system.
+An attacker is not required to launch an instance in the targeted account to view the data.
+As described in the defensive section, the ability of the EBS direct APIs to scan incremental snapshots or otherwise compare snapshots could also make it easier for an attacker to identify any sensitive files added to snapshots between versions.
+Customers who make use of the EBS direct APIs, or any IAM permissions, should follow the principle of least privilege to limit the impact of compromised credentials.
+The EBS Direct API documentation provides examples of how customers can limit the access to snapshots made between a specific time, or only those with a specific tag.
+It’s worth noting that all usage of the EBS Direct APIs is logged in the customer’s CloudTrail records.
+AWS customers also have the option to put service control policies in place to prevent the usage of any API, even if admin credentials are compromised.
+It’s also possible to create an AWS Config rule to alert an organization’s security operations center on the use of any EBS Direct APIs.
+As research and development around EBS direct APIs is still emerging, a significant portion of the potential applications described in this blog do not have tooling to support them yet.
+In the spirit of innovation, we are excited to contribute to these new applications.
+We have collected what we have developed so far at this GitHub link.
+One of these tools was used on an incident response engagement with a customer to isolate an event log entry on disk during an attacker period that almost immediately led to an attacker’s IP address.
+Even if some early marketing of EBS direct APIs centered on disaster recovery, they can be useful for much more.
+There are many applications for this new technology, far beyond one industry.
+In this blog, we have shared the potential application in defensive and DFIR usage, security considerations and new tools to allow users to explore the potential of these APIs.
+With tooling still emerging, we’ve tried to anticipate or otherwise motivate a research trend around these APIs.
+As cloud technologies evolve, we have an obligation to consider how these APIs impact security.
+New – EBS direct APIs – Programmatic Access to EBS Snapshot Content
+Using EBS direct APIs to access the contents of an EBS snapshot
+Unit 42 Cloud Threat Report, 2H 2020

@@ -1,0 +1,84 @@
+When it comes to cyber security (managed services or otherwise), you’re ultimately reliant on analyst expertise to keep your environment safe.
+Products and intelligence are necessary pieces of the security puzzle to generate detection signal and whittle down the alert chaff, but in the end, an analyst’s trained eyes and investigative process are the deciding factors in effectively going from alerts to answers in your organization.
+This blog post highlights the events of a recent investigation by FireEye Managed Defense to showcase the investigative tooling and analysis process of our analysts.
+Recently, FireEye Managed Defense responded to a suspected China-nexus threat group campaign targeting the transportation, construction, and media sectors in Southeast Asia.
+FireEye’s investigative findings uncovered previously unseen malware, DUOBEAN, a backdoor that solicits additional modules from command-and-control (C2) infrastructure and injects them into process memory.
+Our initial lead for this activity originated from threat hunting in Managed Defense, which identified a ZIP archive containing a malicious LNK file with embedded PowerShell commands to download and inject a malicious payload into victim process memory.
+The attachment was blocked by a FireEye ETP appliance in Southeast Asia, but network indicators for the payload were extracted for monitoring suspicious infrastructure.
+When IP addresses are tasked for monitoring, our network sensors record traffic observed to the suspicious destination for further analysis by our Managed Defense team during threat hunting activities.
+When new leads from monitored traffic have been collected, our analysts use an internal tool, MDASH, as a dashboard for exploring suspicious network activity.
+With mountains of evidence available from endpoint telemetry and network traffic, it’s critical to interrogate artifacts with purposeful lines of questioning in order to respond to threat actor activity as effectively as possible without getting lost in the data.
+In this engagement, we have the initial lead for DUOBEAN activity being a tracked IP address that has generated a lead for hunting.
+Given this type of evidence, there’s a few questions we’re interested in answering before looking at the PCAP contents.
+The most important action an analyst can take when evaluating any indicator is understanding what it is trying to detect.
+For FireEye, the monitored network infrastructure is commented by the author to provide necessary context for analysts that review generated leads.
+In this case, our team identified that a recent sample of CHAINLNK from a blocked ETP attachment in Southeast Asia beaconed to infrastructure serving the same SSL certificate.
+Related infrastructure reusing SSL certificates were enumerated when a malicious domain was gathered from the payload and scoped using PassiveTotal to identify SSL certificates associated with the IP.
+Certificate SHA-1 was then searched against PassiveTotal results to identify an additional network asset serving the same certificate.
+This overlapping certificate use is illustrated in Figure 1.
+Figure 1: Suspicious infrastructure observed in hunting activity
+IP addresses can be some of the most volatile indicators in the world of security.
+The operational cost for an attacker to transition infrastructure is nominal, so the accuracy of the indicator will decrease as time marches on.
+In this instance, the IP address had only been monitored for seven (7) days which increased the credibility of the indicator given the relative freshness.
+Prevalence of traffic to an IP address gives us a baseline for normalcy.
+Large volumes of traffic from multiple varying hosts in multiple organizations changes our frame of reference to be less suspicious about the activity, while traffic from a few consistent internal hosts at one or few clients would be more consistent with targeted attacker activity.
+In this engagement, we observed six (6) hosts from one organization making consistent HTTPS requests (without response) to the infrastructure.
+This limited scope would be consistent with more suspicious activity.
+Frequency of traffic informs an analyst of whether the activity is programmatic or interactive.
+Identical activity at consistent intervals is not something humans can easily replicate.
+Although malware regularly uses variable lengths of time for beaconing, consistent outbound requests in cadence are telling us that some programmatic task is occurring to generate the activity, not a user session.
+In this engagement, we observed outbound traffic occurring from all six (6) hosts at 15 minute intervals which was indicative of programmatic activity initiating the requests.
+Strictly looking at netflow information, the byte size and directionality of the traffic will also inform your analysis on what you’re observing.
+Small consistently sized outbound packets tends to be more representative of beaconing traffic (legitimate or otherwise), while varied request/response sizes with frequency communication suggests interactivity.
+In this engagement, we observed only a few bytes of outbound traffic on each of the hosts, consistent with beaconing.
+Without looking at the packets, our line of questioning against the flow data already begins to characterize the content as highly suspicious.
+Looking at the network capture content (Figure 2), we observe that the outbound traffic gathered is strictly TLS Client Hello traffic to a free domain, which are commonly employed by attackers.
+Figure 2: TLS Client Hello from packet capture
+Given the findings from the hunting investigation, the Managed Defense team immediately informed the customer that further endpoint analysis was going to be performed on the six (6) host communicating with the suspicious infrastructure.
+At the time, the customer was not instrumented with FireEye Endpoint Security, so portable collections were captured for each of the hosts and securely uploaded to the Managed Defense team for analysis.
+Endpoint collections containing Windows file system metadata, Windows Registry, Windows Event Logs, web browser history, and a process listing with active network connections were gathered for Managed Defense analysts.
+Windows Event Logs by themselves can have hundreds of thousands if not millions of entries.
+As an analyst, it’s increasingly important to be specific in what questions you’re looking to answer during endpoint investigations.
+In this case, we have one leading question to begin our investigation: What application is regularly communicating with our suspicious infrastructure?
+Active network connections indicated that legitimate Windows binary, “msiexec.exe”, was responsible for the network connection to the suspicious infrastructure.
+This information was also included in detailed process tracking evidence (EID 4688) from Windows Event Logs listed in Figure 3.
+Figure 3: Windows Event Log detailing suspicious use of “msiexec.exe”
+The legitimate application “msiexec.exe”, is responsible for command-line installation and modification of Windows Installer applications (*.msi files), and rarely makes network connections.
+From an analyst’s perspective, the low occurrence of network activity in standard use from this binary elicits suspicions of process injection.
+The parent process in this instance is also in a minimally privileged %AppData%\Roaming directory commonly used for malware persistence.
+As an analyst, we’re confident at this point that malicious activity is occurring on the host.
+Our line of questioning now transitions from exploring the source of network traffic to discovering the scope of the compromise on the host.
+To triage, we will use the following line of questioning:
+For this question, we’re interested in understanding the attacker behavior on the victim computer, specifically the malware in this investigation.
+This includes functionality and persistence mechanisms used.
+With our initial lead being the potential staging directory of %AppData%\Roaming from the Windows Event Log listing, we’ll first look at any files created within a few minutes of “eeclnt.exe”.
+A Mandiant Redline listing of the files returned from filtering the directory is shown in Figure 4.
+Figure 4: Mandiant Redline file listing from potential staging directory, %Appdata%\Roaming
+Three (3) suspicious files in question are returned “eeclnt.exe”, “MSVCR110.dll”, and “MSVCR110.dat”.
+These files are uploaded to the FLARE team’s internal malware sandbox, Horizon, for further analysis.
+PE File information indicates that “eeclnt.exe” is a legitimate copy of the ESET Smart Security binary with a required import of “MSVCR110.dll”.
+“MSVCR110.dll” supplementary library required for applications developed with Microsoft Visual C++.
+In this case, “MSVCR110.dll” was replaced with a malicious loader DLL.
+When “eeclnt.exe” executes, it imports the malicious DLL “MSVCR110.dll”, which loads the backdoor contained in “MSVCR110.dat” into “msiexec.exe” process memory through process hollowing.
+This technique is called “sideloading” and is commonly used by attackers to evade detection by using legitimate executables to run malicious code.
+After initial triage from a Managed Defense analyst, the backdoor was passed along to our FLARE team to reverse engineer for additional identification of malware functionality and family identification.
+In this case, the backdoor was previously unseen so the Managed Defense analyst who identified the malware named it DUOBEAN.
+On Windows hosts, malware normally persists in one of three ways: Registry “Run” keys that run a specific application anytime a specific user (in some cases any user) authenticate into the workstation.
+Windows Services, long-standing background processes typically started at machine boot; and scheduled tasks that run an arbitrary command or binary at a designated interval.
+In this case, by filtering for the sideloaded binary, “eeclnt.exe”, we quickly identified a Windows Service, “Software Update”, created around the file creation timestamp that maintained persistence for the DUOBEAN backdoor.
+This can be one of the more challenging questions to answer in the investigative world.
+With limited data retention times and rolling log data, the initial vector is not always easily discerned.
+In this case, pivoting to look at browser history and file system modification around the time the DUOBEAN backdoor was created on the victim endpoint led us to our answers.
+Mandiant Redline output to detail the timeline of initial compromise is displayed in Figure 5.
+Figure 5: Mandiant Redline output containing the host initial compromise timeline
+The timeline of events shows that the user was phished from their personal Gmail, opening the password protected CHAINLNK attachment delivered from a OneDrive link embedded in the email.
+Malicious PowerShell commands observed from Windows Event Logs contained in Figure 6 following the activity indicate that CHAINLNK successfully executed and downloaded DUOBEAN.
+Figure 6: Malicious CHAINLNK PowerShell commands observed in Windows Event Logs
+No further activity was identified from this host based on the investigative evidence provided, and Managed Defense continued to scope the environment for additional indicators of compromise.
+This specific threat actor was detected early in the attack lifecycle which limited the impact of the threat actor and enabled Managed Defense to guide the victim organization through a quick remediation.
+The China-nexus threat actor activity detailed above expanded to multiple customers, and eventually escalated to a Managed Defense Community Protection Event (CPE).
+CPEs are rapidly progressing campaigns targeting multiple customers with substantial potential for business impact.
+Managed Defense customers are immediately notified of CPE activity, indicators are deployed to monitor customer products, and the Managed Defense Consulting team provides insight on how to mitigate risk.
+Regardless of the scale of your investigation, time is of the essence.
+Drowning under investigative data without a clear line of questioning buys attackers additional time to impose their agenda on your organization.
+Remember, products and intelligence are components of your security practice, but expertise is required in order to transform those inputs into an effective response.

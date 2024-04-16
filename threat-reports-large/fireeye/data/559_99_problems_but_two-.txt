@@ -1,0 +1,133 @@
+Two-factor authentication is a best practice for securing remote access, but it is also a Holy Grail for a motivated red team.
+Hiding under the guise of a legitimate user authenticated through multiple credentials is one of the best ways to remain undetected in an environment.
+Many companies regard their two-factor solutions as infallible and do not take precautions to protect against attackers’ attempts to bypass or backdoor them.
+The techniques covered in this blog range from simple to advanced methods of handling two-factor authentication from the perspective of a red team, and provide insight into potential visibility gaps for security teams to address.
+I’ll discuss techniques for bypassing two-factor authentication remotely without access to the internal environment, and how to gain access to a two-factor authenticated remote access device with information stolen from the internal environment.
+Compromising a remote access solution is a red team’s foremost goal because it offers easy access and a low risk of being caught.
+Red teams using legitimate remote access solutions can conduct their command, control, exploitation, and exfiltration activities under the guise of properly authenticated sessions.
+In addition, the red team’s system is not subject to the same security restrictions or controls as other corporate systems.
+This means that the team does not have to deal with antivirus, application whitelisting, and other intrusion detection software interfering with their activities.
+Two-factor authentication obviously raises the difficulty to compromise these remote access solutions, and challenges red teams to subvert the two-factor protections in place.
+In difficult situations like these, it’s best to adopt an Occam’s razor approach and use the most straightforward method to acquire the credentials we need: ask the victim to enter them for us.
+The perfect trap happens to be the simplest to set.
+In Figure 1, we have two different VPN login pages.
+One is a corporation’s legitimate site, the other is a fake operated by a crafty red team.
+Can you spot the difference?
+Figure 1: VPN authentication page comparison
+No?
+Neither can your users.
+Using tools such as the Social-Engineer Toolkit (SET), anyone can effectively replicate an external page by changing the HTML’s local resource locations (“/home/image/logo.png”) to external references (“mycompany.com/home/image/logo.png”).
+With a compelling phishing scenario, you can guide the victim to your visual clone VPN authentication page and get all the information you need to make your own connection: username, password, and even the token code!
+If the red team can move quickly enough, they can take credentials submitted to the fake VPN page and use them to authenticate to the actual VPN.
+As shown in Figure 2, this can be accomplished by redirecting the login submission to a PHP script that will write the username, password and other metadata (IP address, HTTP User-Agent, time of submission) to a log file that the red team can monitor and wait for a user to provide their two-factor credentials.
+Figure 2: Credential theft PHP POST script
+Once the red team authenticates to the VPN, they can attempt to escalate privileges and access sensitive data before the security team can detect and respond to the phish.
+Internal network reconnaissance through scanning, identifying applications and systems that the victim user can access, and even LLMNR/NBT-NS spoofing offer potential avenues to turn a VPN session into full compromise of the environment.
+The Mandiant Red Team leverages SpiderLabs’ Responder as our LLMNR/NBT-NS spoofing tool of choice.
+Responder is a powerful Python utility that sends fake responses to LLMNR/NBT-NS requests to fool systems and services into providing password hashes and, in some cases, plaintext credentials.
+Running Responder on a VPN subnet for even a few minutes (as exemplified in Figure 3) can provide numerous domain accounts and password hashes.
+Common passwords and passwords with low complexity requirements can have their hashes cracked in seconds, giving the red team the plaintext credentials they need to continue their lateral movement and privilege escalation.
+Figure 3: Responder example
+Ensure that your VPN solution enforces a single authenticated session per user.
+There is limited justification for allowing multiple, concurrent sessions (with different source IP addresses) for a single user account.
+Conduct regular auditing of VPN authentication logs to identify anomalous login activity, such as flagging login events originating from TOR exit nodes.
+When responding to phishing incidents, take the potential loss of credentials seriously.
+If there is reason to suspect credentials were lost, make sure to reset all affected credentials and review access logs for evidence of malicious activity.
+VPN login pages are valuable targets because their image evokes a sense of familiarity and security with the users.
+If you authenticate to the VPN every day using a web page such as the one shown in Figure 1, odds are that you’re not inspecting your traffic or the website code to verify your credentials are going where you think they are.
+The scary truth is that real-world attackers have already started capitalizing on this implicit trust and have been discovered leveraging JavaScript-based credential harvesters on corporate VPN login pages.
+Let’s discuss how this attack works.
+First, the red team exploits a vulnerability to write code to the authentication page (or a page that gets loaded by the authentication page), such as the vulnerability discussed in CVE-2014-3393.
+The red team then adds code to the authentication page to execute malicious JavaScript from a system they control and waits for unsuspecting users to load the page and authenticate.
+An example of such code is shown in Figure 4.
+Figure 4: Malicious code snippet
+The victim user does not notice anything different.
+This tiny bit of code loads file “stealcreds.js” from “https://www.evil.com” and executes its code into your legitimate user’s web session (i.e.
+the JavaScript code runs in the context of the user’s browser).
+By using an external resource, we minimize code introduction on the front page and allow ourselves the ability to dynamically update our payload each time a user’s browser requests the resource.
+Figure 5 shows a snippet of code we use to compromise user credentials.
+Figure 5: Code snippet for stealing VPN creds
+Using an internal frame insertion and a POST-back setup to “https://www.evil.com/pwnd.php”, the red team rigs the normal VPN login page to POST user credentials every time they are entered in a session where the “stealcreds.js” resource is loaded.
+By attacking the VPN solution itself, the red team can disguise themselves as legitimate users remotely connecting to the environment through the authorized remote access solution.
+Monitor access to your two-factor solutions and conduct regular examinations of any code served to users to ensure that no tampering has occurred.
+Two ways to accomplish this are to use a file integrity monitoring solution to monitor files served by networking devices and by conducting periodic scans or assessments of public infrastructure to identify changes.
+Another popular VPN configuration is a “host check” process as a requirement to connect to the corporate VPN.
+Typically, this process verifies the host’s domain and some basic configuration stats, such as whether or not antivirus signatures have been updated.
+Some companies view this “host check” process as a pseudo-second factor (hence the 1.5 factor title).
+The unfortunate issue with host inspections is that they rely on the host being trustworthy.\
+We performed a red team assessment on a client that used a VPN device that required only a single-factor password authentication in addition to the “host check” process.
+Every piece of information examined by the “host check” process was provided in a web request and minimally obfuscated with Base64 encoding – fair game to anyone using a proxy.
+An example of the kind of data expected, complete with registry paths checked and the “correct answers,” is shown in Figure 6.
+Figure 6: "host checker” policy from VPN authentication server
+Not only does the “host check” process rely on trustworthy answers from potentially untrustworthy sources, it even provides what it’s inspecting within the request!
+At a minimum, a red team can attempt to modify the features examined during the check.
+Even worse, the response to the “host check” was a simple POST containing whether each inspected element was “correct” or not – another easy target for red teams using web proxies such as Fiddler or Burp.
+We used a combination of Fiddler and Python to modify POST requests to generate a valid policy inspection report and fool the “host check” into approving us, as shown in Figure 7.
+Figure 7: Python-generated policy report
+Another common form of 1.5-factor authentication is leveraging usernames and passwords in combination with a computer certificate.
+Some companies choose to authenticate both the user and their device before allowing remote access.
+While this is a good approach, requiring single-factor credential authentication in combination with a locally installed certificate is not.
+It is trivial for an attacker to gain access to an end user system, export the locally installed computer certificate, and install the certificate on their own virtual system.
+Do not use single factor or 1.5-factor authentication for any remote access.
+Only strong multi-factor authentication (something you know, something physical you have, or something you are) should be implemented.
+If you want to leverage computer certificate in conjunction with credential-based authentication, make sure you use multi-factor credential-based authentication in conjunction with a client-side certificate.
+Digital tokens often require a synchronization code that is unique to each user’s token in order to function properly.
+The synchronization code and algorithm is what ensures the token that is displayed to the user matches the token the authentication server expects.
+Many companies use a simple IT-friendly process of sending users a notice via email when their request for VPN access is approved.
+These emails often contain the “seed” key and instructions for installation.
+Unfortunately for the security team, users often read this email and forget to delete it, leaving the literal keys in the users inbox, ripe for an attacker to steal.
+One of the steps in the Mandiant Red Team methodology is to search email inboxes (including.PST and .OST files on disk), for these types of sensitive and useful files.
+In most cases, we use a simple PowerShell script to search the user’s mailbox and related files for evidence of RSA soft-token .sdtid files.
+The .sdtid file is essentially a password-protected certificate of authenticity you can use to set up a digital (“soft”) token on your local host.
+With the combination of both the .sdtid file and password (often located in the same email sent by your IT Help Desk, stored in a local text file, or stored in a local password manager), the red team can replicate a user’s soft-token and use a simple keylogger to identify the user’s PIN.
+After that, the red team gains two-factor authenticated access to the network at any time, day or night, masquerading as a legitimate user.
+Innocuous things such as a soft certificate in an email can help an attacker gain access to a company.
+“Soft” tokens are often easier targets for compromise than physical devices, so keep that in mind when you decide what and how you are securing with two-factor.
+Train your users to securely delete sensitive information once they’re done with it.
+Train your IT staff to not include passwords in the same emails as the .sdtid file or not to include the .sdtid in an email.
+For instance, require your users to authenticate to a website to download the .sdtid file.
+“Password vault” is a phrase that will inspire groans from even the most hardened red team veterans.
+A properly configured password vault is a powerful tool to restrict and monitor the usage of credentials in an environment.
+It reduces exposure of passwords to traditional tools such as Mimikatz and Windows Credentials Editor (WCE).
+After all, dumping passwords becomes a tired game when all administrative credentials change every time they are checked in and out of the vault.
+Add a multi-factor-enabled RADIUS authentication server with physical tokens in front of that password vault and you’ve created a real challenge for a red team.
+In order for a red team to get a temporarily valid password, they now need to reproduce a user password, PIN and physical token code – all at once!
+Even with local access via a backdoor and a keylogger, the red team likely still won’t be able to enter that token code in time before the RADIUS server shuts down access because the token has already been used.
+However, rather than give up at bypassing the highest level of password security that can be realistically implemented, a red team can return to the fundamental rule of security: your security chain is only as strong as its weakest link, and that weakest link is almost always the people involved in the processes.
+This is where we start to explore the unsecured Windows file share.
+Unsecured Windows file shares have served our Red Team well over the years.
+We almost always get at least some of the data necessary for privilege escalation and sensitive data theft by combing through unsecured file shares.
+Unfortunately for security teams, Windows makes it incredibly easy to share files and folders in a domain and for a user or red team to discover those shares and scrape through them for valuable information.
+PowerView’s “Invoke-ShareFinder” PowerShell script is a great utility that offers a fair amount of scalability in the hunt for shares of interest.
+This tool can help you discover valuable information, including interesting shares such as one we recently found named “Security”.
+As expected, this share was readable to any user with valid domain credentials.
+In some cases, you may find yourself looking at a document such as the one shown in Figure 8.
+Figure 8: Sample Excel spreadsheet
+Passwords discovered in these types of documents give red team’s direct access to the authentication server, which means they can control how the authentication process works.
+With the password to the account used to administer the two-factor authentication solution, the red team can grant themselves – at least temporarily – access to any existing account’s password vault.
+As the next section shows, with this level of access comes new techniques to further entrench the red team’s control of critical infrastructure in an environment to maintain access and evade detection.
+Restrict users’ abilities to create arbitrary open Windows shares by restricting local administrator permissions.
+There is almost no reason for real information to be stored in a location where it is accessible to “Everyone” (i.e.
+any domain user).
+Use Active Directory Groups to your advantage to define tight access controls where sensitive information may be.
+Consider implementing a Data Loss Prevention (DLP) solution that maintains encryption of sensitive files and audits their access and modification.
+You can even take the “Invoke-ShareFinder” script and do a quick self-assessment in a day or two - keep an eye out for shares on web servers or corporate data shares.
+Many two-factor authentication products offer what are called “Emergency Access” codes, an authentication mechanism designed to allow VPN access after a user has lost their token and remote access is critical.
+An example screenshot depicting emergency access token code management is shown in Figure 9.
+Figure 9: Emergency token code access management screenshot
+As the screenshot above shows, the system offers a fixed “second factor” of authentication – perfect for the red team that wants stealthy remote access to the environment.
+These emergency access codes are particularly dangerous because they can be configured with no expiration date, allowing for a quiet return into the environment at a later date.
+A word of caution for eager red teams: while creating your own profile/token using this access is tempting, there is typically more alerting and auditing around the creation of profiles than the modification of existing profiles.
+As every vendor solution is different, we’ll leave it as an exercise to the reader to determine the proper method of implementing “Emergency Access” in their target environment.
+Keep in mind that if you’re using an existing user’s account, emergency access may not always be enough – the PIN is required in addition to the emergency access code.
+Fortunately, most vendors offer the option to quickly clear the PIN and set a new one, as depicted in Figure 10.
+Figure 10: PIN management screenshot
+Implement regular two-factor application auditing.
+Log the user that logs in, the date of the login, where the login originated, and the changes that were made, especially if the changes involved the creation of new user profiles.
+Enforce policies that disallow emergency token access except in the direst of needs, and even then only allow this access for a short period.
+We highly recommend you perform a quick audit of all your two-factor authenticated accounts right now – you might be surprised what you find.
+There are many attack paths and vectors that veteran red teams can use to bypass “secure” security controls.
+At Mandiant, our Red Team takes advantage of our front line intelligence, as well as the latest tools, tactics, and procedures we see our adversaries leverage in their own breaches.
+Unfortunately, many companies place too much trust in security solutions such as two-factor authentication without taking the necessary steps to secure the underlying technologies.
+This oversight could allow attackers and red teams alike to subvert two-factor authentication implementations even when they’re implemented properly.
+Special thanks to Andrew Burkhardt, Evan Peña, and Justin Prosco for their help with the content of this blog.

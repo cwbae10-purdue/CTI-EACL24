@@ -1,0 +1,87 @@
+The story regarding Meltdown and Spectre continues to unfold as vendors (Microsoft and Intel) continue to issue patches for their products.
+The first patch from Microsoft was stable, but the microcode updates from Intel had issues that led to higher-than-expected reboot rates and so Microsoft decided to issue a second patch roll and back the first patch.
+Furthermore, the first patch for the x86 platform (32 bit) did not include much-needed protection even though this platform is still popular.
+It wasn’t until Intel fully fixed the microcode updates that Microsoft was finally able release the 3rd update.
+Given the number of CPU models affected (speculative execution has been a feature since Pentium Pro), Intel has had to be careful with the fix and perform thorough testing, which has also impacted the release of Microsoft’s patches.
+In a previous blog post, the FortiGuard Labs team analyzed the implementation of Spectre and detailed the technical implementation of Kernel Virtual Address Shadow (KVAS), which is a key feature used to block the Meltdown attack.
+The fact that it took Microsoft two months to release their patch piqued our interest, so we decided to perform a deep dive analysis of the new patch (particularly the patch for x86) and share the results in this blog post.
+Primer on Spectre and Meltdown
+Before digging deeper into the details, it’s worthwhile to recall the overall context.
+The following table summarizes the Spectre and Meltdown attacks and the corresponding mitigations:
+As can be seen in figure 1, due to the sophisticated nature of the Spectre attacks, we need interplay between software and hardware (in other words, extra support at hardware level e.g.
+microcode updates) in order for a patch to be effective.
+Which is why Microsoft leverages its March patches to also push microcode updates.
+Before diving into the details, the audience is assumed to have possessed a strong knowledge of low level system concepts and mechanisms, such as interrupt handling, virtual memory, MSR, kernel-mode vs user-mode, paging, segmentation, and so on.
+For details of those concepts and mechanisms, the IA-32 Architectures Software Developer's Manuals are the authoritative resources.
+To save space and time, this blog post intentionally omits those details.
+The Patches from 30,000 Feet
+This section highlights the key findings of our analysis of this patch.
+Here are the key details of the NT Kernel itself:
+Windows 7 x86: 6.1.7601.24059
+Size: 4,025,536 bytes
+Sha256: 633415154D4297E2D9BE4295DA3ED9CB5CBDDCC1E4EF0B948AC0811FFAD20296
+Our research methodology is the same as in our previous analysis, so we are not going to repeat it here.
+Readers are welcome to check out our previous research.
+We will only summarize our key findings here:
+As Table 1 shows, the patch from March mainly includes components related to KVAS and protection for Spectre variant 2, so it is naturally smaller.
+Kernel Virtual Address Shadow
+This is the key feature used to counter the Meltdown attack.
+Since the cost of mounting a Meltdown attack is low, yet the impact of a successful attack is high, it is good to see that the x86 platform finally got blessed with this feature.
+After analyzing the patch, we are delighted to find that the overall design stays the same.
+Readers can check out our detailed technical analysis of this design in this previous blog post.
+In this blog post we will only detail interesting changes.
+The first of these we noticed is the setting up of the system call handlers themselves.
+But first a quick primer about the mechanism to perform system calls on the x86 platform.
+When the SYSENTER instructions are executed (vs SYSCALL in x64), the code execution is switched to a kernel-mode routine whose address is pointed to by a Model Specific Register (MSR).
+Recall that MSRs are special registers that must be accessed through rdmsr and wrmsr CPU instructions using indices.
+But the x86 platform is different from the x64 platform, so the indices are different.
+Here are the indices:
+· 174h is the CS Register.
+· 175h is the ESP Register.
+· 176h is the EIP Register.
+In essence, SYSENTER will jump to CS:EIP and change the ESP register, which ends up in KiFastCallEntry (or KiFastCallEntryShadow if KiKvaShadow is TRUE, as shown in Figure 2)
+Similarly, interrupt service routines (ISRs) also have shadow versions:
+Now let’s take a look at the system call handlers:
+In a 64-bit platform the OS can use the SWAPGS instruction to cleanly restore the GS register.
+But SWAPGS is only valid in 64-bit mode, so for an x86 OS segment the registers of the kernel are fixed: 30h for FS, 0 for GS, and 23h for the rest (DS, ES).
+A flag (FS: 400Ch) is checked, and if swapping is needed then the base of the Page Directory (corresponding to the kernel address space) will be moved into CR3.
+At this point the kernel stack is finally accessible and everything works normally.
+FS: 4000h Page Directory
+FS: 4004h Kernel Stack
+FS: 4010h Previous DS
+FS: 4014h Previous ES
+FS: 4018h Previous FS
+Figure 5: Key Parameters in FS Segment
+Both versions of the system call handlers end up calling KiFastCallEntryCommon, which in turn routes system calls as usual using KeServiceDescriptorTable (SSDT for short) or KeServiceDescriptorTableShadow (which contains routine addresses in win32k.sys).
+Similar to the x64 platform, when the kernel exits through SYSEXIT, the memory of the kernel is secured before returning to the user mode:
+The same goes for Interrupt Service Routines (ISRs):
+Indirect Branch Restricted Speculation (IBRS)
+This is a countermeasure for variant 2 of the Spectre attack.
+There are two protections in this patch, layered on top of each other, and they happen before jumping to the real handlers of the system call ad interrupt.
+The first is a new feature introduced just to counter speculation on indirect branching.
+It is invoked by writing to MSR IA32_SPEC_CTRL (MSR 0x48).
+According to the official explanation from Intel, this MSR controls indirect branch predictions.
+Quote: “When this MSR is written with IBPB=1 it ensures that earlier code's behavior doesn't control later indirect branch predictions.” And further, “the x86 IBRS feature requires corresponding microcode support.”
+But that’s not all there is to it.
+An astute reader will probably realize that the code looks weird.
+The pattern looks like this: there is a call to a target (call loc_1400B1201) that in turn adds back to the stack (add rsp, 8).
+This process seems pretty much useless, and serves like a NOP instruction.
+The author did a manual calculation and found that this sequence is repeated 32 times in total.
+Furthermore, the jump direction is backward to the code block just above, which is very curious:
+Our intuition tells us that this has to do with speculative execution.
+Interestingly, the last instruction of this sequence is lfence:
+This made us very curious, so we started digging around.
+Low and behold, lfence is the instruction that contains the magic.
+Here is a quote from the Spectre paper: ”After reviewing an initial draft of this paper, Intel engineers indicated that the definition of lfence will be revised to specify that it blocks speculative execution.” No wonder that the patch needs microcode updates.
+The 32-bit patch also follows the same pattern, and hence enjoys the same benefits:
+Conclusion
+Attacking and defending is a constant arms race between the attackers and the defenders.
+Even the AMD platform is faced with novel attacks.
+On the defensive side, however, nothing is perfect, and sometimes the cure is worse than the disease.
+But there is a glimmer of hope as Intel vows to minimize the attack surface with new protections baked in silicon.
+For more information on the Spectre and Meltdown attacks, and how to ensure your Fortinet products are properly protected, read our recent PSIRT notice.
+Customers are also protected by IPS signature CPU.Speculative.Execution.Timing.Information.Disclosure.
+As usual, FortiGuard Labs will keep monitoring the threat landscape and keep everybody updated and protected.
+-= FortiGuard Lion Team =-
+Check out our latest Quarterly Threat Landscape Report for more details about recent threats.
+Sign up for our weekly FortiGuard intel briefs or for our FortiGuard Threat Intelligence Service.

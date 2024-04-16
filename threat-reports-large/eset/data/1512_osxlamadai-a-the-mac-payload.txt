@@ -1,0 +1,55 @@
+Earlier this month, researchers from AlienVault and Intego reported a new malware attack targeting Tibetan NGOs (Non-Governmental Organizations).
+The attack consisted of luring the victim into visiting a malicious website, which then would drop a malicious payload on the target’s computer using Java vulnerability CVE-2011-3544 and execute it.
+The webserver would serve a platform-specific JAR
+Earlier this month, researchers from AlienVault and Intego reported a new malware attack targeting Tibetan NGOs (Non-Governmental Organizations).
+The attack consisted of luring the victim into visiting a malicious website, which then would drop a malicious payload on the target’s computer using Java vulnerability CVE-2011-3544 and execute it.
+The webserver would serve a platform-specific JAR (Java Archive) dropper based on the browser’s UserAgent String to infect the user’s Windows or OS X system.
+The OS X-specific dropper is also served to Linux clients.
+Since the dropped payload is designed for OS X only, Linux clients will not be infected.
+This analysis is focused on the OS X payload and the network protocol it used to communicate with its Command and Control (C&C) server.
+OS X uses the Mach-O file format for its executable files.
+For OSX/Lamadai.A, the Mach-O executable was compiled for 64-bit only, which is unusual since Mach-O binaries normally contain both the 32-bit and 64-bit versions of the executable.
+Upon execution, the threat copies itself to /Library/Audio/Plug-Ins/AudioServer and adds a launcher script named ~/Library/LaunchAgents /com.apple.DockActions.plist pointing to the copied file to ensure it is executed whenever the current user logs in.
+Note that by default, on OS X 10.7.2, regular users do not have write permissions to /Library/Audio/Plug-Ins/AudioServer, meaning this threat is not persistent (i.e.
+it won’t survive a reboot).
+We are unsure if older versions of OS X have different filesystem permissions.
+Nonetheless, using another location under the user’s home directory would have worked better for the attacker.
+Afterwards, the threat will try to contact its C&C server by resolving dns.assyra.com (100.42.217.73 at the time of analysis, the domain now points to 127.0.0.1) and establishing a TCP connection to port 8008.
+The server will respond with a TCP RST unless it has some instructions to communicate.
+The infected system then falls into a busy wait loop, trying to reconnect at random intervals ranging from 0 to 10 seconds.
+The server may issue one of the three following instructions to the infected system:
+Upload a file: the C&C sends the path to upload, the client responds with the file content;
+Upload a file: the C&C sends the path to upload, the client responds with the file content;
+Download a file: the C&C sends the file path and content, the client creates the file with permissions set to 777 (-rwxrwxrwx);
+Download a file: the C&C sends the file path and content, the client creates the file with permissions set to 777 (-rwxrwxrwx);
+Start a remote shell: the C&C sends an arbitrary shell command, the client responds with the output.
+Start a remote shell: the C&C sends an arbitrary shell command, the client responds with the output.
+All communications between the client and the C&C are encrypted with AES and XOR.
+The crypto seems to be performed with a slightly modified implementation of AES and SHA1 from the PolarSSL library.
+The AES keys are generated from the first forty (40) bytes coming from the C&C.
+While the keys are constant during the entire communication, two different hardcoded XOR keys are used, one for incoming traffic and one for outgoing traffic.
+Furthermore, the malware will not act upon any instruction unless the first packet received from the C&C matches a hardcoded key 16 bytes long, as seen in the picture below.
+The client will also add that key to the first response it will send to the C&C.
+Key used to authenticate with the C&C;
+Key used to authenticate with the C&C;
+Finally, a custom SHA1-based hash is appended to every information packet going to and from the C&C for authentication and integrity checking purposes:
+hash = SHA1(key1 + sha1(key2 + encrypted_packet_content + packet_number)) where key1 and key2 are two 64-byte strings derived from the first XOR key
+During our investigation, we observed a live dialog between the C&C and our test machine.
+The timing and nature of the instructions received from the C&C lead us to believe that they were being manually typed by a human.
+Here are a few interesting pieces:
+Finding the path to the cookies directory
+Finding the path to the cookies directory
+Finding the path to a Keychains directory
+Finding the path to a Keychains directory
+Where is that Downloads directory again?
+Where is that Downloads directory again?
+After some filesystem browsing, the C&C issued two File Upload instructions targeting one Keychain file and the Safari’s cookies store.
+The purpose here clearly is information stealing.
+A lot of effort has been put into the network protocol, which is quite involved.
+The operators seemed to have a real interest in hiding the raw communication from a network dump so as to make reverse engineering more difficult.
+However, the use of symmetric cryptography makes it so that it is totally possible to reproduce the encryption and decryption routines and analyze the communication on-the-fly.
+This attack is another reminder to stay current with OS patches as Apple patched this vulnerability in Java for Mac OS X 10.7 Update 1 and Java for Mac OS X 10.6 Update in November 2011.
+ESET security software (including ESET Cybersecurity for Mac) since signature update 7001 detects this threat as OSX/Lamadai.A.
+Some AV vendors flagged the file as OSX/Olyx, a previous Mac malware.
+We did not find any relation between the two threats, the network protocol and obfuscation techniques being different.
+MD5 of the files analyzed: 39084b60790ca3fdebe1cd93a4764819 file-mac.tmp (OSX payload)

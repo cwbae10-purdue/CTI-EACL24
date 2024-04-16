@@ -1,0 +1,36 @@
+McAfee Labs has seen a huge increase in Locky ransomware in recent months (discussed in an earlier blog).
+Locky is aggressively distributed via a JavaScript-based downloader sent as an attachment in spam emails.
+Since its first variant Locky has taken advantage of compromised domains to download its malicious executable.
+Recently it has downloaded a malicious dynamic link library (DLL).
+By tracking these campaigns, we have noticed that Locky’s authors use a seed parameter (“323” in this variant) from its JavaScript downloader to execute the malicious DLL.
+At first, the file looks like highly obfuscated JavaScript and is tough to understand.
+The script (hash: E833713599E6014DFD808DA08BD8A452) looks like this:
+We tried to deobfuscate by modifying the original script a bit.
+After the deobfuscation, we finally obtained more visible code.
+For easier understanding we have arranged a major part of the script in this sequence:
+In the first four lines of the script we can see the URLs of four compromised websites, from which the script tries to download the payload.
+The script will try the next URL if the previous download fails.
+If successful, it downloads the encoded payload, which at first looks like a junk file (hash: 5C5D55C1AEB06CA131EEF5BC19C3C1CD):
+The decoded routine from the JavaScript decodes the junk file, resulting in a packed DLL.
+The characteristics of the decoded packed DLL:
+The packed DLL has an export function “_WinMainExp@16.”
+While unpacking the DLL we came across following technique for obscuring virtual machines.
+In this technique the malware author checks the time difference between two API calls, GetProcessHeap () and CloseHandle ().
+At runtime it takes the address of CloseHandle () API by using LoadLibrary () and GetProcAddress (), as shown below:
+In general, on a real system, CloseHandle () should be faster to execute than GetProcessHeap ().
+The author checks the time difference between these two APIs for validating the virtualization.
+The following code snippet explains:
+We unpacked the malicious DLL, which shows the export function “qwerty.”
+In line number 6 the ExpandEnvironmentStrings () method gets the %TEMP% location to store the downloaded DLL with a random name.
+The script also verifies the architecture of the machine from lines 11 to 18 by using an if-else statement:
+According to the architecture of the machine, the script will run the DLL using Rundll32.exe.
+In line 22 we can see the process to run the DLL:
+The malware author uses the seed parameter to bypass execution in a sandbox.
+If the DLL is executed with the proper export function name (“qwerty” for this variant) and the required parameter (hardcoded “323” for this variant), only then will the DLL behave maliciously.
+Thus the author is verifying the DLL is executed by the malicious parent JavaScript file.
+If parameters other than those expected are passed, then the DLL will do nothing malicious and traditional sandboxes will fail to execute the DLL.
+We can see the hardcoded parameter “323” in the following snippet:
+McAfee advises users to keep their antimalware signatures up to date at all times.
+McAfee products detect this malicious JavaScript, encoded payload, and packed DLL as JS/Nemucod, Ransomware-Locky.d!enc, and Ransomware-FRO!
+[Partial Hash], respectively, with DAT Versions 8270 and later.
+This post was prepared with the invaluable assistance of Girish Kulkarni and G N Sivagnanam.

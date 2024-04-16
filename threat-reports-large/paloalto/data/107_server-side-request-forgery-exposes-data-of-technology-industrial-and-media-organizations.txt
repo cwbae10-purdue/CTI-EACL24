@@ -1,0 +1,135 @@
+Server-Side Request Forgery (SSRF) is a web application vulnerability that redirects the attacker’s requests to the internal network or localhost behind the firewall.
+SSRF poses a particular threat to cloud services due to the use of the metadata API that allows applications to access the underlying cloud infrastructure’s information such as configurations, logs, and credentials.
+Although the metadata API can only be accessed locally, the SSRF vulnerability makes it accessible from the internet.
+This type of vulnerability also bypasses the container sandbox protection.
+SSRF opens the door for internal network reconnaissance, lateral movement, and even remote code execution.
+An application in a container, by default, can directly access the metadata API on its host, enabling a special way of container escape.
+To understand the severity of the problem, Unit 42 researchers took a closer look at the Jira SSRF vulnerability (CVE-2019-8451) and studied its impact on six public cloud service providers (CSPs).
+This is the same type of vulnerability that led to the Capital One data breach in July 2019.
+Our vulnerability scanner found:
+More than 7,000 Jira instances exposed to the internet in public clouds
+45% of the 7,000+ Jira instances (3,152) are vulnerable to this CVE (not patched or updated)
+56% of the 3,152 vulnerable hosts (1,779) leak cloud infrastructure metadata
+NVD shows that this CVE was first introduced in v7.6, but we discovered that this CVE actually affects versions back to v4.3 (March 2011) as opposed to v7.6 (Nov. 2017).
+The leaked metadata ranges from internal network configuration to source code and credentials.
+Impacted organizations include, but are not limited to, technology, industrial, and media companies.
+Server-Side Request Forgery (SSRF) is a web application vulnerability that redirects malicious requests to resources that are restricted to the server.
+Attackers circumvent the firewall by tricking the vulnerable application to forward the malicious request to arbitrary domains, including the internal network and localhost.
+The most common type of SSRF request is HTTP(s), but other valid uniform resource identifier (URI) schemes such as host file system (file:////), dictionary service (dict://), and redis service (redis://) are all possible.
+Attackers can access any target that has a trust relationship with the vulnerable server as long as the application supports the URI scheme.
+They can reach the target and it does not require additional authentication.
+The root cause of SSRF is that a web application needs to retrieve resources from another domain to fulfill the request, but the input URL is not properly sanitized and allows attackers to manipulate the destination.
+In CVE-2019-8451, the vulnerable API /plugins/servlet/gadgets/make request?url=endpoint fetches data from the service provider endpoint to populate the gadget.
+The server does validate the query string and only the allowlisted endpoints are permitted.
+However, due to a logical error in the JiraWhiteList class, an at (@) symbol in the parameter string can bypass the allowlist validation.
+A request sent to http://vulnerablehost.com/plugins/servlet/gadgets/makeRequest?url=http://vulnerablehost.com@http://targethost.com will be redirected to targethost.com.
+This logical error thus allows attackers to send http requests to any target that is reachable from the vulnerable server.
+Almost all CSPs offer a metadata API that allows processes in a VM instance to learn the information specific to that VM.
+Metadata service gives applications an easy way to know the environments they are running in and adjust the configurations accordingly.
+The metadata API provides information such as instance ID, image ID, private/public IP, and network configuration.
+VM startup and shutdown scripts sometimes are also placed in the metadata service so that multiple VM instances based on the same image can be created with different settings.
+Some CSPs also allow applications to write dynamic data to the metadata API and use it as temporary data storage.
+The metadata API can only be accessed from within the VM instance and is never exposed outside the host.
+While any private IP may be assigned to this API, most CSPs use the non-routable (Link-Local) IP address 169.254.169.254.
+For example, a process can issue a curl command inside an AWS EC2 instance to retrieve the security credential associated with the role, shown in Figure 1: curl http://169.254.169.254/latest/meta-data/iam/security-credentia ls/role-name
+Any user or process, by default, has full access to the metadata API.
+One interesting observation is that even applications in containers (e.g., Docker, Kubernetes, ECS, EKS) can access the host metadata API.
+This ease of accessing host metadata from a container is both convenient and dangerous.
+On the one hand, an application in a container can query the host metadata API and use the attached credentials to access other cloud services such as S3 and RDS.
+On the other hand, the host metadata API creates a container “escape path” that allows containerized applications to directly access the sensitive host metadata.
+If a container is compromised, attackers can exploit this path to compromise the host or other services in the cloud.
+The potential risk is higher than the benefit as there are other ways that a host can share data with containers without exposing the metadata.
+Figure 1.
+Retrieving credentials from metadata API
+Although the metadata service is never exposed to the internet, it may be indirectly exposed by a vulnerable internet-facing application.
+An SSRF vulnerability essentially exposes the metadata service to the entire internet.
+Attackers may use the leaked metadata to further compromise other hosts in the VPC or even take over the whole cloud infrastructure.
+Some of the sensitive metadata and their impacts are:
+IAM credential: It can be used to access other cloud services such as the S3 bucket or container registry.
+If an admin identity is attached to the instance or the identity is provisioned with excessive privileges, attackers can compromise the entire cloud infrastructure.
+User Data: User-specified data can be stored in metadata.
+VM startup and shutdown scripts are also usually placed in user data.
+It can reveal the application configurations, VM configuration, and other cloud resources that the VM may access.
+It is also common to find credentials hard-coded in the script.
+VM image ID: If the image is public, malicious actors can examine the VM and design a penetration strategy.
+Network configuration: It can reveal network information such as VM’s private/public IP, MAC, local hostname, subnet, and VPC.
+To prevent metadata API from being misused, some CSPs require special headers in the metadata Http requests.
+For example, Azure VM checks for “Metadata: True” header and Google Compute Engine checks for “Metadata-Flavor: Google” header.
+An Http request without the required header will be rejected.
+The header enforcement effectively stops SSRF from accessing the metadata API because attackers can not control the headers in the redirected requests.
+Table 1 compares the metadata APIs of the six CSPs we studied.
+Table 1.
+Metadata API service from different CSPs.
+*GCP started enforcing header requirement in metadata API V1.
+To understand the real impact of SSRF on public cloud, we need to find an application that has known SSRF vulnerability and is widely deployed in public cloud.
+Jira caught our attention because it has an SSRF vulnerability CVE-2019-8451 discovered in August 2019 and the vulnerability can be exploited without authentication.
+Although the patch was immediately released, software like Jira that ties closely to business operations rarely gets updated immediately.
+System administrators would rather delay the patch than interrupt the business operation.
+A Shodan search shows that around 25,000 Jira instances are currently exposed to the internet.
+We then selected six CSPs that have the highest number of Jira deployment to conduct our research.
+The goal of the research is to identify the number of Jira instances vulnerable to CVE-2019-8451 in public cloud, the exploitability of these Jira instances, and the number of hosts that leak metadata.
+We found 7,002 Jira instances in the six public CSPs.
+Figure 2 shows the distribution of the Jira version.
+Figure 2.
+The Jira versions exposed in public cloud
+Considering that the CVE-2019-8451 was first patched in v8.4, 80% of the Jira instances in Figure 2 have versions below v8.4 and they may all be vulnerable if not patched.
+Our scanned result shows that, of the 7,002 Jira instances, 3,152 (45%) instances have not been patched and confirmed to be vulnerable.
+Figure 3 shows the top 10 Jira versions that have not been patched.
+Within the 3,152 vulnerable Jira instances, 1,779 (56%) of them leak host metadata.
+Table 2 summarizes the statistics across all CSPs.
+DigitalOcean customers have the highest rate (93%) of metadata leak, followed by Google Cloud customers (80%), Alibaba customers (71%), AWS customers (68%), and Hetzner customers (21%).
+The only CSP that has zero metadata leak is Microsoft Azure because its strict header requirement in metadata API effectively blocks all SSRF requests.
+Although GCP also enforces header requirements in the latest metadata API (v1), attackers can still access most of the metadata using the legacy APIs if the legacy API endpoints (v0.1 and v1beta1) are not explicitly disabled.
+Figure 3.
+The top 10 Jira versions vulnerable to CVE-2019-8451
+Table 2.
+Number of vulnerable hosts and metadata leak in public cloud
+One unexpected finding from Figure 3 is that 2 of the top 10 versions, v7.3.6 and v6.3.6, are outside the vulnerable versions that Jira published.
+According to the Jira issue and NVD, CVE-2019-8451 was first introduced in v7.6 and fixed in v8.4.
+However, our scanned result shows that many versions outside this range are also vulnerable.
+To find out the real impact of the vulnerability, we checked the vulnerable class JiraWhiteList that causes the SSRF.
+This simple Java class with only one method has been in Jira since v4.3.
+A further investigation in the legacy Jira software confirms that this vulnerability indeed affects versions back to v4.3, which was released more than eight years ago in March 2011.
+The SSRF vulnerability’s roots lie in the lack of proper input sanitization.
+To fundamentally fix the issue, developers should strictly validate the format and pattern of the user input before passing it to the application logic.
+For system administrators who only install and manage web applications, some suggested preventive protections to remediate the impact of SSRF include:
+Allow-listing domains: Most of the applications only need to initiate communications with a handful of domains such as database or API gateways.
+Enforcing an allowlist of domains that an application is allowed to communicate with can significantly reduce the services that attackers can target.
+Zero-trust network: An application should never trust another application just because they are in the same internal network.
+SSRF will fail if the targeted services require authentication.
+Authentication and authorization should be implemented on every application.
+Web Application Firewall (WAF): WAF can detect abnormal patterns or malicious content in Http requests.
+However, WAF depends on the rules created for known vulnerabilities or attacks with obvious patterns, e.g., SQL injection or XSS.
+A zero-day vulnerability may still bypass the WAF.
+Patch and update: Patching and updating applications frequently are the easiest and most effective ways to prevent any vulnerability.
+It is, however, limited to the support from the vendors.
+An end-of-life application may never receive an update.
+Allow-listing domains: Most of the applications only need to initiate communications with a handful of domains such as database or API gateways.
+Enforcing an allowlist of domains that an application is allowed to communicate with can significantly reduce the services that attackers can target.
+Zero-trust network: An application should never trust another application just because they are in the same internal network.
+SSRF will fail if the targeted services require authentication.
+Authentication and authorization should be implemented on every application.
+Web Application Firewall (WAF): WAF can detect abnormal patterns or malicious content in Http requests.
+However, WAF depends on the rules created for known vulnerabilities or attacks with obvious patterns, e.g., SQL injection or XSS.
+A zero-day vulnerability may still bypass the WAF.
+Patch and update: Patching and updating applications frequently are the easiest and most effective ways to prevent any vulnerability.
+It is, however, limited to the support from the vendors.
+An end-of-life application may never receive an update.
+Metadata API can be most effectively protected by CSPs, as shown in Table 2.
+However, if such protection not available, cloud users should take preventive actions to reduce the risk of metadata leak.
+Enable CSP metadata API protection: Some CSPs provide configurable options to secure metadata API.
+GCP users can disable the legacy metadata API versions and enforces the Http header requirement.
+DigitalOcean users can disable the metadata API service at the cloud-config script.
+Block metadata IP: Firewall rules can be created inside VMs to block the IP of the metadata API completely.
+A more granular firewall rule can also be created to allow only specific applications or users to access the metadata API.
+Metadata proxy: Open-source tools such as metadataproxy and aws-metadata-proxy create a layer above the native metadata API and offer granular control to applications that need to access the metadata.
+Least privilege IAM: IAM role is attached to a VM to allow applications on the VM to access other cloud services.
+It is critical to restrict the IAM privileges to only the services that the applications need.
+The least-privilege practice minimizes the impact in case a credential is compromised.
+SSRF by itself may not be a severe vulnerability, but when coupled with the metadata API and misconfiguration in cloud infrastructure, SSRF opens the door to many other attack vectors.
+Sensitive metadata such as credentials and network architecture may be leaked, and internal services such as database and storage could be exposed.
+In the worst case, the entire cloud infrastructure could be compromised.
+This research used only the Jira vulnerability CVE-2019-8451 as an example to show the impact of SSRF to cloud infrastructure, but there are hundreds of other applications with known SSRF vulnerabilities that can all be exploited in the cloud.We have seen CSPs starting to secure the metadata API, but it may take a while until they are fully implemented.
+We recommend several best practices to system administrators or cloud users can follow to remediate the risk.
+Palo Alto Network customers are protected by VM-series and Prisma Cloud.
+VM-series protect cloud workloads with application traffic analysis and Prisma Cloud provides full-stack monitoring in public/private cloud environments.

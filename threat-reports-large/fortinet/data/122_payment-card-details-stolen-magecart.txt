@@ -1,0 +1,70 @@
+Threat Analysis Report from FortiGuard Labs
+FortiGuard Labs has been monitoring the development on the e-commerce threat landscape, such as the stealthworker malware that brute-force its way to compromise e-commerce websites, and MageCart that steals payment card details from compromised websites.
+MageCart is the name given to numerous cybercriminal groups that embed digital skimmers on compromised e-commerce sites.
+The group made global headlines for a series of high-profile breaches on Ticketmaster, British Airways, and Newegg.
+These groups are still active and continue to target online stores to steal payment card details from unaware customers.
+This post will examine a MageCart campaign that was able to steal approximately 185,000 payment card details during the past year.
+It involves embedding a malicious javascript into compromised online stores and then intercepting payment card details, which are then reported back to a server.
+As described by RiskIQ researchers, the skimmer used in this campaign is likely a modified version of the skimmer sold by MageCart’s Group 1.
+The malicious javascript code, also called CoffeMokko JS-sniffer, has been around since May 2017.
+While the skimmer has been modified several times, we will be focusing our analysis on the latest sample.
+The skimmer is loaded by a direct link in the compromised website’s HTML code and has the following URL format:
+<C&C >/src/<compromised website>.js <C&C>/js/<compromised website>.js <C&C>/assets/<compromised website>.js
+Figure 01.
+Direct Link of the Malicious JavaScript
+Taking a look at the skimmer javascript, we can see that some strings are obfuscated to avoid crawlers and signatures detecting their malicious code.
+Upon deobfuscation, an array is created with interesting strings, such as the C&C (foodandcot.com) and other strings to identify the payment form on the targeted website.
+Figure 02.
+Deobfuscated Malicious JavaScript
+To check that the current page is the payment page, it searches for the keywords onepage, checkout, onestep, and firecheckout in the URL address.
+Once it is on the correct page, it intercepts the following details after an unaware customer fills in the fields:
+Figure 03.
+Payment Details Being Stolen
+The intercepted information is then obfuscated by encoding it with base64 and replacing some characters from the result:
+Figure 04.
+Characters Replaced
+Without knowing the replaced characters, it would be difficult to decode back the original information.
+The encoded stolen information is sent via a POST request to <C&C>/tr/index.php, which is the same C&C where the malicious javascript is being hosted.
+Figure 05.
+Network Traffic
+Inspecting the C&C with the IP address 178.33.231.184 revealed other domains it is hosting.
+As expected, these domain names attempts to imitate legitimate e-commerce websites related to different services and products (e.g.
+food, fitness, espresso, etc.).
+This makes it more difficult to spot something suspicious during static analysis.
+The image below highlights the domains that are currently hosting the skimmer JavaScript, as well as inactive domains that were used in previous campaigns.
+Figure 06.
+Domains in IP 178.33.231.184
+Further investigation on the infrastructure of the C&C led us to discover what seems to be the debug log of the C&C server.
+Each line contains a date & time, payment card number, and the string “SAVED”, which could imply that the stolen payment information that the C&C received from the compromised websites has been forwarded and saved in a separate database of the attacker.
+Figure 07.
+Access.log
+Based on our observation, it seems like the timestamp is set to GMT+2.
+To be able to get more information on the payment card numbers, we used a python library called card-validator to check whether the payment card number is valid.
+Moreover, we can reference the Issuer Identification Number (IIN) to the list of available IIN to determine the issuer, type of payment card, related institution, and its country of origin.
+Table 01.
+Summary of access.log
+At the early stages of this campaign, the cybercriminals were able to get as many as 40,000+ payment card details in a single month.
+After that, it began to slow down.
+The reason may be because more and more people have become aware of the scheme and/or that more security companies have been detecting this campaign.
+After all, this was the time when news of breaches on major global brands spread.
+Another possibility is that owners of the compromised e-commerce websites might have started to discover and clean up any malicious scripts in their systems, resulting in fewer card details being stolen by MageCart.
+Figure 08.
+Entries Per Month
+Based on an analysis of the compromised payment cards using the debug log, we found that most major issuers were impacted.
+Then, using the associated Issuer Identification Number, we were able to successfully identify the issuing country of 54% of the total valid credit card numbers.
+Here is a breakdown of the top countries impacted:
+Table 02.
+Top Countries
+The information that we gathered from this campaign shows how effective MageCart groups are in compromising e-commerce websites and stealing payment card details.
+With the amount of data that was stolen by this campaign, we can only imagine the staggering number of possible fraud cases that can come out of this breach and their impact on the card issuer, e-commerce companies, and consumers.
+While we can see that it’s slowly declining, the campaign is still operational.
+We can simply assume that cybercriminals will continue to invent new ways to compromise e-commerce websites, and the best way to combat this is for e-commerce companies to follow good security practices and constantly monitor their systems for any suspicious activities.
+FortiGuard Labs has reached out to the e-commerce websites affected by this campaign.
+-= FortiGuard Lion Team =-
+Fortinet customers are protected by the following solutions:
+Malicious javaScript analysed is detected as JS/Cryxos.PWS!tr
+The C&C servers are blocked by FortiGuard Web Filtering Service
+9b31482f35209ea49bd2daed2fdb16d7196fa54034b6e72576050ca7799ed352 CC 178.33.231.184 swappastore.com foodandcot.com freshdepor.com verywellfitnesse.com
+Learn more about FortiGuard Labs and the FortiGuard Security Services portfolio.
+Sign up for our weekly FortiGuard Threat Brief.
+Read about the FortiGuard Security Rating Service, which provides security audits and best practices.

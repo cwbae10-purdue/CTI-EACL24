@@ -1,0 +1,64 @@
+In our previous blog, we detailed the inner workings of the SYNful Knock Cisco router implant.
+You may be asking yourself: "How do I detect and mitigate such a threat in my network?"
+The detection method largely depends on the possible interaction with the router, but generally falls into two main categories:
+Host-based indicators are useful for organizations that can issue commands and receive responses.
+This is only possible for a small amount of routers located in easily accessible areas of the network.
+Network-based indicators are useful for organizations that are more dispersed or those who lack the ability to easily execute local commands and receive the response.
+Ultimately a combination of host- and network-based indicators is the best way to determine the cleanliness of the underlying network.
+If command-line access to your router is possible, the techniques shown in Table 1 can be used to detect the implant:
+Implanted router may produce no results
+Table 1: Host-based indicator command and expected output
+In addition to the commands above, other detection techniques are contained within Cisco's IOS Integrity Assurance document.
+In the case of this implant, the size of the implanted IOS binary is the same size as the legitimate image.
+Thus, when comparing file size, it appears to be unmodified.
+Hashing the image and comparing the result to the hash from Cisco is one of the best methods to detect a modified binary; however, this will only work with an image on disk and not one that is loaded into memory.
+Both active and passive network detection can be deployed to detect and prevent a SYNful Knock compromise.
+Passive detection can be incorporated into network defense sensors, while active techniques can be used to search for the backdoor.
+There are a number of approaches for passive network detection.
+Our network detection signatures focus on four parts of a Command and Control (CnC) session: the SYN, SYN-ACK, malware response messages, and controller commands.
+An IDS must be able to monitor the external interface of the router to effectively detect this backdoor from the network.
+SYN: The first signature (included in Appendix A) detects SYN packets with the necessary delta between the TCP sequence and acknowledgment numbers.
+To reduce the chance of false positives, the signature assumes that the acknowledgement field is not set to zero.
+This signature detects probing for the malware, and does not necessarily indicate that the destination is compromised.
+SYN/ACK: The second signature (included in Appendix B) validates the delta between TCP sequence and acknowledgement numbers and the TCP options to detect the SYN ACK response from the malware.
+This signature does not assume that the acknowledgement in the SYN packet is not zero.
+Malware response message: The signature shown below detects the HTTP server response when a command is issued.
+The advantage of the signature below is that it is a standard Snort signature; however, it does not have the capability to validate the delta between the TCP sequence and acknowledgment numbers.
+alert tcp any any -> any any (\ msg: "SYNful Knock Cisco Implant HTTP Header";\ flow: from_server;\ content: "HTTP/1.1 200 OK|0d 0a|Server: Apache/2.2.17 (Ubuntu)|0d 0a|X-Powered-By: PHP/5.3.5-1ubuntu7.7|0d 0a|Keep-Alive: timeout=15, max=100|0d 0a|Connection: Keep-Alive|0d 0a|Content-Type: text/html|0d 0a 0d 0a|<html><body><div>"; offset:0;\ flags:PA;\ sid:201504232;\
+Controller commands: The following signature detects a command issued from the controller.
+It uses the “text” string at the location expected by the malware and message size less than 256 bytes.
+The signature also assumes no TCP header options are present.
+If TCP header options are included, this signature may need to be converted to a compiled signature or multiple variants created to deal with each length.
+alert tcp any any -> any any (\ msg: "SYNful Knock Cisco Implant HTTP Request";\ flow: to_server;\ content: "text"; offset:78; depth:4;\ content: "|00 00 00|"; offset: 83; depth: 3;\ content: "|45 25 6d|"; offset: 87; depth: 3;\ sid:201504233;\ )
+Active network detection involves hunting the implant by sending packets to trigger a certain response.
+Since each environment has different capabilities, we developed multiple tools and methods for active network detection.
+The correct tool may vary depending on the environment size and resources available.
+We wrote an NSE script in LUA to actively scan for the presence of this Cisco implant.
+Since the NSE packet library does not allow the user modification of ACK values, the library needs to be modified to allow for this capability.
+The changes are shown below using a diff command.
+We first ran this scan using Nmap's default scan speed of -T3:
+nmap -sS -PN -n -T3 -p 80 --script="SYNfulKnock" 10.1.1.1/24 Class C - 256 IP addresses (4 hosts up) - scanned in 2.29 seconds
+Mandiant then ran this scan using Nmap's scan speed of -T4:
+nmap -sS -PN -n -T4 -p 80 --script="SYNfulKnock" 10.1.1.1/24 Class C - 256 IP addresses (4 hosts up) - scanned in 2.28 seconds
+nmap -sS -PN -n -T4 -p 80 --script="SYNfulKnock" 10.1.1.1/16 Class B - 65536 IP addresses (4 hosts up) - scanned in 2557.50 seconds (42 min)
+nmap -sS -PN -n -T4 -p 80 --script="SYNfulKnock" 10.1.1.1/8 Class A - 16,777,216 IP addresses - Estimated scan time = 10,752 minutes (179 hours) = 7 days
+We created a Python script to actively scan for the presence of this Cisco implant.
+This script sends a crafted TCP SYN packet and analyzes the SYN/ACK response for indications of the implant.
+The script relies on the Scapy packet manipulation library for processing, sending and receiving packets.
+The scanning process uses several scan threads and a single thread for collecting the responses.
+This script is about 30 times slower than leveraging the nmap LUA script above; however, it is useful for small scans and for verifying the faster scan.
+Class C - 256 IP addresses (4 hosts up) - 59.26 seconds Class B - Terminated the script early due to time
+We discovered that it is also possible to use a tool such as nping (or hping) to detect this variant of the Cisco implant.
+Class C - 256 IP addresses (4 hosts up) - 257.27 seconds
+-c = count -v = verbosity level -tcp = TCP probe mode -p = port -seq = sequence number -ack = acknowledge number -H = (optional) Hide sent, which can speed up the scan
+Figure 1: Using nping to detect the backdoor
+Highlighted areas include the sequence and acknowledge numbers.
+The difference must equal 791102 as well as the TCP flag options described above, which must be: "02 04 05 b4 01 01 04 02 01 03 03 05".
+After confirming compromise, the most effective mitigation is to reimage the router with a known clean download from Cisco.
+Ensure the new image hash values match and then harden the device to prevent future compromise.
+We believe the initial compromise occurred due to either default or discovered credentials, so make sure you use new and non-default settings.
+After ensuring the routers are clean, focus attention on the rest of the network.
+If the router did not have default credentials, the infection must have occurred some other way.
+The next step is to begin the compromise assessment.
+Feel free to download our whitepaper to easily share this information with the appropriate teams within your organization.
+Our code will be available at https://github.com/fireeye.

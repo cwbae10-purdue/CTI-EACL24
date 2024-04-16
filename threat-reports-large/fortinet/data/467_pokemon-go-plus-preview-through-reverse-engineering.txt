@@ -1,0 +1,80 @@
+While inspecting the Pokémon Go application, I incidentally found information on the forthcoming Pokémon Go Plus device.
+Basically, this is the Pokémon IoT: a connected wristband with a button (to throw a pokéball, for instance), an RGB LED, and vibration capability (e.g to notify of nearby pokémon).
+The device has not yet released, and the software is still under development: as you can see below, version 0.29.x corresponds to "BETA4".
+Implementation in version 0.31.0 has changed considerably, with lots of code shifted inside its native library libpgpplugin.so.
+And no, this is not a PGP / GPG plugin.
+PGP probably means Pokémon Go Plus ;)
+At first look, we immediately see that the device will communicate via Bluetooth Low Energy (just like many IoT devices, such as Fitbit Flex, Beam toothbrush, etc).
+Currently, 4 BLE services are planned:
+Firmware update service.
+This one is not used or implemented yet.
+Device control service.
+There is one characteristic to read the current firmware version, one for notifying when the button is pressed, and one to control the LED and vibration.
+The same characteristic pilots both the LED and vibration; we'll see how more precisely below.
+A so-called "certificate" service, although this actually appears to be an authentication service.
+This service is not yet fully implemented, but from what I disassembled, it looks like authentication will involve a nonce to encrypt with AES-CTR.
+This is to be confirmed in future versions.
+Battery service.
+This is a standard BLE service, and using the standard values, we will be able to query the battery level of the device.
+Basically, in version 0.31.0, a client service receives the intents com.nianticlabs.pokemongoplus.service.ToClient.
+The "extra" action of the intent (e.g "batteryLevel", "encounterId", "pokestop") calls the appropriate method from the ClientBridge class.
+For example, respectively sendBatteryLevel(), sendEncounterId() and sendPokestopId().
+Those methods then call the native functions implemented in libpgpplugin.so.
+So, most of the interesting stuff should occur in the native library.
+Below, we see the JNI stub which corresponds to public native void sendEncounterId(long arg1).
+The code retrieves a native handle with type "J", where J stands for "long" in JNI.
+Unfortunately, to my understanding so far, communication with the device has not yet been implemented.
+Consequently, we have to look at earlier versions (v0.29.x) to get more hints as to how the Pokémon Go Plus device may work.
+Indeed, versions 0.29.x show a few test messages to send to the Pokémon Go Plus device.
+For example, there are the bytes to send to have the device blink red, or what to do on the device when a pokémon is captured.
+The format for those patterns is coded as follows.
+There is a header with:
+byte 1 contains a delay in milliseconds divided by 50.
+bytes 2 and 3 are 0, and probably reserved.
+byte 4 contains the message's priority (bits 5 to 7), and then bits 0 to 5, the number of 3-byte patterns that follow
+Then, the 3-byte pattern has:
+byte 1, a delay in milliseconds divided by 50.
+byte 2: bits 7-4 correspond to the color green for the LED, bits 0-3 to the color red.
+byte 3: bit 7 indicates if "interpolation" is enabled, bits 4 to 6 indicate vibration level.
+Finally bits 0-3 are for the color blue of the LED.
+Let's confirm this with the pattern getBlinkRed():
+The header is "0 0 0 13".
+This means no particular delay and priority, and that 13 3-byte patterns follow
+The first pattern is "1, 15, 112".
+This means a short delay (1).
+15 is 00001111 in binary so we have no green, but full red.
+112 is 0x70 = 01110000b which means no blue, no interpolation, but vibration enabled.
+So basically, the LED flashes red and vibrates.
+The second pattern is "1, 0, 0".
+This means a short delay again, but no green, blue, or red, and no vibration.
+In practice, that turns off the LED and vibration.
+The other patterns repeat the process of flashing the red light and vibrating, then stopping.
+This has the expected effect of having the device "blink" red.
+Let's see now what getCaptureSucceeded does.
+I'll go a bit faster this time, but you can follow bit per bit.
+The header indicates we have 24 3-byte patterns.
+Actually, they consist of 4 patterns repeated 6 times.
+Pattern 1: "3, 8, 240".
+Short delay (3), no green, some red, no blue, interpolation and vibration.
+Pattern 2: "3, 240, 240".
+Short delay (3), full green, no red, no blue, interpolation and vibration.
+Pattern 3: "2, 0, 255".
+Shorter delay (2), full blue, no red, no green, interpolation and vibration.
+Pattern 4: "1, 0, 143".
+Even shorter delay (1), no green, no red, full blue, interpolation but stopping vibration.
+This will probably look like a glowing red, then green, then blue, with vibration impulses.
+There are several other patterns to "decode" (getDowserProximity1(), getPokemonCaught(), getReachedPokestop(), getSpawnedPokemon()...) and possibly funny ones like getMorseGame1().
+You can use my Python script to decode them.
+All of this reversing will naturally need to be confirmed with a real Pokémon Go Plus device once it is released.
+Meanwhile, we never know how specs may change.
+First of all, good news, I found no malicious code in the Dalvik classes nor in the native library I inspected.
+Second, with all of this information readily available, hackers can build their own Pokémon Go Plus device.
+In fact, there are already initiatives for that with Arduino.
+It is also possible to get ready for alternate usages of these devices.
+For instance, if as expected the device does generate a random nonce, it can be used as a hardware random number generator as I did with the Fitbit Flex.
+Or code your own pattern.
+Finally, depending on how good the pairing mechanism turns out to be, an attacker or a jealous competitor might send dummy patterns to have your device run out of battery (repeated vibration), or send fake alarms telling you that you are close to a Pokémon.
+Note that this has already happened without the Pokémon Go Plus, so be cautious where you go!
+Thanks to Raphael Le Bras for his tips on Pokémon Go.
+-- the Crypto Girl
+Click here to read my threat analysis of the Pokémon Go application.

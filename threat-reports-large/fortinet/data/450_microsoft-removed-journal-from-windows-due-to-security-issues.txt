@@ -1,0 +1,128 @@
+Last month, Fortinet researcher Honggang Ren discovered a heap overflow vulnerability in Windows Journal and reported it to Microsoft.
+This month, Microsoft released update KB3161102 and removed the Journal component from all versions of Windows because the file format used by Journal has been demonstrated to be susceptible to a number of security exploits.
+Microsoft recommends that all users install this update immediately.
+On the Microsoft Acknowledgments web page, Microsoft labeled the title of this vulnerability as “Defense-in-depth”.
+Windows Journal is a note-taking application with a long history.
+It was first introduced in Windows XP Tablet PC Edition and was a component of all supported client versions of Windows through Windows 10 version 1511.
+The Journal heap overflow vulnerability we reported can be triggered with a crafted JTP file.
+When the file is parsed by Journal, a heap copy operation with an incorrect length is executed.
+As a result, the destination heap buffer is overflowed due to improper bounds checking.
+In this blog we will share our detailed analysis of this vulnerability.
+To reproduce this heap overflow vulnerability, first we need to enable Journal’s full page heap verification with the tool gflags.
+Afterwards, when we run Journal and open the PoC file “PoC.jtp,” the Journal application crashes.
+Following is the call stack when the crash occurs.
+Figure 1.
+Call Stack When Crash Occurs
+From the above call stack output we can see that the crash occurs in the function “msvcrt!__ascii_strnicmp,” which is called by the memory copy function “msvcrt!_VEC_memcpy.” The memory copy function copies data from one heap buffer to another.
+The destination heap buffer’s address is 0x07b3a5f0, and the size of the allocated heap buffer is 0xA0C.
+Following is a code snippet of the heap allocation function.
+Figure 2.
+Destination Heap Allocation
+By reverse engineering and tracing the program, we can see the following function calls the function IFF_UnpackLine(uchar *,uchar const *,int,int,int,int), which results in the crash.
+.text:698D67A7 sub_698D67A7 proc near ; CODE XREF: _MSFFTIFFGetLine(IFF_FID *,int,uchar *,int)+7Fp
+.text:698D67A7
+.text:698D67A7 var_24 = byte ptr -24h
+.text:698D67A7 var_1C = dword ptr -1Ch
+.text:698D67A7 var_18 = dword ptr -18h
+.text:698D67A7 var_14 = dword ptr -14h
+.text:698D67A7 var_10 = dword ptr -10h
+.text:698D67A7 var_4 = dword ptr -4
+.text:698D67A7
+.text:698D67A7 push 18h
+.text:698D67A9 mov eax, offset loc_6997247C
+.text:698D67AE call __EH_prolog3
+.text:698D67B3 mov ebx, ecx
+.text:698D67B5 push 0 ; __int32 *
+.text:698D67B7 push offset aGetoneline ; "GetOneLine"
+.text:698D67BC lea ecx, [ebp+var_24] ; this
+...
+.text:698D683F loc_698D683F: ; CODE XREF: sub_698D67A7+91j
+.text:698D683F xor edx, edx
+.text:698D6841 cmp dword ptr [esi+5Ch], 1
+.text:698D6845 setz dl
+.text:698D6848 push edx ; int
+.text:698D6849 mov edx, [ebp+var_10]
+.text:698D684C push eax ; int
+.text:698D684D movzx eax, word ptr [esi+6Ah]
+.text:698D6851 push eax ; int
+.text:698D6852 mov eax, [esi+112h]
+.text:698D6858 mov eax, [eax+edx*4]
+.text:698D685B push edi ; int
+.text:698D685C add eax, ecx
+.text:698D685E push eax ; Src
+.text:698D685F push ebx ; Dst
+.text:698D6860 call ?IFF_UnpackLine@@YGXPAEPBEHHHH@Z ; IFF_UnpackLine(uchar *,uchar const *,int,int,int,int) is called and causes the heap corruption
+.text:698D6865 cmp [ebp+var_1C], 5 ;
+.text:698D6869 jnz short loc_698D68B9
+The third parameter passed to the function IFF_UnpackLine(uchar *,uchar const *,int,int,int,int) is actually the size of the heap memory copy.
+By continuing to trace the execution of the program, we see the size of the heap memory copy is determined by calculating from the data read from the PoC file at offset 0xaf6e.
+Figure 3 shows some data of the PoC file.
+Figure 3.
+Partial Content of The PoC File
+Size value 0x0283 is derived from offset 0xaf6e.
+After performing some calculations by comparing this with tag 0x100, 0x101, 0x102, 0x103, 0x106, 0x111, 0x112, 0x115, etc.
+- which have 0x0c-byte length - the size of the heap copy can be determined to be 0x283*4=0xA0C.
+This value is same as the value we see in the heap allocation function.
+The heap overflow is caused by the subsequent code when it handles the malformed type 0x0020, which is read from PoC.jtp at offset 0x9df0.
+(See Figure 4.)
+On the left side is the data of the PoC file, and on the right we see the normal file.
+Only the byte at offset 0x9df0 is different.
+Type 0x0008 is changed to 0x0020.
+Figure 4.
+The PoC File vs The Normal File
+Following is the code snippet that parses the type.
+.text:698D46E6 ; void __stdcall IFF_UnpackLine(unsigned __int8 *Dst, const unsigned __int8 *Src, int, int, int, int)
+.text:698D46E6 ?IFF_UnpackLine@@YGXPAEPBEHHHH@Z proc near ; CODE XREF: sub_698D67A7+B9p
+.text:698D46E6
+.text:698D46E6 var_18 = byte ptr -18h
+.text:698D46E6 var_10 = dword ptr -10h
+.text:698D46E6 var_4 = dword ptr -4
+.text:698D46E6 Dst = dword ptr 8
+.text:698D46E6 Src = dword ptr 0Ch
+.text:698D46E6 arg_8 = dword ptr 10h
+.text:698D46E6 arg_C = dword ptr 14h
+.text:698D46E6 arg_10 = dword ptr 18h
+.text:698D46E6 arg_14 = dword ptr 1Ch
+.text:698D46E6
+.text:698D46E6 push 0Ch
+.text:698D46E8 mov eax, offset loc_6997236C
+.text:698D46ED call __EH_prolog3
+.text:698D46F2 xor ebx, ebx
+.text:698D46F4 push ebx ; __int32 *
+.text:698D46F5 push offset aIff_unpackline ; "IFF_UnpackLine"
+.text:698D46FA lea ecx, [ebp+var_18] ; this
+.text:698D46FD call ?
+?0CLogBlock@Helpers@@QAE@PBDPAJ@Z ; Helpers::CLogBlock::CLogBlock(char const *,long *)
+.text:698D4702 mov edi, [ebp+arg_C] ; read from PoC.jtp at offset 0x9df0, its value is 0x0020.
+.text:698D4705 mov edx, [ebp+arg_10]
+.text:698D4708 mov eax, 0FFh
+.text:698D470D mov esi, eax
+.text:698D470F mov ecx, edi
+...
+.text:698D4768 loc_698D4768: ; CODE XREF: IFF_UnpackLine(uchar *,uchar const *,int,int,int,int)+4Bj
+.text:698D4768 push 8
+.text:698D476A pop ebx
+.text:698D476B cmp edi, ebx ; compare with the first type 8
+.text:698D476D jg loc_698D494E
+...
+.text:698D494E loc_698D494E: ; CODE XREF: IFF_UnpackLine(uchar *,uchar const *,int,int,int,int)+87j
+.text:698D494E cmp edi, 0Ch ; compare with the second type 0x0c
+.text:698D4951 jz short loc_698D499C
+.text:698D4953 cmp edi, 10h ; compare with the third type 0x10
+.text:698D4956 jz short loc_698D4974
+.text:698D4958 cmp edi, 20h ; compare with the fourth type 0x20, they are equal
+.text:698D495B jnz short loc_698D49C0
+.text:698D495D mov eax, [ebp+arg_8]
+.text:698D4960 shl eax, 2 ; the size of heap copy becomes 0xA0C*4 = 0x2830, it results in the heap overflow.
+.text:698D4963
+.text:698D4963 loc_698D4963: ; CODE XREF: IFF_UnpackLine(uchar *,uchar const *,int,int,int,int)+5Cj
+.text:698D4963 push eax ; Size
+.text:698D4964
+.text:698D4964 loc_698D4964: ; CODE XREF: IFF_UnpackLine(uchar *,uchar const *,int,int,int,int)+248j
+.text:698D4964 push [ebp+Src] ; Src
+.text:698D4967 push [ebp+Dst] ; Dst
+.text:698D496A call _memcpy ; heap overflow occurs here when calling memcpy
+From the above code analysis we can see that the malformed type 0x0020 is compared with some pre-defined types.
+Since the fourth pre-defined type is 0x20, the comparison result is true so that the size of the heap copy 0xA0C is incorrectly multiplied by 4.
+Thus the memcpy function copies data with size 0x2830 to the destination heap with size 0xA0C, thereby causing the heap overflow.
+All Windows users are now being encouraged to remove the Journal application by following the steps found in Microsoft update KB3161102.

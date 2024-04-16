@@ -1,0 +1,77 @@
+Many attacks on mobile devices use social engineering to initially infect a victim’s system.
+They download malware and elevate privileges by exploiting vulnerabilities.
+Mobile malware often uses persistence mechanisms to hide and monitor the victim’s behavior.
+Unlike personal computers, mobile devices are used more often by their owners, and carry sensitive information such as phone numbers, personal images, SMS messages, and other data that can be used to socially engineer more victims.
+Furthermore, mobile devices have cameras, microphones, and GPS that can be used to spy on the targets.
+Infected mobile devices expose users to greater risks than infected computers.
+Recently Google and Lookout published information about the Android version of surveillance malware Pegasus (also known as Chrysaor, the brother of Pegasus in Greek myth).
+Pegasus infections were a big story last year.
+This year’s attacks are called Chrysaor (by Google) or Pegasus (by Lookout).
+When Chrysaor is installed, it leaks data of popular apps and remotely controls the device.
+The Lookout report covers all the features of the Chrysaor malware, but only briefly explains how the malware injects code and installs a hook for keylogging.
+We decided to analyze the Chrysaor sample in more detail to understand how its keylogging works.
+We analyzed the sample with the SHA-256 hash ade8bef0ac29fa363fc9afd958af0074478aef650adeb0318517b48bd996d5d5.
+The basic keylogging process.
+The sample has two main binaries related to keylogging: addk.so and libk.so.
+When the sample executes, the former is copied to /data/local/tmp/inulmn and the latter to /data/local/tmp/libuml.so.
+The addk.so file injects shellcode into the memory space of the keyboard process (Step 1 in the preceding graphic).
+When the shellcode runs, it loads libk.so and calls the function init() (Step 2).
+This function installs a hook to capture user keystrokes to a file (Step 3).
+To log keystrokes, a superuser binary, which manages access to root privileges, must be positioned at /system/csk or the keylogging code will not execute.
+Checking for the superuser binary.
+The following code shows part of a system command string for injecting /data/local/tmp/libuml.so to the keyboard process using the binary /data/local/tmp/inulmn.
+Code for constructing the command string.
+The fully constructed string:
+chown 0.0 /data/local/tmp/inulmn ;
+chown 0.0 /data/local/tmp/libuml.so ;
+chmod 0777 /data/local/tmp/inulmn ;
+chmod 0777 /data/local/tmp/libuml.so ;
+/data/local/tmp/inulmn <pid of keyboard process> /data/local/tmp/libuml.so init;
+We can see that /data/local/tmp/inulmn executes, passing the process ID of the target process (the keyboard), the name of the binary to inject (/data/local/tmp/libuml.so), and the function to execute (init) as command-line parameters.
+To log user keystrokes, Chrysaor first queries the value of DEFAULT_INPUT_METHOD in secure system settings.
+This records the input method used by default and gets the method’s ID.
+Gathering the ID of the system’s default input method (keyboard).
+The malware then searches for the input method (keyboard) process in the list of running processes using the ID.
+When found, the malware extracts the ID of the process so that it can inject the code.
+Code searching for ID of the keyboard process.
+Once Chrysaor has found the ID of the keyboard process, it tries to inject its code and hook the function to log keystrokes.
+The native library addk.so allows the injecting of code into the keyboard process and executing certain functions using the ptrace API.
+Addk.so gains the target process’ PID, the path of the .so file to inject, and the function to execute as parameters.
+With this information, the malware finds the function addresses of APIs such as dlsym(), dlopen(), and mmap() in the target process’ memory space using the proc filesystem.
+Dynamically finding the addresses of APIs.
+Using the /proc file system to search the memory space of the keyboard process.
+The function address information is saved in the data segment adjacent to the shellcode, which executes the functions injected into the target process.
+The following image shows the shellcode that is copied to the target process’ memory space.
+The memory addresses in red boxes are resolved at runtime.
+Shellcode for executing the injected functions.
+Memory layout of shellcode and data.
+The shellcode and related data such as API addresses, strings passed as function parameters, saved registers, and so on are all close together so they can be copied with one operation.
+After addk.so attaches to the keyboard process and copies the shellcode and related API addresses to the mmaped area using PTRACE_POKETEXT, the shellcode is executed by setting a return frame to the shellcode address with PTRACE_SETREGS.
+The shellcode calls dlopen(), using the copied remote address, to load the binary and call the injected function.
+Libk.so calls the init() function, which installs a hook for keylogging.
+Addk.so passes the string “test” as a parameter of the injected function.
+The init() function installs an inline hook at the beginning of the IPCThreadState transact() function and logs the keystrokes.
+Hooking the function IPCThreadState transact().
+The following diagram shows the execution flow when the inline hook is installed on the transact() function:
+Execution flow after hooking.
+The Init() function overwrites the first 8 bytes of transact() with an 8-byte hook code that jumps to the keylogger.
+The original 8 bytes are copied to a separate memory space that has stub code for jumping back to the transact() function.
+When the transact() function is called (Step 1), the installed keylogger executes first due to the hook code.
+The keylogger checks the function code to see whether it is 0x6 (setComposingText) or 0x8 (commitText).
+If true, the function calls android::Parcel::enforceInterface(“com.android.internal.view.IInputContext”) and reads the keystroke data from the parcel and logs it to a file.
+After the keylogging is complete (Step 2), the function executes the 8 bytes of instructions that were copied from the start of the transact() function.
+Finally the stub code runs (Step 3), which jumps back to transact() at offset +8.
+Code to check the function code for keylogging.
+The data passed to the transact() function when the function code is 0x6 or 0x8 is the character sequence of the user’s input.
+This value is encoded and written to /data/local/tmp/ktmu/ulmndd.tmp.
+After some time passes, this file is renamed to /data/local/tmp/ktmu/finidk.<timestamp>.
+Logging keystrokes to a file.
+We have looked at how simple code can log user keystrokes in mobile devices.
+If the infected mobile device is an executive’s company phone, the situation is worse.
+An executive’s phone may contain corporate or business secrets, plus contacts of other executives, which can have a huge negative business impact if leaked.
+The mobility of phones requires they be treated differently than desktop computers from an incident-response perspective: It is more difficult to trace data leaks because of the characteristics of mobile devices.
+Thus organizations must create incident-response and other security policies for mobile devices.
+If corporations cannot secure their mobile devices, they are exposing a huge attack surface to cybercriminals.
+Never install Android applications from unknown sources and always keep your device’s operating system up to date to help protect against attacks.
+These simple steps will significantly lower the chances of infection.
+If your device quickly loses battery power or generates an abnormal amount of network traffic, it may have been compromised—requiring a factory reset or a security solution to delete malware.

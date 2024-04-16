@@ -1,0 +1,54 @@
+Enterprise customers looking for information on defending against Curveball can find information here.
+2020 came in with a bang this year, and it wasn’t from the record-setting number of fireworks on display around the world to celebrate the new year.
+Instead, just over two weeks into the decade, the security world was rocked by a fix for CVE-2020-0601 introduced in Microsoft’s first patch Tuesday of the year.
+The bug was submitted by the National Security Administration (NSA) to Microsoft, and though initially deemed as only “important”, it didn’t take long for everyone to figure out this bug fundamentally undermines the entire concept of trust that we rely on to secure web sites and validate files.
+The vulnerability relies on ECC (Elliptic Curve Cryptography), which is a very common method of digitally signing certificates, including both those embedded in files as well as those used to secure web pages.
+It represents a mathematical combination of values that produce a public and private key for trusted exchange of information.
+Ignoring the intimate details for now, ECC allows us to validate that files we open or web pages we visit have been signed by a well-known and trusted authority.
+If that trust is broken, malicious actors can “fake” signed files and web sites and make them look to the average person as if they were still trusted or legitimately signed.
+The flaw lies in the Microsoft library crypt32.dll, which has two vulnerable functions.
+The bug is straightforward in that these functions only validate the encrypted public key value, and NOT the parameters of the ECC curve itself.
+What this means is that if an attacker can find the right mathematical combination of private key and the corresponding curve, they can generate the identical public key value as the trusted certificate authority, whomever that is.
+And since this is the only value checked by the vulnerable functions, the “malicious” or invalid parameters will be ignored, and the certificate will pass the trust check.
+As soon as we caught wind of the flaw, McAfee’s Advanced Threat Research team set out to create a working proof-of-concept (PoC) that would allow us to trigger the bug, and ultimately create protections across a wide range of our products to secure our customers.
+We were able to accomplish this in a matter of hours, and within a day or two there were the first signs of public PoCs as the vulnerability became better understood and researchers discovered the relative ease of exploitation.
+Let’s pause for a moment to celebrate the fact that (conspiracy theories aside) government and private sector came together to report, patch and publicly disclose a vulnerability before it was exploited in the wild.
+We also want to call out Microsoft’s Active Protections Program, which provided some basic details on the vulnerability allowing cyber security practitioners to get a bit of a head start on analysis.
+The following provides some basic technical detail and timeline of the work we did to analyze, reverse engineer and develop working exploits for the bug.
+This blog focuses primarily on the research efforts behind file signing certificates.
+For a more in-depth analysis of the web vector, please see this post.
+The starting point for simulating an attack was to have a clear understanding of where the problem was.
+An attacker could forge an ECC root certificate with the same public key as a Microsoft ECC Root CA, such as the ECC Product Root Certificate Authority 2018, but with different “parameters”, and it would still be recognized as a trusted Microsoft CA.
+The API would use the public key to identify the certificate but fail to verify that the parameters provided matched the ones that should go with the trusted public key.
+There have been many instances of cryptography attacks that leveraged failure of an API to validate parameters (such as these two) and attackers exploiting this type of vulnerability.
+Hearing about invalid parameters should raise a red flag immediately.
+To minimize effort, an important initial step is to find the right level of abstraction and details we need to care about.
+Minimal details on the bug refer to public key and curve parameters and nothing about specific signature details, so likely reading about how to generate public/private key in Elliptical Curve (EC) cryptography and how to define a curve should be enough.
+The first part of this Wikipedia article defines most of what we need to know.
+There’s a point G that’s on the curve and is used to generate another point.
+To create a pair of public/private keys, we take a random number k (the private key) and multiply it by G to get the public key (Q).
+So, we have Q = k*G. How this works doesn’t really matter for this purpose, so long as the scalar multiplication behaves as we’d expect.
+The idea here is that knowing Q and G, it’s hard to recover k, but knowing k and G, it’s very easy to compute Q.
+Rephrasing this in the perspective of the bug, we want to find a new k’ (a new private key) with different parameters (a new curve, or maybe a new G) so that the ECC math gives the same Q back.
+The easiest solution is to consider a new generator G’ that is equal to our target public key (G’= Q).
+This way, with k’=1 (a private key equal to 1) we get k’G’ = Q which would satisfy the constraints (finding a new private key and keeping the same public key).
+The next step is to verify if we can actually specify a custom G’ while specifying the curve we want to use.
+Microsoft’s documentation is not especially clear about these details, but OpenSSL, one of the most common cryptography libraries, has a page describing how to generate EC key pairs and certificates.
+The following command shows the standard parameters of the P384 curve, the one used by the Microsoft ECC Root CA.
+Elliptic Curve Parameter Values
+We can see that one of the parameters is the Generator, so it seems possible to modify it.
+Now we need to create a new key pair with explicit parameters (so all the parameters are contained in the key file, rather than just embedding the standard name of the curve) and modify them following our hypothesis.
+We replace the Generator G’ by the Q from Microsoft Certificate, we replace the private key k’ by 1 and lastly, we replace the public key Q’ of the certificate we just generated by the Q of the Microsoft certificate.
+To make sure our modification is functional, and the modified key is a valid one, we use OpenSSL to sign a text file and successfully verify its signature.
+Signing a text file and verifying the signature using the modified key pair (k’=1, G’=Q, Q’=Q)
+From there, we followed a couple of tutorials to create a signing certificate using OpenSSL and signed custom binaries with signtool.
+Eventually we’re greeted with a signed executable that appeared to be signed with a valid certificate!
+Spoofed/Forged Certificate Seemingly Signed by Microsoft ECC Root CA
+Using Sysinternal’s SigChecker64.exe along with Rohitab’s API Monitor (which, ironically is on a site not using HTTPS) on an unpatched system with our PoC, we can clearly see the vulnerability in action by the return values of these functions.
+Rohitab API Monitor – API Calls for Certificate Verification
+Industry-wide vulnerabilities seem to be gaining critical mass and increasing visibility even to non-technical users.
+And, for once, the “cute” name for the vulnerability showed up relatively late in the process.
+Visibility is critical to progress, and an understanding and healthy respect for the potential impact are key factors in whether businesses and individuals quickly apply patches and dramatically reduce the threat vector.
+This is even more essential with a bug that is so easy to exploit, and likely to have an immediate exploitation impact in the wild.
+McAfee aggressively developed updates across its entire product lines.
+Specific details can be found here.

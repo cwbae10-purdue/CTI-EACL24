@@ -1,0 +1,82 @@
+During the process of analyzing android malware, we usually meet some APK samples which hide or encrypt their main logic code.
+Only at some point does the actual code exist in the memory, so we need to find the right time to extract it.
+In this blog, I present a case study on how to repair a DEX file in which some key methods are erased with NOPs and decrypted dynamically when ready to be executed.
+Note: All the following analysis is based on android-4.4.2_r1(KOT49H).
+Let’s start our journey!
+First, I open the classes.dex file in some decompiling tools, as shown below.
+Figure 1.
+The decompiling result in some tools
+From Figure 1, we can see the code in each method is erased.
+Next, we first use 010 Editor to parse the dex file, as follows.
+Figure 2.
+010 Editor fails to parse the Dex file
+The parsing of the classes.dex file in 010 Editor fails.
+This should be caused because some fields inside the DEX file have been modified.
+These modified fields may be some offset fields that mark the offsets inside the file.
+If the value of offset is beyond the size of the DEX file, it causes the parsing failure.
+The length of the DEX file is 0x2B2DD8.
+I developed a program with C++ to parse the DEX file to check for abnormal fields.
+Some output is shown below.
+Figure 3.
+Output of parsing Dex file with a C++ program
+We can see the value of field “debugInfoOff” is abnormal in struct DexCode, which is larger than file size 0x2b2dd8.
+In this sample, these abnormal debugInfoOff fields are from 0x3ffff30 to 0x4000000.
+Figure 4.
+The definition of struct DexCode
+In order to parse the DEX file correctly in 010 Editor, I repaired the debugInfoOff field.
+I use the method “OnCreate” in class MainActivity as an example to show the parsing of the repaired DEX file in 010 Editor.
+Figure 5.
+The parsing of DEX file after repairing the debugInfoOff field
+I next modified the debugInfoOff field to zero.
+The insns_size is the length of instructions in code.
+One instruction has two bytes, so the length of the code is 0x74.
+The method code starts with bytecode |0E 00|, the rest of instructions are NOPs.
+The bytecode |0E 00 | represents return-void.
+The question is, how to get the actual bytecodes in the method?
+Based on my analysis, some key methods are extracted and erased with NOPs.
+Before a method is ready to be executed, the program could decrypt these bytecodes in the method, and after being executed the decrypted bytecodes will be restored with the original NOPs bytecodes.
+In Dalvik VM, a principle is that when only one method is being executed the bytecodes in it must be correct.
+In other words, if one method is still not executed, it’s possible that its bytecode could be incorrect.
+So the sample just takes advantage of this principle to implement a dynamical decryption method before one method is ready to be executed.
+Next, I looked into how to decrypt a method dynamically before the method is ready to be executed.
+Through some reverse engineering and analysis, I found that the program can hook the method dvmResolveClass inside dalvik VM.
+When a method in a class is executed, the loading of the class must be completed.
+The method dvmResolveClass is invoked when loading a class.
+Following are the ARM instructions of the method dvmResolveClass in IDA Pro.
+Figure 6.
+The correct ARM instructions of dvmResolveClass in IDA Pro
+Next, I continued to look into the hooked dvmResolveClass when dynamically debugging in IDA Pro.
+Figure 7.
+Hooked dvmResolveClass
+When the arm instruction is executed the program will jump to sub_75485310.
+The following is the execution flow of sub_75485310:
+Figure 8.
+The execution flow of sub_75485310
+The ARM instruction “BLX R3” is to execute the actual method dvmResolveClass.
+Then the program executes the instruction at address 0x75938000.
+At address 0x75938014 the program will then jump to 0x414E468A to enter into the scope of the actual method dvmResolveClass.
+Figure 9.
+The execution flow of 0x75938000
+Figure 10.
+Return to the scope of actual method dvmResolveClass
+Now that the program hooks the method dvmResolveClass, and at this time the correct bytecodes of the method have been in the memory.
+The pointer insns in struct Method stores these actual bytecodes.
+The definition of struct Method is shown below:
+Figure 11.
+The definition of struct Method
+Next, we get these actual bytecodes through modifying the source code in method dvmResolveClass.
+The following are some added key codes.
+Figure 12.
+The key code added in dvmResolveClass to get actual bytecodes
+We then saved these actual bytecodes in a local file.
+Figure 13.
+The saved file includes actual bytecodes
+Finally, combining the output of Figure 3 and this saved file, I developed a python script to patch the original classes.dex file, and the repaired classes.dex is shown below.
+Figure 14.
+Compare the repaired dex file with original dex file
+Figure 15.
+Decompiling the repaired dex file in dex decompiling tool
+Comparing Figure 1 and Figure 15, we can see that these actual small instructions have been restored.
+Because the android system is open-sourced, we can understand the implementation of the dalvik VM well through reading source codes from AOSP.
+You can modify the source code inside dalvik VM and develop your own tool to repair different kinds of hardened DEX files.
+sha256: b244cf89822d188fc7b955823303d9b2ebb63c2b21730fd06feff14832e355d2

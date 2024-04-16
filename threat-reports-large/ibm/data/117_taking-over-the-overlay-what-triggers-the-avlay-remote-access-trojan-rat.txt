@@ -1,0 +1,114 @@
+This is the second installment in a three-part series on the AVLay RAT discovered by IBM X-Force.
+Part one explained how the researchers reverse engineered the malware.
+The third installment demonstrates how X-Force gained control of AVLay and fully simulated the overlay attack in its labs.
+Most overlay malware attacks work in similar ways.
+To begin, the malware monitors active browser windows the user is interacting with, waiting to match a window caption or class name with those on its target list.
+When a match is found, the attacker is alerted about the banking session underway via the malware’s command-and-control (C&C) server.
+Fraudulent transactions facilitated by these remote access tools are not fully automated and require the attacker to interact with the victim and their online banking session in real time.
+To orchestrate the fraudulent activity, the attacker uses overlay screens that pop up and persist on the victim’s display, preventing them from interacting with the legitimate applications on their device.
+Those persistent screens, or overlays, are designed to look like a page from the victim’s banking website, and often act as a way to phish for information, such as personally identifiable information (PII), contact details and two-factor authentication (2FA) codes.
+Additional malware modules keylog the victim’s keystrokes to collect their credentials, and the remote session allows the attacker to take over mouse movements as well.
+To analyze this Brazilian Delphi-based malware, as we noted in part one, we used the Interactive Delphi Reconstructor (IDR) to find out how AVLay monitors the victim’s browser for the application window captions running in the foreground.
+We examined the objects on the main form and analyzed their event handlers.
+Since examining the foreground window is a recurring task, we examined the related event handlers of Delphi Timer objects, which resulted in our focusing on a function dubbed tempo438.
+We concluded that tempo438 was an object monitoring for a targeted browser window — one in which a victim may be accessing their bank account online.
+Figure 1: An event handler function for one of the timers on the main form (Source: IBM Security)
+To get the information the attacker needs, tempo438 uses the GetForegroundWindow application programming interface (API) to obtain a handle for the window the user is actively viewing.
+It then uses GetWindowTextW or SendMessageW with the WM_GETTEXT parameter to get the window title and GetClassNameW API to get the window class name.
+Lastly, the object compares the data with a predefined list of targets.
+Figure 2: The tempo438 function in IDA monitors the foreground window (Source: IBM Security)
+After a successful match of the properties of the foreground window with the attacker’s target bank application, the malware establishes a connection with its C&C server.
+The image below shows that the malware registers a random Transmission Control Protocol (TCP) port in the 17000–18000 range, sets the host artigosdeluxo.me to the socket, then activates it.
+Figure 3: Activation of the socket when a target is matched (Source: IBM Security)
+To understand the communications with the malware’s C&C server, we needed to examine its Delphi socket objects via the IDR tool and understand their callback functions.
+The image below shows the socket objects as they appear in the IDR tool.
+Each socket has three registered event handlers:
+OnConnect — event handler is executed as soon as the connection is established
+OnRead — executed when data is received
+OnError — executed whenever an error occurs
+We began by examining the OnConnect event handler of the first socket, which shows the first thing that happens after the malware is triggered and the socket becomes active:
+Figure 4: Socket objects and their event handlers (Source: IBM Security)
+In the image below, on the top is the decrypted string REQCONDATA, a decrypted semicolon, string concatenation, and some functions that involve the generation of a random string and a switch case that involves encryption.
+We will get back to that process later.
+The lower part of the image shows the Delphi API function TCustomWinSocket_SendText.
+This implies that REQCONDATA is a command being sent to the attacker’s C&C server with some additional wrapping and encryption as soon as a connection is established.
+Figure 5: The OnConnect callback of the first socket (Source: IBM Security)
+To understand more about the commands that the malware client expects from the C&C server, we explored the OnRead event handler for the first socket.
+This hefty function decrypts and parses the messages received from the server.
+It starts by calling the Delphi API TCustomWinSocket_ReceiveText and begins to compare the received message to a list of predefined text commands.
+The image below shows that the function compares the message received from the server to the RESCONDATA command.
+When this command is received, it activates the second socket.
+Figure 6: The OnRead callback comparing received text with RESCONDATA and activating the second socket (Source: IBM Security)
+We observed more than 30 different commands for this function and had to reverse engineer the code block that followed each command to understand what it actually does.
+Some examples of commands we looked at are:
+RESCONDATA — activates the screenshots socket
+FRAMEFZSYS — starts the overlay attack by displaying fake forms to the user and persisting on their screen
+FRAMEUFSYS — hides the overlay
+RESTARTSYS — makes the malware reboot the operating system
+CLICKSYSTEM — makes a mouse click
+KEYBDSYSTEM — sends keyboard button presses
+We’ll touch upon other C&C commands later.
+Gaining an understanding of the main C&C commands was essential to our malware analysis and later helped us reconstruct the attack in our labs.
+AVLay’s developers used encryption to keep the malware’s actions and C&C data exchange under wraps.
+After the REQCONDATA string, a process of constructing a message to the server takes place, as show in the image below.
+The command is concatenated with a semicolon and a random string that is later encrypted.
+The gen_random_string function randomizes a string of 10 to 20 characters and returns that string.
+Before the encryption_switch function is called, the message to the C&C is formatted as REQCONDATA;<random string>.
+Figure 7: The gen_random_string function (Source: IBM Security)
+The image below shows the implementation of the encryption_switch function and the extensive use of functions with names that begin with TRwCSP.
+This is a good indication that the RAPware library, which we’d seen in the string decryption process, was used here as well.
+Figure 8: The encryption_switch function (Source: IBM Security)
+Looking at the different cases in this switch statement, each case corresponds to a different encryption algorithm.
+The algorithm is stored in a global variable and determined on runtime.
+This means a different encryption algorithm is selected each time the malware is launched and used to protect its communications with the C&C server.
+The enumeration of the available algorithms is as follows:
+Case 0: CALG_AES_128
+Case 1: CALG_AES_192
+Case 2: CALG_AES_256
+Case 3: CALG_DES
+Case 4: CALG_RC2
+Case 5: CALG_RC4
+Case 6: CALG_3DES
+Case 7: CALG_3DES_112
+Since the encryption varies on each run, the server must have a way to know which encryption algorithm and key are used each time.
+AVLay’s developer solved this by using a specific structure for each request.
+Below are the message patterns as viewed via Wireshark:
+Figure 9: AVLay’s encrypted C&C communications displayed via Wireshark
+Each message has the same structure: the encrypted string, a semicolon, a numerical identifier of the algorithm used and the encryption key as follows: <;;;;;;encrypted_string>;;;;;;;<;;;;;;algorithm_id>;;;;;;<;;;;;;encryption_key>;;;;;;.
+When operating a remote access Trojan, the attacker typically has the ability to see the victim’s desktop in real time.
+They implement this by repeatedly taking screenshots of the victim’s desktop and sending them to the attacker’s server, frequently updating them in the viewer’s window.
+In AVLay’s case, the RESCONDATA command activates the second socket, which is reserved for screenshot grabbing.
+To learn more, we analyzed the event handlers for this socket in the same manner we did for the commands socket.
+The OnConnect event handler initializes the magnification library, which is normally used for magnifying portions of the screen.
+This is manipulated by AVLay as a screen capturing tool, most likely to bypass some security controls that can block suspicious screen capture through standard API functions such as PrintWindow.
+Next, AVLay sends the SYNCONDATA message to signal to the attacker, informing them that the screenshot socket has been activated.
+Figure 10: The OnConnect event handler of the screenshots socket (Source: IBM Security)
+When examining the OnRead event handler for the screenshot socket, we saw the same parsing and decryption being used to decipher the received text.
+Next, we examined the commands that the malware client expects.
+As shown in the image below, the first command is REQNWPRINT.
+This command takes a screenshot of the victim’s desktop using the magnification library and embeds into a PNG image.
+It then compresses it using Zlib.
+Figure 11: The OnRead event handler of the screenshots socket — REQNWPRINT command (Source: IBM Security)
+After compressing the file, AVLay calculates its size in bytes and sends it, concatenated, to the SIZNWPRINTcommand.
+For some reason, the malware’s author did not use encryption in this part as they did in all the other commands sent to the server.
+The screenshot size is crucial for the server to determine how many bytes to read from the socket and parse as the screenshot image.
+Figure 12: Sending the size of the newly created screenshot to the SIZNWPRINT command (Source: IBM Security)
+The server is expected to parse the size of the screenshot and send the REQDTPRINT command to request the actual screenshot data.
+Figure 13: Sending the screenshot data upon the REQDTPRINT command (Source: IBM Security)
+As shown in the screenshot socket session on Wireshark, only the commands sent by the server are encrypted.
+The client sends the size and data of the screenshot in plain text.
+Figure 14: The screenshots socket session in Wireshark
+The malware client presents the ability to programmatically execute mouse clicks and keystrokes, and the code has multiple implementations by using different API functions.
+The extensive use of different implementations might be an attempt to evade security products in which detection is based on specific rules.
+AVLay uses a command called CLICKSYSTEM to generate clicks on the victim’s machine.
+Each time the client receives this command, it creates a new thread that’s responsible for generating the click.
+The image below shows one of the implementations using the mouse_event function for generating a click.
+There are some other implementations that use other APIs such as SendMessage and PostMessage.
+The coordinates for the click are sent as part of the command message in the following structure: CLICKSYSTEM;<X>;;;;;;;<;;;;;;Y>;;;;;;;<;;;;;;implementation type>;;;;;;.
+Figure 15: Left and right click implementation by using the user32.dll mouse_event API function (Source: IBM Security)
+Like the mouse clicks, keystroke capturing is implemented by using the KEYBDSYSTEM command.
+There is a considerable amount of keystroke implementations available in the malware code, including user32.dll, SendInput, SendMessage, PostMessage and even a programmatic use of the clipboard and the ctrl+v paste sequence using the Keybd_event and MapVirtualKwyW, as shown in the image below.
+Figure 16: Keystrokes implementation by copying the string to the clipboard and pasting with ctrl+v (Source: IBM Security)
+The structure of the message that is sent to the client for making keystrokes is KEYBDSYSTEM;<implementation type>;<;;;;;;string>;;;;;;.
+In part three of this series, we will demonstrate how we took over the malware and reconstructed the attack in our labs.
+Pavel is a malware researcher for IBM Security's Trusteer's group.

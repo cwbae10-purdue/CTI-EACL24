@@ -1,0 +1,62 @@
+In this blog post we confirm that the Avatar rootkit continues to thrive in the wild, and disclose some new information about its kernel-mode self-defense tricks.
+We continue our research into this malware family.
+Back at the beginning of May we posted preliminary information about Win32/Rootkit.Avatar rootkit (Mysterious Avatar rootkit with API, SDK, and Yahoo Groups for C&C communication).
+One of the major questions not covered in that previous research was this: What payload and plugins does Avatar install onto infected machines?
+We continue our research and are still tracking this malware family.
+In the middle of July we detected a repacked Win32/Rootkit.Avatar with an active command and control (C&C) server.
+In this blog post we confirm that Avatar in-the-wild activity continues, and disclose some new information about its kernel-mode self-defense tricks.
+Configuration information for analyzed samples has the same format as discussed in our previous analysis at the beginning of summer.
+Decrypted, the configuration looks like this:
+However, the main command center shown in the configuration information was not working at the time of our analysis and we checked the backup control system, which uses Yahoo Groups.
+Win32/Rootkit.Avatar has an additional way of communicating with the C&C if other methods are not working correctly.
+The payload tries to search for messages in Yahoo Groups using special parameters.
+How this technique works was already described in our previous blog about Avatar.
+The specific group search parameters for this botnet look like this URL: hxxp://finance.groups.yahoo.com/group/I62TUUWM/.
+After activation this search request we found the following Yahoo Group with an encrypted message:
+The group description is encrypted with an RSA algorithm and a 1024-bit private key from the bot configuration information.
+The message looks like this after decryption:
+In our case the main C&C from configuration information was not active and the bot therefore tries to use the second communication channel via Yahoo Groups.
+After successful communication with the second C&C the bot received following command to download additional modules:
+These instructions download two additional modules to infected machines:
+cr.mod (Win32/Agent.UZD) – SOCKS5 proxy client
+loader29.mod (Win32/TrojanDownloader.Zurgop.AZ) – also known as Smoke bot downloader
+In the previous blog about the Avatar rootkit we had a question left open about the nature of the downloaded payload because not all C&C functionality was active at the time of our analysis.
+But this time we recognized one SOCKS5 plugin and one additional payload with Smoke bot.
+When infecting a system the malware modifies one of the legitimate drivers already installed in the system and puts its modules and the payload into a hidden storage created at the end of the hard drive.
+So, in order to be able to stay undetected on the system, it protects the corresponding areas of the hard drive from being read or overwritten.
+To achieve this goal the Avatar hooks the storage miniport driver.
+This approach isn’t new and has already been employed by such complex threats as TDL3/4 Olmasco and others.
+However, its implementation details make it interesting and worth describing in the blog post.
+.
+It tries to camouflage the hooks to look like a legitimately loaded kernel-mode driver.
+More specifically, the malware duplicates the image of the loaded hard disk miniport driver into kernel-mode address space and modifies it so as to be able to intercept disk read/write requests.
+Consider the following image representing which modifications are made to the system after infection with Avatar:
+In other words, the malware remaps the image of the original kernel-mode driver into kernel-mode address space and uses one of its sections to inject malicious code.
+The Avatar looks for the section to infect – the name of which is ‘INIT’ – and the attributes field contains the value IMAGE_SCN_MEM_DISCARDABLE.
+This means that the contents of the section are unloaded from memory after the driver is initialized so that the malware is able to take advantage of the freed space to keep its malicious code there.
+As a result the malicious code will be located at addresses that belong to the legitimate image and, thus, won’t trigger any alarms from security software .
+The malware renames the section as ‘NONPAGED’ and removes the IMAGE_SCN_MEM_DISCARDABLE value from its attributes and writes malicious code into it.
+The fields of the DRIVER_OBJECT structure corresponding to the hard drive miniport driver are modified as well so as to reflect the changes:
+• DriverInit – entry point of the driver image
+• DriverStart – base address of the image when loaded
+• MajorFunctions – array of entry point of driver handlers, including IRP_MJ_INTERNAL_CONTROL
+• DriverUnload – the routine executed upon unloading driver
+• DriverExtension->AddDevice – the routine responsible for handling PnP devices
+After such modifications the malicious code written into the new section in the fake image is able to intercept read/write requests to the hard drive, and therefore protect areas of the hard drive containing the rootkit components.
+After that the malware cleans up traces of the original hard drive miniport driver left in the system so as to conceal the addresses of entry points of the original I/O handlers.
+If one tries to read the image of the modified driver from the disk so as to compare it to the instance loaded into kernel-mode address space (with the fake instance) the malware will intercept the result of such an operation and return an unmodified driver.
+As a result it’s unlikely that the difference between the file read from the disk and the one in memory will be noticed.
+However, the digital signature of the modified driver is no longer valid.
+ESET’s forensic tool HiddenFsReader has been updated so that it will work with the Avatar hidden file system.
+A dump of the hidden file system presented here:
+HiddenFsReader is only able to work correctly with an active Avatar infection.
+This is because in order to decrypt the hidden file system we need extract ten bytes of an encryption key that is stored in the Avatar driver and generated randomly by each infection.
+After disinfecting the infected machine it’s not possible to restore any filesfrom the hidden partition but this information can be helpful when following up with an investigation since interesting facts are revealed about names for directories and files within the hidden partition.
+These names of files and directories are generated randomly for each infected machine.
+Win32/Rootkit.Avatar is an interesting example of malware with multiple techniques for bypassing standard forensic approaches and making analysis of this malware family more difficult.
+Anton Cherepanov, Malware Researcher
+Eugene Rodionov, Malware Researcher
+Aleksandr Matrosov, Security Intelligence Team Lead
+SHA1 hashes for analyzed samples:
+Dropper1 (tron botnet) – 4b8a61e4eb1e9bdd67d5e82a4c6c71ce842c9710
+Dropper2 (tron botnet) – d68ffd63702e34dbade04e7775f36ac8474ae1e1

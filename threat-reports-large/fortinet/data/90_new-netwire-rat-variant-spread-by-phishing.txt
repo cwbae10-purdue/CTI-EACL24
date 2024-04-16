@@ -1,0 +1,185 @@
+A FortiGuard Labs Threat Analysis
+NetWire is a Remote Access Trojan (RAT) malware that has been widely used for many years.
+Recently, FortiGuard Labs noticed a malware spreading via phishing email, and during the analysis on it, we discovered that it was a new variant of NetWire RAT.
+In this analysis, I am going to present what this new variant does on a victim’s system.
+Figure 1, below, is a screenshot of the phishing email content.
+It contains a PDF-like picture at the bottom with a hyperlink pointing to the download link of NetWire.
+Once a victim clicks on it, the malware file is downloaded on to the victim’s system.
+As you can see, the malware file download link is: “hxxps://www.mediafire.com/file/d86hz5qj21lmhrb/PROFORMA-INVOICE_0990.7z/file”.
+The downloaded file is a 7z file, which contains the new variant of NetWire RAT.
+After decompressing it, we are able to get an EXE file with the name of “PROFORMA-INVOICE 0990.exe”.
+This variant of NetWire was compiled using MS Visual Basic.
+It uses many anti-analysis techniques to protect it from being analyzed.
+It dynamically extracts malicious code onto its memory and executes it.
+This makes it harder to perform a static analysis.
+Right from the beginning, it stops running until the victim moves their mouse.
+It does this by comparing the mouse cursor position twice.
+A non-matching result means mouse has been moved.
+This technique is used for anti-sandboxing.
+Figure 3 shows that it calls the API USER32.GetCursorPos() twice to obtain two mouse cursor positions and then compares them.
+If they are same (victim not moving mouse), it stops running, and after sleeping it checks again.
+It does this repeatedly until the results are different.
+3.
+Anti-Debugging techniques are also used.
+It detects if hardware breakpoints, memory breakpoints, and a one-step breakpoint have been set.
+Other than that, each time it calls several key API functions, it first checks to see if the API had a soft breakpoint set by a debugger.
+Below is a code snippet of it performing this detection:
+call dword ptr [ebp+110] ; kernel32.GetCurrentThread
+push dword ptr [edi+4000]
+push eax
+call dword ptr [ebp+104] ; ntdll.ZwGetContextThread
+cmp eax, 0
+jnz short 00391EA5
+mov eax, dword ptr [edi+4000]
+cmp dword ptr [eax+4], 0 ; Dr0
+jnz short 00391EA5
+cmp dword ptr [eax+8], 0 ; Dr1
+jnz short 00391EA5
+cmp dword ptr [eax+C], 0 ; Dr2
+jnz short 00391EA5
+cmp dword ptr [eax+10], 0 ; Dr3
+jnz short 00391EA5
+cmp dword ptr [eax+14], 0 ; Dr6
+jnz short 00391EA5
+cmp dword ptr [eax+18], 0 ; Dr7
+jnz short 00391EA5
+pop eax ; Key API address, like kernel32.CreateProcessInternalW
+mov bl, byte ptr [eax]
+cmp bl, 0CC ; check soft breakpoint
+je short 00391EA5
+mov bx, word ptr [eax]
+cmp bx, 3CD ; check soft breakpoint
+je short 00391EA5
+mov bx, word ptr [eax]
+cmp bx, 0B0F ; check soft breakpoint
+je short 00391EA5
+call eax ; call the API like kernel32.CreateProcessInternalW
+movd ecx, mm1
+movd edx, mm3
+sub edx, 4
+loc_391E95:
+xor dword ptr [edx], ecx
+sub edx, 4
+cmp dword ptr [edx+4], 41414141
+jnz short 00391E95
+jmp ecx
+loc_391EA5:
+sub esp, 100
+sub ebp, 100
+popad
+jmp eax ;;;; Jump to random address to crash itself.
+It also calls the API ntdll.ZwGetContextThread to obtain the current thread context structure, which contains the CPU debug register status.
+Once the debugger sets hardware breakpoints, the CPU registers that Dr0, Dr1, Dr2, Dr3, Dr6 and Dr7 are not zero.
+Register eax is an API address.
+It checks the address at beginning to see if they are set to 0CC, 3CD and 0B0F, which are the opcodes of soft breakpoints (Int 3).
+Once one of above conditions is triggered, NetWire goes to a random address to crash itself.
+Then Windows will pop up a crash message, like the one shown in Figure 4.
+4.
+Like most malware, NetWire spawns a suspended child process of itself, and then modifies its memory and its thread context data.
+In this case, it only modifies the OEP value in the thread context.
+When everything is ready, the parent process resumes the child process and exits.
+The true code of NetWire was extracted to overwrite the existing code in the child process and it is executed there.
+This way, the malware can make itself harder to be analyzed.
+The OEP of the true code of the new NetWire variant is called in a thread.
+It starts by initializing several global variables and Windows Sockets by calling the API WSAStartup().
+Next, it decrypts some encrypted strings.
+It checks to see if the current executable file is located in the correct folder (%AppData%\Install) and has right file name (Host.exe).
+If not, it relocates the file into “%AppData%\Install” and renames it as “Host.exe”.
+It then runs the relocated file and exits the current process.
+The new process then performs all of the above procedures again.
+Figure 5 is the screenshot of the process tree.
+You can see the process where NetWire was relocated to “C:\Users\user_name\AppData\Roaming\Install\Host.exe”.
+NetWire continues to create its home key (HKCU\SOFTWARE\NetWire) as well as adding it into the auto-run group in the victim’s registry.
+In this way, it runs automatically when the infected system starts.
+Figure 6 shows the screenshot of the Registry Editor.
+NetWire creates a log folder to store the log files of information that it collects from the victim’s system.
+The log folder is located at “%AppData%\Logs”.
+It then calls the _beginthreadex() function to start a thread, the thread function of which registers a window class, whose window procedure function is a keylogger.
+It then records all of the victim’s keyboard actions, times, as well as the titles of what the victim is typing on.
+The recorded data is encoded and stored in a log file.
+The left side of Figure 7 is the encoded keylogger record and the right side is the plaintext content that was decoded by my python script.
+As you can see in the red rectangle, what it has harvested is a website that I typed in on Google Chrome browser.
+It obtains the IP address of C&C server from a DNS service.
+Its domain is found in the decrypted string, which for this variant is “gbam0001.duckdns.org:3366”.
+Since its C&C server was down at the time I started to analyze this new variant, I used a fake C&C server on one of my test systems to send the crafted response packet used in my analysis.
+Once the connection with its server is established, NetWire starts waiting for the C&C server to reply with a “9B” command packet, which I crafted to feed it from the fake C&C server.
+NetWire has a function that I call “Task_Fun()” to handle all of the commands from the C&C server.
+Once NetWire receives the “9B” command, Task_Fun() handles it in a sub procedure which collects the victim’s computer basic information and sends back to the C&C server.
+Figure 8 shows is a packet that is about to be sent to the C&C server.
+The first four bytes are “56” in hexadecimal, which is the size of the followed data.
+“9B” is the command number.
+The rest is the payload data.
+“07” is a special separator to separate different data fields.
+All the packets have the same structure as below:
+From the “9B” packet, we can see NetWire harvested the following information from the victim’s system:
+Current login User name collected by calling the API GetUserNameA() or from the system environment variable.
+Victim’s Computer name by calling the API GetComputerNameA() .
+Victim’s Windows version information by calling the API GetVersionExA().
+The topmost application title.
+It is Google Chrome in this analysis.
+Victim’s computer’s current time.
+It is “2019-09-14 16:59:34” in this analysis.
+Computer’s IP address.
+It is “10.0.2.15” in this analysis.
+This new variant of NetWire currently only supports the “9B” command.
+As I mentioned above, the function Task_Fun() handles the commands, with one sub procedure called for one command.
+Other than the “9B” command, it has more than 80 sub procedures.
+That means it can handle more than 80 commands sent from the C&C server.
+These are the entire feature set that this new NetWire variant supports.
+Let’s take a look at them and see what they can do on the victim’s system.
+1.
+Obtains a time value how long the victim has been inactive since the last input.
+Command number: 097h 2.
+Executes a downloaded executable file or an existing local file like “cmd.exe”.
+Command numbers: 09Ch, 09Ch, 0A3h, 0AFh, 0B6h, 0C3h
+3.
+Performs actions including: exit NetWire process, close the socket to C&C server, read a value from its home key in the system registry, reset or delete a specified registry key, delete the NetWire executable file and relocate its executable file (“Host.exe”).
+Command numbers: 09Fh, 0A0h, 0A1h, 0A2h, 0AEh, 0E5h, 0E7h
+4.
+Collects the partition and hard driver information of the victim’s system; obtains file information in a specified folder; obtains file information by specified file type; creates specified directory and file, writes content to a specified file; deletes, relocates a specified file, and other file related operations.
+Command numbers: 09Fh, 0A0h, 0A1h, 0A2h, 0AEh, 0AFh, 0B0h ~ 0B5h, 0B7h, 0DFh, 0E8h
+5.
+Steals and collects credentials stored in the victim’s system by different software.
+It focuses on these: 360Chrom, Opera, Mozilla Firefox, Mozilla SeaMonkey, Google Chrome, Comodo Dragon browser, YandexBrowser, Brave-Browser, Mozilla Thunderbird, Microsoft Outlook and Pidgin.
+It also reads the victim's browser history records from the history folder.
+Command numbers: 0D4h, 0D5h, 0D6h, 0D7h, 0D8h, 0D9h.
+6.
+Operates the log files in its folder (“%AppData%\Log”), including enumerate log files, get specified log file attribute, read and delete a specified log file.
+Command numbers: 0CCh, 0CEh, 0CFh, 0D0h.
+7.
+Obtains window handles that are created on the victim’s device; sends a windows message to a window by specified windows handle; obtains information of all running processes on the victim’s device; kills a running process using a given process ID; obtains a list of TCP or UDP endpoint information (TCP or UDP, local and remote IP address, port, status) as well as the process information (process name, process id) that connects this endpoint.
+Below is an example of collected endpoint data from my test system:
+1E6D8050 73 76 63 68 6F 73 74 2E 65 78 65 07 37 30 38 07 svchost.exe708
+1E6D8060 54 43 50 07 30 2E 30 2E 30 2E 30 3A 31 33 35 07 TCP0.0.0.0:135
+1E6D8070 30 2E 30 2E 30 2E 30 3A 30 07 4C 69 73 74 65 6E 0.0.0.0:0Listen
+1E6D8080 69 6E 67 2E 2E 2E 07 6E 63 2E 65 78 65 07 33 34 ing...nc.exe34
+1E6D8090 32 38 07 54 43 50 07 30 2E 30 2E 30 2E 30 3A 34 28TCP0.0.0.0:4
+1E6D80A0 34 33 07 30 2E 30 2E 30 2E 30 3A 30 07 4C 69 73 430.0.0.0:0Lis
+1E6D80B0 74 65 6E 69 6E 67 2E 2E 2E 07 53 79 73 74 65 6D tening...System
+1E6D80C0 07 34 07 54 43 50 07 30 2E 30 2E 30 2E 30 3A 34 4TCP0.0.0.0:4
+1E6D80D0 34 35 07 30 2E 30 2E 30 2E 30 3A 30 07 4C 69 73 450.0.0.0:0Lis
+1E6D80E0 74 65 6E 69 6E 67 2E 2E 2E 07 77 6D 70 6E 65 74 tening...wmpnet
+1E6D80F0 77 6B 2E 65 78 65 07 32 37 32 30 07 54 43 50 07 wk.exe2720TCP
+1E6D8100 30 2E 30 2E 30 2E 30 3A 35 35 34 07 30 2E 30 2E 0.0.0.0:5540.0.
+1E6D8110 30 2E 30 3A 30 07 4C 69 73 74 65 6E 69 6E 67 2E 0.0:0Listening.
+1E6D8120 2E 2E 07 53 79 73 74 65 6D 07 34 07 54 43 50 07 ..System4TCP
+1E6D8130 30 2E 30 2E 30 2E 30 3A 32 38 36 39 07 30 2E 30 0.0.0.0:28690.0
+1E6D8140 2E 30 2E 30 3A 30 07 4C 69 73 74 65 6E 69 6E 67 .0.0:0Listening
+[…]
+Command numbers: 0BEh, 0C0h, 0C1h, 0C2h, 0E3h.
+8.
+Collects the victim’s computer basic information, which include the current user name, logon session information, computer name, CPU information, Windows version, memory status, network status, and Windows installation path.
+It also collects the PowerShell installation path, NetWire executable file full path, and its Log folder full path, etc.
+Command numbers: 0BAh, 0BCh.
+9.
+Controls the victim’s input devices, including the Keyboard and Mouse.
+By sending keybd_event and mouse_event, it can simulate Keyboard and Mouse operations.
+Command numbers: 0C5h, 0C6h, 0C7h, 0C8h.
+Once the above command action is finished, it sends packets to its C&C server with execution status or the data it collected.
+The original downloading URL in the phishing email and the domain of the C&C server are both rated as “Malicious Websites“ by the FortiGuard Web Filtering service.
+The 7z file and decompressed exe file are detected as “W32/NetWire.A!tr” by the FortiGuard Antivirus service.
+[PROFORMA-INVOICE 0990.exe] C9EC52AE2DDB993E2DA0EFD4FBAB0BFECDC7CC6DA16E446AC9C92E7981733E6E
+[PROFORMA-INVOICE 0990.7z] 56BB4AAC4E52FD5D71824782D1DBE05D4209045C1E5DD80936690E81652183B8
+Learn more about FortiGuard Labs and the FortiGuard Security Services portfolio.
+Sign up for our weekly FortiGuard Threat Brief.
+Read about the FortiGuard Security Rating Service, which provides security audits and best practices.

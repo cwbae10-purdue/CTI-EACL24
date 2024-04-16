@@ -1,0 +1,83 @@
+[Note: This post is continuation of my previous article]
+Let's dive deeper into the internals of this powerful backdoor program.
+1.
+Protocol Decryption
+Leouncia's C&C payload decryption consists of two major phases.
+The first part is the formulation of a dynamic permutation table using a variable 128 bit key.
+This permutation table is further used to decrypt the actual payload.
+Let me explain it step by step:
+1.1 Table Construction
+The main ingredient of this table construction is a 128 bit key.
+This key is extracted from the first 16 bytes of every payload stub.
+By payload stub, I mean the data after removing HTTP headers.
+After the first 16 bytes will be the actual payload to be decrypted.
+As part of the table construction, 1032 bytes of memory is allocated.
+After skipping the first 8 bytes, the next 1024 bytes are initialized with a counter value ranging 0x00 to 0xff.
+These values are assigned in chunks of 4 bytes so 256 iterations are enough to initialize this complete buffer.
+Next comes randomization of this buffer.
+This randomization is controlled by a dynamic byte value taken from the table itself and using it with one of the key's bytes.
+Let's explain it using a C style syntax.
+buf = Start of 1024 byte long bufferA = Initialized with start of bufferB = initialized with start of key bufferR = Initialized with 0i and j = two counters initialized with 0then it happens like this:START loopR = R + A[i] + B[J]SWAP (A[i], buf[R])j = j + 1if ( j >= 16) j = 0i = i + 4END loop (terminate after 256 iterations)
+1.2 Decryption routine
+Once the permutation table is ready, it's time for the actual decryption.
+Data after the first 16 bytes of the payload and the above permutation table is passed onto the decryption routine.
+The logic inside the decryption routine is:
+buf = Start of the 1024 bytes long permutation buffer.payload = stub data + 16payload_len = size of payloadv4 = buf[4]
+backup_res, backup_cnt, payload_index, cnt, res, vCnt = 0 START LOOP
+cnt = cnt + 1
+[take value from buf at index cnt]vCnt = buf[cnt] res = v4 + vCnt
+v4 = res[save value at index cnt int a variable]backup_cnt = buf[cnt]; [save value at index res int a variable]backup_res = buf[res][Swap value at res with value at cnt]buf[cnt] = backup_res buf[res] = backup_cnt index = backup_cnt + backup_res [xor it with current payload byte] payload[payload_index++] ^= buf[payload_index] if ( payload_index >= payload_len ) END loop
+Result of this decryption is that a binary buffer like:
+will get converted into plain text like:
+Volume in drive C has no label.Volume Serial Number is 48E4-C8B8 Directory of C:\Documents and Settings\Administrator\Desktop12/02/2010 06:34 PM <DIR> .12/02/2010 06:34 PM <DIR> ..12/02/2010 06:32 PM 45,056 a.txt.exe11/29/2010 04:10 PM 45,056 ~svohost.exe 2 File(s) 90,112 bytes 2 Dir(s) 66,822,197,248 bytes free
+2.
+Payload Commands
+Leouncia payload commands consist of four major categories.
+Each of these commands are recognized by different opcodes defined by the single characters 'y', n', 'c' and 'd'.
+2.1 'd' - Hibernation
+Like Vinself, Leouncia has the capability to hibernate itself for an extended period of time.
+This hibernation is controlled by a file named "readx".
+Once this command is received, Leouncia tries to read the "readx" file from the current directory.
+How is this file get created in the first place?
+I'll explain that later.
+The file "readx" will contain the activation date and time in 'FileTime' format like \HIGH DATE\LOW DATE.
+Leouncia will construct the system time out of it and will check if the current date and time is ahead of or equal to this.
+If not it will hibernate itself until that time comes.
+Note: The routine to manage all this hibernation is also invoked at the beginning of every execution.
+2.2 'c' - Prepare hibernation time
+This command has a format like 'c'<a value either '1' or '2'><number of milliseconds or a date in FileSystem date format> like c2xxxxxx or c1\xxxxxx\xxxxxxx, where x can be a character between '0' to '9'.
+When '2' is received as the parameter, Leouncia assumes that the next string is representing seconds and it hibernates itself for this many seconds.
+Where in the case of '1' Leouncia considers the next string as an activation date and time and writes that into the "readx" file.
+2.3 'n' - Miscellaneous
+This is an umbrella command where the next characters represent different types of sub commands.
+This is list of available sub commands:
+'1' This command asks Leouncia to enumerate the running process list, encrypt it and send it back to the CnC server.
+'1' This command asks Leouncia to enumerate the running process list, encrypt it and send it back to the CnC server.
+'2' Get dynamic data from the CnC and create and write it to a file specified by the attacker.
+'2' Get dynamic data from the CnC and create and write it to a file specified by the attacker.
+'3' Read the attacker's specified file onto system and send contents back to CnC.
+'3' Read the attacker's specified file onto system and send contents back to CnC.
+'4' Invoke an attacker's specified process onto infected system.
+'4' Invoke an attacker's specified process onto infected system.
+'5' Given pid (process id), terminate a running process.
+'5' Given pid (process id), terminate a running process.
+'6' Send a list of all logical drives back to attackers.
+'6' Send a list of all logical drives back to attackers.
+2.4 'd' Spawn windows commands prompt and run commands of the attacker's choice.
+This command serves as a reverse shell for the attackers.
+The attacker specify its commands in response to 'GET' requests and the backdoor component invokes these commands on the Windows command shell and sends the response back to the CnC in the form of a 'POST'.
+In my lab run, attackers tried to run a variety of commands on my lab machine , some of them are as follows:
+Note: Text in blue are commands and in red are response.
+n6A:\ C:\ D:\
+ytime /t06:36 PM
+yat 18:39 cmd.exe /c "del "C:\Documents and Settings\Administrator\Desktop~svohost.exe"
+Added a new job with job ID = 1 etc.
+3.
+What's in the name?
+I named this malware Leouncia because the malware is using it as a magic string while dynamically generating its random URIs.
+The only explanation for this strings is a quick search on google showing some random guy using it as its Avatar name.
+A coincidence?
+Well, I am not sure.
+I would like to wrap up my post here.
+Leouncia analysis is an ongoing effort and can't be explained all in a short blog post but I tried my best to explain all the significant areas.
+Detailed Question/Comments : research {@} fireeye DOT COM

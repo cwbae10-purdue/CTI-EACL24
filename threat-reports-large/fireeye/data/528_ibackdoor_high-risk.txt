@@ -1,0 +1,76 @@
+FireEye mobile researchers recently discovered potentially “backdoored” versions of an ad library embedded in thousands of iOS apps originally published in the Apple App Store.
+The affected versions of this library embedded functionality in iOS apps that used the library to display ads, allowing for potential malicious access to sensitive user data and device functionality.
+NOTE: Apple has worked with us on the issue and has since removed the affected apps.
+These potential backdoors could have been controlled remotely by loading JavaScript code from a remote server to perform the following actions on an iOS device:
+Capture audio and screenshots
+Monitor and upload device location
+Read/delete/create/modify files in the app’s data container
+Read/write/reset the app’s keychain (e.g., app password storage)
+Post encrypted data to remote servers
+Open URL schemes to identify and launch other apps installed on the device
+“Side-load” non-App Store apps by prompting the user to click an “Install” button
+The offending ad library contained identifying data suggesting that it is a version of the mobiSage SDK [1].
+We found 17 distinct versions of the potentially backdoored ad library: version codes 5.3.3 to 6.4.4.
+However, in the latest mobiSage SDK publicly released by adSage [2] – version 7.0.5 – the potential backdoors are not present.
+It is unclear whether the potentially backdoored versions of the ad library were released by adSage or if they were created and/or compromised by a malicious third party.
+As of November 4, we have identified 2,846 iOS apps containing the potentially backdoored versions of mobiSage SDK.
+Among these, we observed more than 900 attempts to contact an ad adSage server capable of delivering JavaScript code to control the backdoors.
+We notified Apple of the complete list of affected apps and technical details on October 21, 2015.
+While we have not observed the ad server deliver any malicious commands intended to trigger the most sensitive capabilities such as recording audio or stealing sensitive data, affected apps periodically contact the server to check for new JavaScript code.
+In the wrong hands, malicious JavaScript code that triggers the potential backdoors could be posted to eventually be downloaded and executed by affected apps.
+As shown in Figure 1, the affected mobiSage library included two key components, separately implemented in Objective-C and JavaScript.
+The Objective-C component, which we refer to as msageCore, implements the underlying functionality of the potential backdoors and exposed interfaces to the JavaScript context through a WebView.
+The JavaScript component, which we refer to as msageJS, provides high-level execution logic and can trigger the potential backdoors by invoking the interfaces exposed by msageCore.
+Each component has its own separate version number.
+Figure 1: Key components of backdoored mobiSage SDK
+In the remainder of this section, we reveal internal details of msageCore, including its communication channel and high-risk interfaces.
+Then we describe how msageJS is launched and updated, and how it can trigger the backdoors.
+MsageCore implements a general framework to communicate with msageJS via the ad library’s WebView.
+Commands and parameters are passed via specially crafted URLs in the format adsagejs://cmd&parameter.
+As shown in the reconstructed code fragment in Figure 2, msageCore fetches the command and parameters from the JavaScript context and inserts them in its command queue.
+Figure 2: Communication via URL loading in WebView
+To process a command in its queue, msageCore dispatches the command, along with its parameters, to a corresponding Objective-C class and method.
+Figure 3 shows portions of the reconstructed command dispatching code.
+Figure 3: Command dispatch in msageCore
+Each dispatched command ultimately arrives at an Objective-C class in msageCore.
+Table 1 shows a subset of msageCore classes and the corresponding interfaces that they expose.
+Table 1: Selected interfaces exposed by msageCore
+The selected interfaces reveal some of the key capabilities exposed by the potential backdoors in the library.
+They expose the potential ability to capture audio and screenshots while the affected app is in use, identify and launch other apps installed on the device, periodically monitor location, read and write files in the app’s data container, and read/write/reset “secure” keychain items stored by the app.
+Additionally, any data collected via these interfaces can be encrypted with various encryption schemes and uploaded to a remote server.
+Beyond the selected interfaces, the ad library potentially exposed users to additional risks by including logic to promote and install “enpublic” apps as shown in Figure 4.
+As we have highlighted in previous blogs [footnotes 3, 4, 5, 6, 7], enpublic apps can introduce additional security risks by using private APIs in certain versions of iOS.
+These private APIs potentially allow for background monitoring of SMS or phone calls, breaking the app sandbox, stealing email messages, and demolishing arbitrary app installations.
+Apple has addressed a number of issues related to enpublic apps that we have brought to their attention.
+Figure 4: Installing “enpublic” apps to bypass Apple App Store review
+We can see how this ad library functions by examining the implementations of some of the selected interfaces.
+Figure 5 shows reconstructed code snippets for capturing audio.
+Before storing recorded audio to a file audio_xxx.wav, the code retrieves two parameters from the command for recording duration and threshold.
+Figure 5: Capturing audio with duration and threshold
+Figure 6 shows a code snippet for initializing the app’s keychain before reading.
+The accessed keychain is in the kSecClassGenericPassword class, which is widely used by apps for storing secret credentials such as passwords.
+Figure 6: Reading the keychain in the kSecClassGenericPassword class
+msageJS contains JavaScript code for communicating with a remote server and submitting commands to msageCore.
+The file layout of msageJS is shown in Figure 7.
+Inside sdkjs.js, we find a wrapper object called adsage and the JavaScript interface for command execution.
+Figure 7: The file layout of msageJS
+The command execution interface is constructed as follows:
+The className and methodName parameters correspond to classes and methods in msageCore.
+The argsList parameter can be either a list or dict, and the exact types and values can be determined by reversing the methods in msageCore.
+The final two parameters are function callbacks invoked when the method exits.
+For example, the following invocation starts audio capture:
+Note that the files comprising msageJS cannot be found by simply listing the files in an affected app’s IPA.
+The files themselves are zipped and encoded in Base64 in the data section of the ad library binary.
+After an affected app is launched, msageCore first decodes the string and extracts msageJS to the app’s data container, setting index.html shown in Figure 7 as the landing page in the ad library WebView to launch msageJS.
+Figure 8: Base64 encoded JavaScript component in Zip format
+When msageJS is launched, it sends a POST request to hxxp://entry.adsage.com/d/ to check for updates.
+The server responds with information about the latest msageJS version, including a download URL, as shown in Figure 9.
+Figure 9: Server response to msageJS update request via HTTP POST
+To ensure the protection of our customers, FireEye has deployed detection rules in its Network Security (NX) and Mobile Threat Prevention (MTP) products to identify the affected apps and their network activities.
+For FireEye NX customers, alerts will be generated if an employee uses an infected app while their iOS device is connected to the corporate network.
+FireEye MTP management customers have full visibility into high-risk apps installed on mobile devices in their deployment base.
+End users will receive on-device notifications of the risky app and IT administrators receive email alerts.
+In this blog, we described an ad library that affected thousands of iOS apps with potential backdoor functionality.
+We revealed the internals of backdoors which could be used to trigger audio recording, capture screenshots, prompt the user to side-load other high-risk apps, and read sensitive data from the app’s keychain, among other dubious capabilities.
+We also showed how these potential backdoors in ad libraries could be controlled remotely by JavaScript code should their ad servers fall under malicious actors’ control.
+[2] http://www.adsage.cn/ [3] https://www.fireeye.com/blog/threat-research/2015/08/ios_masque_attackwe.html [4] https://www.fireeye.com/blog/threat-research/2015/02/ios_masque_attackre.html [5] https://www.fireeye.com/blog/threat-research/2014/11/masque-attack-all-your-ios-apps-belong-to-us.html [6] https://www.fireeye.com/blog/threat-research/2015/06/three_new_masqueatt.html [7] https://www.virusbtn.com/virusbulletin/archive/2014/11/vb201411-Apple-without-shell

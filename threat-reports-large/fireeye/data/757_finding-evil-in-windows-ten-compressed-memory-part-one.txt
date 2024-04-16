@@ -1,0 +1,60 @@
+Paging all digital forensicators, incident responders, and memory manager enthusiasts!
+Have you ever found yourself at a client site working around the clock to extract evil from a Windows 10 image?
+Have you hit the wall at step zero, running into difficulties viewing a process tree, or enumerating kernel modules?
+Or even worse, had to face the C-Suite and let them know you couldn’t find any evil?
+Well fear no more – FLARE has you covered.
+We've analyzed Windows 10 and integrated our research into Volatility and Rekall tools for your immediate consumption!
+Until August 2013, as a skilled consultant, you were generally in good shape.
+Your tools worked as you expected them to and you were able to forensicate rapidly.
+Windows 8.1 introduced changes that began to break the tools we know and love.
+This breakdown largely went unnoticed as most companies continued using Windows 7, but now corporate environments are rolling out Windows 10 images at an ever-increasing pace and forensic tools haven’t kept up.
+This blog post is the first in a three-part series covering our Windows 10 memory forensics research.
+This post coincides with Omar Sardar and Blaine Stancill’s presentation at SANS DFIR Austin 2019 and is designed to introduce you to FLARE’s updates to Volatility and Rekall.
+The next post will coincide with our BlackHat USA 2019 presentation, in which Omar Sardar and Dimiter Andonov will dig into the nitty-gritty details of the Windows 10 memory manager.
+The final post will serve as a guide to those seeking to analyze the kernel on their own.
+Traditionally, a complete Windows memory analysis only required forensic tools to parse physical memory and fill in any missing gaps from the pagefile.
+In Windows 8.1 Microsoft upended this paradigm with the introduction of memory compression and a new virtual store designed to contain compressed memory.
+While current tools can inspect traditional pagefiles on disk just fine, the virtual store poses a challenge due to sparse documentation and data compression.
+To enable a more complete memory analysis on Windows 10, FireEye’s FLARE team analyzed the operating system’s memory manager as well as the algorithms and structures used to retrieve compressed memory.
+The memory we’re looking for is stored in a virtual store, created by the Store Manager kernel component.
+The Store Manager is responsible for managing data involved in performance optimization systems, including SuperFetch, ReadyBoost, and ReadyDrive.
+In this case, the Virtual Store is a RAM-backed entity, leveraging storage space in MemCompression for processes’ compressed data.
+The results of this research have been ported to both Volatility and Rekall to benefit the security community.
+Volatility and Rekall are two of the most popular open-source memory forensic frameworks available.
+With the introduction of Windows memory compression, both frameworks have been unable to read compressed pages – until now!
+The effects of compression were immediately noticeable as many plugins previously reported missing data or did not work altogether.
+To demonstrate, we will utilize a common plugin called modules that lists drivers loaded at the time of memory capture.
+In Figure 1, drivers loaded on the system are enumerated, but several paths to the files on disk are paged out to the compression store.
+These missing paths could very well be the evil you were hunting!
+Figure 1: Volatility & Rekall missing data stored in compressed pages
+To deal with missing data due to compressed pages, FireEye's FLARE team made multiple additions to Volatility and Rekall to support Windows 10 memory compression.
+First and foremost, we added the necessary overlays:
+An overlay describes the internal data structures used by the Windows 10 memory compression algorithm and makes them available in Python.
+For example, the overlays define the layout of the SMKM_STORE structure and the B+Trees used to lookup compressed pages.
+These structures, among others, will be described in additional detail in Part Two of this blog series.
+The undocumented Windows structures defined in the overlays are based on information we obtained through analyzing different versions of Windows 10.
+Being undocumented, these structures are susceptible to change across Windows builds, and even revisions.
+We currently support versions 1607, 1703, 1709, 1803, and 1809 on both 32-bit and 64-bit architectures.
+To support additional versions, the layout of the structures must be analyzed and the overlays updated accordingly.
+Analyzing the kernel to extract these structures will be discussed further in both Part Two and Part Three of this blog series.
+The second modification to support compressed pages includes new address spaces for each framework:
+win10_rekall/rekall-core/rekall/plugins/windows/win10_memcompression.py WindowsIA32CompressedPagedMemoryPae WindowsAMD64CompressedPagedMemory
+win10_volatility/volatility/plugins/addrspaces/win10_memcompression.py Win10CompressedIA32PagedMemoryPae Win10CompressedIA32PagedMemory Win10CompressedAMD64PagedMemory
+Address spaces are responsible for satisfying memory read requests.
+When stacked on top of one another, each layer can translate the read request to an underlying base layer abstracting away the details of how the actual read is performed.
+An example translation is converting a virtual address to a physical address.
+Depending on the bottommost layer, the physical address may be an offset into a memory image, crash dump, or hibernate file.
+The takeaway is that an address space transparently resolves memory, regardless of its location and – most importantly – with zero effort on your part.
+Due to this seamless integration, users can interact with Volatility and Rekall just as before and, if a compressed page is detected, the new address spaces will take care of decompression in the background and return the decompressed data.
+Back to our previous modules plugin example, Figure 2 demonstrates how the newly implemented address spaces properly decompress data located in compressed pages.
+No more hidden drivers or DLLs, among a plethora of other forensic artifacts.
+The data is now yours to continue your hunt for evil!
+Figure 2: Volatility & Rekall decompressing compressed data
+Head over to our Volatility and Rekall GitHub repositories to start using them today.
+After downloading or cloning the repositories, follow any necessary installation instructions as outlined on each GitHub's README page and start finding that evil!
+Windows 10 memory compression is a significant evolution in the design of the memory manager that increases system performance by making a more efficient use of physical memory.
+This increase in performance comes at the cost of a more complex memory management system that is currently not publicly documented.
+Up until now, Volatility and Rekall were unable to inspect memory stored in compressed pages, opening the door to malicious programs and forensics artifacts going undetected.
+FireEye’s FLARE team hopes to fill the knowledge and technical gaps for Windows 10 compressed memory through contributions to Volatility and Rekall, as well as in presentations given at SANS DIFR (Finding Evil in Windows 10 Compressed Memory) and BlackHat USA 2019.
+We look forward to seeing you there and hearing your feedback, and we’re excited to see how these frameworks develop as a result of our contributions!
+Stay tuned for Part Two of our Finding Evil in Windows 10 Compressed Memory blog series.

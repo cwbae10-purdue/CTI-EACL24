@@ -1,0 +1,46 @@
+IDA Pro comes with an incredibly useful array of type information gathered from various compilers.
+Whenever a user names a location, IDA searches its currently loaded type libraries to see if that name is a known function.
+If the function is found, IDA applies the function declaration to that location.
+For example, Figure 1 shows an array of DWORDS.
+During reverse engineering, I determined that these are function pointers to MS SDK API functions.
+Naming the location with the corresponding function name causes IDA to automatically apply the type information.
+Figure 2 shows the result of naming that location GetTempFileNameA.
+The function declaration is shown above the line as a comment.
+Unfortunately, IDA does not automatically search function declarations any time someone creates a field of a structure.
+I've encountered this often enough that I've written a small IDA plugin that will perform this action automatically.
+As an example, I have a structure defined in Figure 3 used by a piece of shellcode.
+The disassembly in Figure 4 shows the call to the CreateProcessA field within an instance of this structure.
+Because there is no type information propagation, IDA's function analysis does not mark up the stack frame -- making it difficult to trace the parameters to the function call.
+Users can manually set the type for a structure field by pressing the 'y' key when the cursor is on the field in the structure view.
+IDA will prompt the user to enter the type declaration.
+The key point is that the type must be a function pointer, and users should specify the calling convention as well.
+For example, the type string for CreateProcessA should be something like:
+BOOL __stdcall (*CreateProcessA)(LPCSTR lpApplicationName, LPSTR lpCommandLine, LPSECURITY_ATTRIBUTES lpProcessAttributes, LPSECURITY_ATTRIBUTES lpThreadAttributes, BOOL bInheritHandles, DWORD dwCreationFlags, LPVOID lpEnvironment, LPCSTR lpCurrentDirectory, LPSTARTUPINFOA lpStartupInfo, LPPROCESS_INFORMATION lpProcessInformation)
+After setting the structure field type, users should see a much nicer markup by IDA, as shown in Figure 5.
+It's possible to set these structure types manually, but doing so becomes tedious very quickly.
+A plugin that automates this process is available in the Mandiant GitHub repository here: https://github.com/mandiant/Reversing.
+The plugin has two pieces:
+struct_typer_plugin.py is the IDA plugin and must be copied to your %IDADIR%plugins directory.
+struct_typer.py is the actual IDA Python script the plugin calls.
+This can either be copied to your %IDADIR%python directory, or be in any directory in your %PYTHONPATH%.
+Running the plugin opens the dialog shown in Figure 6, which prompts users to select the structure to process.
+IDA then searches its currently loaded type libraries for each named field in the structure.
+If it finds a match, it sets the type to the corresponding structure field.
+When searching for matching names trailing _<DecimalValues>, the plugin ignores substrings.
+This attempts to mimic how IDA creates new unique names from a common base name by allowing CreateProcessA_0 and CreateProcessA_10 to both match the desired function CreateProcessA.
+Users can deploy the Prefix RegEx option to ignore the prefix string of field names.
+I commonly leave the field_<HexOffset>_ prefix when I name structure fields, so this option allows matching field_14_CreateProcessA to CreateProcessA.
+To create function declaration types, users must specify a compiler in IDA.
+This should not be a concern for users who are reverse-engineering an executable format that IDA can identify.
+But to load a raw binary such as a piece of shellcode, users will need to set the compiler for IDA to use.
+Selecting menu Options -> Compiler opens a dialog that prompts users to select the compiler vendor and specify some basic type information, as shown in Figure 7.
+It's important to remember that the plugin searches for function declarations in the currently loaded type libraries.
+Similar to the compiler options above, IDA may be able to correctly determine the type libraries to use if users are loading an executable with a known file format.
+To load additional type libraries, or to look at a binary blob when there are no loaded type libraries, go to menu View -> Open Subviews -> Type Libraries.
+This shows a screen similar to Figure 8.
+The view contains the current type libraries.
+To load new additional libraries, press the Insert key and select from the list.
+As a final point, I want to note that stack analysis in IDA is only done if the code can be marked as a function (usually shown as dark blue in IDA's navigation bar).
+Code that does not exist within a function is by default shown as dark red in the navigation bar.
+Code that confuses IDA's function analysis (such as shellcode due to techniques it uses, or software that employs anti-disassembly techniques) may prevent the creation of functions in IDA and hence limit the usefulness of this plugin.
+Patching the code in IDA may be required to allow creation of functions in the binary, but that is out of the scope of this post.

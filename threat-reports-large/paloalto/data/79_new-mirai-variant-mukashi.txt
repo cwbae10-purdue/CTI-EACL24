@@ -1,0 +1,71 @@
+As soon as the proof-of-concept (PoC) for CVE-2020-9054 was made publicly available last month, this vulnerability was promptly abused to infect vulnerable versions of Zyxel network-attached storage (NAS) devices with a new Mirai variant – Mukashi.
+Mukashi brute forces the logins using different combinations of default credentials, while informing its command and control (C2) server of the successful login attempts.
+Multiple, if not all, Zyxel NAS products running firmware versions up to 5.21 are vulnerable to this pre-authentication command injection vulnerability.
+The vendor advisory is also available.
+You can test to see if a Zyxel NAS device is vulnerable here.
+This vulnerability has a critical rating (i.e CVSS v3.1 score of 9.8) due to its trivial-to-exploit nature.
+It’s not surprising that the threat actors weaponize this vulnerability and start wreaking havoc in the Internet of Things (IoT) realm.
+It was initially discovered via the sale of its exploit code as a 0-day i.e.
+while it was still unreported to the vendor.
+This initial discovery also mentioned “the exploit is now being used by a group of bad guys who are seeking to fold the exploit into Emotet”.
+This blog includes a walkthrough of the entire killchain, including images and IoCs.
+The executable weblogin.cgi doesn’t properly sanitize the username parameter during authentication.
+The attacker can use a single quote ‘ to close the string and a semicolon ; to concat arbitrary commands to achieve command injection.
+Since weblogin.cgi accepts both HTTP GET and POST requests, the attacker can embed the malicious payload in one of these HTTP requests and gain code execution.
+The first incident happened at 19:07 (UTC) on March 12, 2020 and was caught on our Next-Generation Firewall.
+As shown in Figure 1 and 2 below, this threat actor attempted to download a shell script to the tmp directory, execute the downloaded script, and remove the evidence on a vulnerable device.
+Upon execution, the zi script downloads different architectures of Mirai bot, runs the downloaded binaries, and removes the binaries.
+All these binaries were not available on VirusTotal at the time of discovery — 4 out of 8 are in VirusTotal at the time of writing.
+Mukashi is a bot that scans the TCP port 23 of random hosts, brute forces the logins using different combinations of default credentials, and reports the successful login attempt to its C2 server.
+Like other Mirai variants, Mukashi is also capable of receiving C2 commands and launching DDoS attacks.
+When it’s executed, Mukashi prints the message “Protecting your device from further infections.” to the console.
+The malware then proceeds to change its process name to dvrhelper, suggesting Mukashi may inherit certain traits from its predecessor.
+Prior to carrying out its intended operation, Mukashi binds to the TCP port 23448 in order to ensure only a single instance is running on the infected system.
+The malware decodes a couple of strings on the fly during its initialization.
+These decoded strings, as shown in the following table, include credentials as well as C2 commands.
+Unlike its predecessors that use conventional xor encryption, Mukashi uses a custom decryption routine to encrypt these commands and credentials.
+A decryption script is provided in the appendix.
+Table 1.
+Decoded credentials and commands
+When the malware performs credential brute-force attacks, Mukashi uses well known default passwords like t0talc0ntr0l4!
+and taZz@23495859, in addition to the decoded credentials that it has decoded before the scanning phase.
+Figure 3, below, shows the initiation traffic captured when Mukashi was scanning the random hosts, and Figure 4 shows the malware’s attempt to brute-force authentication.
+Upon successful login attempt, Mukashi reports the working combination of the credentials to its C2 server 45.84.196.75 on TCP port 34834.
+The message has the following format – <host ip addr>:23 <username>:<password>.
+The following figure shows an example of such a message.
+Once the malware is up and initialized, it sends a beacon back to its C2 server 45.84.196.75 listening on TCP port 4864, notifying its C2 server that it’s ready for command.
+An example of the beacon is shown in Figure 6 below.
+The beacon has the following format: <name>.<input argument>.
+The <name> substring depends on the return value of a socket creation; if the socket is successfully created, then <name> is root, else it’s default.
+The <input argument> substring is the input argument passed to the binary when it’s being executed.
+If no input argument is provided, the beacon string would be None.
+Mirai’s and its variants’ DDoS attack mechanics (e.g UDP, TCP, UDP bypass, and TCP bypass) have already been analyzed in-depth, and Mukashi’s DDoS capabilities are no different from these variants.
+The presence of DDoS defense bypass confirms our speculation from earlier that Mukashi includes certain capabilities from the dvrhelper variant — Mukashi also possesses the anti-DDoS-defense capabilities.
+The following table shows the C2 commands that Mukashi supports.
+Table 2.
+C2 commands
+The attack_parsing() function is responsible for processing C2 command strings that Mukashi receives from its C2 server.
+In addition to the type of command and target address, the C2 command strings include relevant information like SYN flag, ACK flag, URG flag, PSH flag, Rst flag, time field, destination port value, and length value that Mukashi needs to construct the packet header.
+If destination port value is not available, Mukashi chooses a random port.
+And if the length of the packet is not specified, Mukashi uses the default value 1458.
+Even though there are numerous Mukashi binaries compiled for different architectures, they are pretty much the same capabilities-wise — except that the x86 version doesn’t have the cleaner() function that allows it to kill processes by process command line, specific strings, and permissions.
+The following figures show how the x86 version is different from the arm7 version.
+Updating the firmware is highly recommended to keep the attackers at bay.
+The latest version of the firmware is available for download.
+Complex login passwords are also advised to prevent brute forcing.
+Palo Alto Networks customers are protected from the vulnerability by the following products and services:
+Next-Generation Firewalls with threat prevention license can block the attacks with best practice via threat prevention signature 57806.
+WildFire can stop the malware with static signature detections.
+8c0c4d8d727bff5e03f6b2aae125d3e3607948d9dff578b18be0add2fff3411c (arm.bot)
+5f918c2b5316c52cbb564269b116ce63935691ee6debe06ce1693ad29dbb5740 (arm5.bot)
+8fa54788885679e4677296fca4fe4e949ca85783a057750c658543645fb8682f (arm6.bot)
+90392af3fdc7af968cc6d054fc1a99c5156de5b1834d6432076c40d548283c22 (arm7.bot)
+675f4af00520905e31ff96ecef2d4dc77166481f584da89a39a798ea18ae2144 (mips.bot)
+46228151b547c905de9772211ce559592498e0c8894379f14adb1ef6c44f8933 (mpsl.bot)
+753914aa3549e52af2627992731ca18e702f652391c161483f532173daeb0bbd (sh4.bot)
+ce793ddec5410c5104d0ea23809a40dd222473e3d984a1e531e735aebf46c9dc (x86.bot)
+a059e47b4c76b6bbd70ca4db6b454fd9aa19e5a0487c8032fe54fa707b0f926d (zi)
+45.84.196.75:34834 (Report Successful Login Attempt)
+45.84.196.75:4864 (Command and Control)
+0.0.0.0:23448 (Singleton)
+The table below includes hashes for samples of the same variant, hosted at the same IP, however we are missing evidence of whether they were distributed by exploitation of CVE-2020-9054 or not.

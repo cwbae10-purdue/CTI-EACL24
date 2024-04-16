@@ -1,0 +1,85 @@
+In a recent blog, “Information Leakage in AWS Resource-Based Policy APIs,” Unit 42 researchers disclosed a class of Amazon Web Services (AWS) APIs that can be abused to find existing users and Identity and Access Management (IAM) roles in arbitrary accounts.
+The root cause of the issue is that the AWS backend validates all resource-based policies and raises alerts if a specified principal does not exist.
+One can abuse this feature to check whether a user or role exists in a targeted account.
+An attacker can keep asking this question with different names and eventually map out all the users/roles in a targeted account – a process that can be made easier if the attacker first collects public information about the target and uses this to build a wordlist to test.
+Once an attacker obtains the roster of an organization, it becomes possible to launch other targeted attacks, such as searching for misconfigured IAM roles, sending spear-phishing emails, etc.
+Based on those findings, Unit 42 developed IAMFinder, a custom open-source tool that currently implements APIs of four AWS services: Amazon Simple Storage Service (S3), Amazon Key Management Service (KMS), Amazon Simple Queue Service (SQS) and AWS Identity and Access Management (IAM).
+With only the AWS account number of the targeted account, IAMFinder is able to identify users and roles in that environment.
+Organizations can use IAMFinder to identify the information leaked from IAM reconnaissance.
+With this tool, organizations can then adjust and reinforce their IAM configuration to mitigate the potential impact of an attacker knowing the users and roles in their AWS account.
+Key features of IAMFinder:
+Realistically simulates attacker behavior.
+Just as would be true in the case of a malicious attack, a targeted account won’t notice that its users or roles are being enumerated.
+Because the enumeration is performed in your accounts, the logs only show up in your accounts.
+However, a targeted account will notice if IAMFinder attempts to assume roles.
+High enumeration rate.
+IAMFinder can quickly enumerate users or roles in a targeted account by: Concurrently invoking APIs of multiple AWS services (e.g., S3, KMS and IAM) in the account used to perform the test.
+Concurrently using multiple AWS accounts to perform the test.
+Concurrently invoking APIs of multiple AWS services (e.g., S3, KMS and IAM) in the account used to perform the test.
+Concurrently using multiple AWS accounts to perform the test.
+Modularized and extensible.
+One can implement and integrate additional AWS APIs described in our previous blog on information leakage.
+Cross-partitions.
+IAMFinder has been tested in all three AWS partitions: AWS Standard (aws), AWS GovCloud U.S. (aws-us-gov) and AWS China (aws-cn).
+Zero cost.
+The resources that IAMFinder creates in each service don’t have actual workloads and should not incur any costs.
+Search for misconfigured IAM trust policies.
+This tool can assist in the enumeration of IAM users and roles.
+Upon identification of these IAM entities, the process of testing for misconfigurations can begin.
+In a recent Red Team exercise, Unit 42 researchers gained privileged access to a cloud account with tens of thousands of workloads through a misconfigured IAM role.
+Researchers identified a misconfigured role in the targeted account that allowed anonymous users to assume the role.
+This could result in any number of attacks against an organization, including ransomware, or even open a door for an advanced persistent threat (APT) adversary.
+Know where strong credentials are needed most.
+Our most recent Unit 42 Cloud Threat Report shows that 46% of IAM users in the Americas do not enforce multi-factor authentication (MFA).
+Considering that tens or hundreds of users typically exist in a cloud account, an attacker can identify the existing users in a cloud account without MFA enabled and attempt credential cracking or credential stuffing.
+Organizations can use IAMFinder to gain a hacker’s view of their cloud infrastructure.
+Because users found by IAMFinder are likely to be poked more often, they should always have strong passwords and MFA in place.
+Cloud environment reconnaissance.
+System administrators typically name an IAM role based on its functionalities.
+For example, “ecsTaskExecutionRole” is used for executing AWS Lambda functions, “AWSCodeDeployRole” is used for managing AWS CodeDeploy and “S3Access” is used for accessing S3 buckets.
+By observing the existing roles, adversaries can learn the types of workloads and their functionalities in a cloud account.
+Organizations can use IAMFinder to identify common role names in their cloud infrastructure.
+A few random characters can be added to the role names so that they become less likely to be found.
+CI/CD pipeline integration.
+Users and roles in a cloud environment are frequently updated to accommodate different applications’ requirements.
+It is crucial to monitor IAM drift and identify any newly introduced insecure configurations.
+IAMFinder can be integrated into a CI/CD pipeline to perform an unauthenticated scan on the users and roles in a cloud environment and identify anything that needs to be made more secure.
+Figure 1 illustrates IAMFinder’s architecture.
+IAMFinder needs at least one AWS account with sufficient permissions to perform the test.
+The required permissions are detailed on the instruction page.
+IAMFinder takes a list of names and an AWS account number as input and outputs a list of existing names it finds.
+IAMFinder creates resources (e.g., S3 buckets, SQS queues or KMS keys) in one or multiple AWS accounts and attempts to update their resource-based policies with various principal names.
+IAMFinder accesses multiple resources concurrently with multithreading and alternates between accounts and services in a round-robin manner.
+Because AWS throttles each API’s request, the enumeration rate is limited by the API’s max allowed request rate.
+Our evaluation shows that IAMFinder can check 2.8 names per second by sequentially updating an S3 bucket’s policy.
+This enumeration rate is too low when brute-forcing a list of thousands of names.
+To overcome this limit, IAMFinder implements multiple ways to increase the number of APIs that can be called concurrently.
+The following settings can be configured to improve the enumeration rate:
+AWS services to use.
+IAMFinder currently supports four AWS services (S3, KMS, SQS and IAM).
+Users can choose to use one or multiple AWS services to perform the test.
+Our evaluation shows that IAMFinder’s enumeration rate increases with the number of services used.
+In Figure 2, it takes 710 seconds to enumerate 2,000 names using a single S3 bucket.
+When using all four services, this time drops to 101 seconds.
+Number of resources created for each AWS service.
+To fully utilize each API’s request rate, IAMFinder can create multiple resources for each AWS service and call the same API concurrently.
+For example, IAMFinder can create three S3 buckets and concurrently call the update_bucket() APIs to modify their policies.
+Our evaluation shows that two to three resources can usually saturate the request rate of an API, but using too many resources may trigger a time penalty and cause negative effects.
+In Figure 2, the enumeration time of using only one S3 bucket is 710 seconds.
+When using three S3 buckets, the time drops to 240 seconds.
+Number of AWS accounts.
+Another way to increase the enumeration rate is using multiple AWS accounts to perform the test.
+IAMFinder can use services in multiple AWS accounts concurrently to enumerate a targeted account.
+Our evaluation shows that the enumeration rate improves linearly with the number of accounts used.
+In Figure 3, enumerating 2,000 names with three AWS accounts takes approximately one-third of the time than enumerating with only one account.
+IAMFinder is an open-source tool developed based on the findings of Unit 42’s recent research on information leakage in AWS resource-based policy APIs.
+IAMFinder currently implements four out of the sixteen AWS services as described in the blog (S3, KMS, SQS and IAM).
+If more services are implemented, IAMFinder should achieve even better performance.
+Organizations can use IAMFinder to identify the information leaked from IAM reconnaissance.
+With this tool, organizations can adjust and reinforce their IAM configuration to mitigate the potential impact.
+We hope the cybersecurity community can help continue the efforts and improve the tool.
+IAMFinder is posted on GitHub to allow the community to make it more extensible and apply it to more proactive DevOps use cases.
+Highlights from the Unit 42 Cloud Threat Report, 2H 2020
+Unit 42 Cloud Threat Report: Misconfigured IAM Roles Lead to Thousands of Compromised Cloud Workloads
+Information Leakage in AWS Resource-Based Policy APIs
+According to the AWS penetration testing policy, you should only use IAMFinder against your own accounts.

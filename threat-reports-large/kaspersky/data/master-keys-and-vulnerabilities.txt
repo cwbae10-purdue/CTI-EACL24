@@ -1,0 +1,46 @@
+Last weeks have been quite busy with announcements of either master keys or Chinese master keysbeing unveiled, both qualifying as critical vulnerabilities for the Android platform.
+Although things have finally calmed a bit, we are still waiting for the final act in Las Vegas at Black Hat USA, where Jeff Forristal (the researcher who discovered one of the two afore-mentioned vulnerabilities) will discuss all the pertaining details (you never know whether some surprise is to be expected).
+Nevertheless, we now have enough information to assess its impact.
+First off, the term “master key” is a bit deceiving; the vulnerability, in fact, does not involve any cryptographic primitive, but instead it is all about stashing inside an Android application (the apk file) two versions of the same resource so to partially evade some integrity checks.
+The impact is, however, prominent, since it means that an adversary is able to tamper with an apk file signed by a trusted authority, so to include a modified resource thereby replacing the genuine one (it is easy too see the case of a modified classes.dex as the most dangerous).
+From the user’s perspective, this means that an application released and signed by “FamousCompany ™” might include some pieces of malicious code without the user noticing.
+This whole matter, however, is heavily mitigated by the fact that the Play Store (the most widely adopted application store) has been patched so to refuse applications packed as zip files including the same file twice.
+Nevertheless, based on some reports, some applications in the Play Store are packed like that, although harmlessly, and very likely by mistake (the zip file of the app in question included the same png resource twice).
+This means, however, that the security checks are only performed upon newly uploaded applications, and do not cover the whole set of applications.
+If that was not enough, only few devices (reportedly only the Samsung Galaxy S4) are known to run the code patching this vulnerability.
+This is quite of interest if we consider that many users retrieve applications from third-party applications stores, which might not vet the uploaded apk files.
+If the widely discussed device fragmentation is not killing the development industry, we wonder how many users would be likely to accept it if that would result in a constant exposure to bugs like this.
+Anyway, this is another reason why the very same researchers have released an application checking whether your device is exposed.
+Kaspersky Lab products actively check that the device is clean from applications exploiting either vulnerabilities by querying the Kaspersky Security Network (KSN).
+That being said, best way to keep yourself safe from this unwinding chain of events is also avoiding third-party application stores, and leaving the check box “Install from Unknown Source” unselected.
+With that in mind, let us now analyze a bit the vulnerabilities, so to see why and how they managed to slip through all the QA checks.
+Every Android app is nothing more than a zip-compressed file that includes all sorts of resources: executable bits, images, string data, layout data, etc.
+Integrity is preserved by means of hashing (and hashing of the hashes) all resource included, so to detect any unauthorized modification.
+The process is also automated, and it happens whenever the application is installed.
+Self-conscious users can also verify an apk file by the “jarsigner -verify -verbose “command, whose output, in case of a regular app, is similar to what follows:
+If, for instance, we were to modify the file main.xml, the verification process would promptly fail:
+Upon installation, the Android OS does exactly the same thing.
+It turned out though that, unlikejarsigner, it does not like that much corner-cases such as when the zip file includes some duplicate entries.
+In particular it turned out that, were a resource with a duplicate name included in the apk (it is not that easy, but bear with me), the OS would verify just one of the two, but load the other one.
+See for instance the following apk file (retrieved here):
+Note the file classes.dex appearing twice, with the most recent entry potentially malicious.
+What is frustrating is that jarsigner promptly alerts that something is wrong:
+Sadly, Android has a different take on it:
+Consider that the ZIP standard (details to be found here) actually does allow multiple entries to share the same file name.
+As noted by Saurik, however, two different implementations are actually used by Android to unzip a file.
+The subtle differences between the two are enough to make the verification process literally ignore the first entry.
+Slightly different, although equally dangerous, is the second vulnerability that has been on stage for the last few days.
+Discovered by a China-based security group calling itself “the Android Security Squad”, the bug allows achieving the very same feats of the one discovered by Jeff Forristal (that is injection and execution of executable code without failing the integrity checks).
+Also in this case the bug stems from using two different implementations for reading (and unzipping) an apk file.
+In this case, however, the culprit is how the “Extra field length” field (part of the ZIP header) is handled.
+This field, normally set to 0, specifies the length of some rarely used metadata.
+Unsurprisingly (we have rarely seen otherwise while looking into binary data types or protocols), this value is stored as unsigned integer (16-bit to be precise).
+While it is common for low-level languages to reason in terms of unsigned data types, this is not a strength of languages such as Java.
+Actually, Java might be the worst in terms of dealing with unsigned data types: all data types (with the only exception of char) are signed.
+All fellow Java programmers with a bit of experience know that handling binary data forces you to coat the whole program with a plethora of masking statements (& 0xffff) so to handle unsigned data correctly.
+Unfortunately, this is not the case of the Java library used to parse the extra data fields.
+Even though the bits are actually correctly stored, every time those are accessed to perform a bound-check calculation for instance, they are bound to be interpreted as signed 16-bit integers (with low values being read as negative values).
+This dichotomy leads, once again, to a situation where the verifier sees a piece of code, while the loader (which correctly handles that field as an unsigned number) another one.
+Now, relax and consider that all these bugs have been reported, patches have been committed, and thus updated binaries are under-way to your device (how effective is the dissemination policy is out of scope for now).
+The limited impact is however due to the fact in both cases disclosure had been responsible.
+The real and worrying question is in fact the following: What if the disclosure would not have been that responsible?

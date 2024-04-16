@@ -1,0 +1,87 @@
+The authors of malware use various techniques to circumvent defensive mechanisms and conceal harmful activity.
+One of them is the practice of hiding malicious code in the context of a trusted process.
+Typically, malware that uses concealment techniques injects its code into a system process, e.g.
+explorer.exe.
+But some samples employ other interesting methods.
+We’re going to discuss one such type of malware.
+Our eye was caught by various samples for .NET that use the trusted application InstallUtil.exe from the Microsoft .NET Framework (information from Microsoft’s website: “The Installer tool is a command-line utility that allows you to install and uninstall server resources by executing the installer components in specified assemblies.
+This tool works in conjunction with classes in the System.Configuration.Install namespace”).
+The technique was described by information security researcher Casey Smith aka subTee (Proof of Concept).
+Briefly, the console utility InstallUtil.exe runs a malicious .NET assembly, bypassing the entry point of the assembly; all malicious activity is then hidden in the context of the trusted process.
+The spreading of malicious samples follows a standard pattern: they basically reach the user in a password-protected archive, and the executable file icons in most cases are chosen specially so that the victim perceives the file as a normal document or photo.
+We also encountered executable files masquerading as a key generator for common software.
+To begin with, the malicious content of the generator got inside the %TEMP% folder, where it was run later in the described manner.
+Users are misled by executable file icons
+All the malicious files we encountered were heavily obfuscated, which complicated their manual analysis.
+We took the sample 263dc85de7ec717e8940b1ccdd6ee119 and deobfuscated its strings, classes, methods, and fields.
+Here’s how the file looked before deobfuscation:
+Sample before deobfuscation
+InstallUtil.exe allows file execution to start not from the .NET assembly entry point: execution begins from a class inherited from System.Configuration.Install.Installer.
+To facilitate manual analysis, this class was renamed InstallUtilEntryClass in the sample under investigation.
+The code in static class constructors is known to execute first when the assembly is loaded into memory, a feature utilized by the authors of this piece of malware.
+Let’s examine the behavior of the malicious file in the order of methods execution.
+First up is FirstMainClass, since its constructor is marked with the keyword “static” and assembly execution begins with it:
+The static constructor of FirstMainClass that is triggered when the assembly is loaded
+The constructor does the following:
+CheckSandboxieEnvironment() determines whether the file is running in Sandboxie by attempting to load the SbieDll.dll library.
+If the library can be loaded, the malicious process terminates;
+CheckVirtualBoxEnvironment() searches for the vboxmrxnp.dll library, which belongs to VitrualBox.
+If the library can be found, the malicious process likewise terminates;
+AddResourceResolver() adds a method for handling the resource load event.
+This method unpacks the assembly, which is packed by the Deflate algorithm, from a specific resource and loads the assembly into memory;
+The method responsible for loading the assembly from the resource
+The assembly is unpacked from the resource and loaded into memory
+The UnpackAllAssemblies() method of the AssemblyResourceLoader class iterates through all the assembly resources and, if the resource name contains the string “+||”, unpacks the assemblies from these resources.
+The assemblies unpacked by this method are required by the malicious file to operate, and are legitimate libraries: Interop.MSScript.Control, Interop.TaskScheduler, SevenZipSharp;
+RemoveZoneIdentifier() deletes the NTFS alternate stream Zone.Identifier through the command line to prevent a warning at startup if the file was downloaded from the Internet.
+The authors made a slight mistake in the command line (“cmd.exe /c (echo.
+> file path:Zone.Identifier) 2 > Null”) by leaving a space between the characters 2 and >, which produces an error in the console:
+The warning issued on deleting Zone.Identifier
+The ElevatePrivilegesProxy() method is the wrapper for the ElevatePrivileges() method, which in turn uses the known UAC bypass technique described by Matt Nelson aka enigma0x3.
+Control then passes to the traditional entry point—the Main() method, which is located in the Form5 class:
+The traditional entry point is the Main() method
+We see that a WMI object is retrieved after a 30-second pause.
+Next, the ScriptControlClassInstance object is customized, which the language (Visual Basic script) and the body of the script are transferred to:
+The script that runs the executable file using InstallUtil.exe
+The AddCode() method adds and executes a VB script that runs the current assembly using InstallUtil.exe.
+After that, the current process is closed by calling Environment.Exit(0).
+At the next stage, the malicious object is run using the InstallUtil tool and once more executes the static constructor of the FirstMainClass class examined above; control passes to the static constructor of the InstallUtilEntryClass class, which, as mentioned, is inherited from System.Configuration.Install.Installer:
+The static class constructor called by InstallUtil.exe
+The functions of this class include:
+Copying the malicious file to %APPDATA%\program\msexcel.EXE, setting the Hidden+System attributes for the “program” folder, running msexcel.EXE, and terminating the current process;
+Adding the copied file to autorun (HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Run or HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run);
+Creating a task called “filesqmaepq0d.tnk” that runs msexcel.EXE every minute to ensure survival on the victim’s computer;
+Checking if the malicious process is already running.
+An event with the name “78759961M” is created, and if such an event already exists in the system, the new process terminates;
+Creating the Form5 class and calling its destructor.
+Let’s sum up the interim results: all the actions described above (entrenchment in the system, elevation of privileges, startup from a trusted application) are essentially laying the foundation for the main task.
+Let’s move on to analyzing the next stage of the preparatory actions, which will take us closer to the heart of the malicious activity.
+The malicious assembly contains, inter alia, five classes inherited from System.Windows.Forms.Form.
+Inheritance from the Form class is not accidental: in its inheritance hierarchy it implements several interfaces, one of which is IDisposable, which allows to override the Dispose() method for its own purposes.
+Dispose() methods are called by the garbage collector in order to free up unmanaged resources used by the class when closing or unloading the assembly.
+Now let’s look at the source code of the Dispose() method of the Form5 class:
+The overridden Dispose() method of the Form5 class
+As we can see, various methods are executed at each iteration of the cycle, and the results are saved.
+Let’s take a closer look:
+At the first iteration, the full path to the RegAsm.exe utility from .NET Framework is retrieved;
+A chain of nested methods is called with a view to decoding strings from Base64 that are stored in another class and unpacking the resulting array using the SevenZipExtractor library.
+As a result, we get an array that is the remote administration tool NanoCore Client;
+The PERun.dll library is loaded from the assembly that was previously unpacked from the resource into memory;
+A class with the name “RunPE” and the Run method of this class are sought in this library;
+At the final iteration, the parameters are transferred and the Run method is called.
+Knowing that the legalProgramPath variable contains the full path to the legitimate utility RegAsm.exe, PEFileByteArray contains the executable file in the form of a byte array, while the class name is RunPE; it is not hard to figure out that the Run() method employs the technique of hiding malicious code in the address space of the trusted process RunPE.
+This technique is widely known and described here, for instance.
+Deep inside the Run() method, a legitimate utility process is created in CREATE_SUSPENDED state (the sixth parameter is 4u):
+Creating a legitimate program process in CREATE_SUSPENDED state
+Eventually, the RegAsm.exe process is loaded in the address space and starts to execute the payload: the remote administration tool NanoCore Client.
+Only trusted processes remain in the list of running processes, and even an experienced user might not realize that the system is compromised:
+Only legitimate utilities can be seen in the list of running processes
+RegAsm.exe was chosen as the “carrier” because (a) it is a legitimate utility from Microsoft, (b) it is located in the same directory as InstallUtil.exe, and (c) a utility from .NET Framework calling another utility from the same framework is less suspicious than calling, say, notepad.exe.
+In fact, the use of RegAsm.exe is not critical: the “carrier” could be any program that does not arouse the suspicion of security software and users.
+It is also important that all actions involving a malicious module are executed in memory, which allows file scanners to be bypassed.
+As we’ve mentioned, this sample contains NanoCore Client, which can be used to control the victim’s computer, take screenshots, record keystrokes, download files, and much more.
+It should be noted that the payload here can be anything: from “fashionable” encrypters and miners to advanced Trojans.
+Malware writers employ various tricks to conceal malicious activity, and the above technique allowing the execution of malicious code in the context of two legitimate programs is an obvious example.
+Detecting this kind of concealment method requires a behavioral analysis of the program.
+Kaspersky Lab’s security solutions detect this behavior as PDM: Trojan.Win32.Generic and PDM: Exploit.Win32.Generic.
+263DC85DE7EC717E8940B1CCDD6EE119 payload: EF8AF3D457DBE875FF4E3982B34F1DE9 3E4825AA1C09E27C2E6A1309BE8D6382 payload: 82709B139634D74DED404A516B7952F0 7E3863F827C1696835A49B8FD7C02D96 payload: D1A9879FFCB14DF70A430E59BFF5EF0B 8CB8F81ECF1D4CE46E5E96C866939197 payload: D8652841C19D619D2E3B5D7F78827B6E FDF4086A806826503D5D332077D47187 payload: BF4A3F4B31E68B3DE4FB1F046253F2D0

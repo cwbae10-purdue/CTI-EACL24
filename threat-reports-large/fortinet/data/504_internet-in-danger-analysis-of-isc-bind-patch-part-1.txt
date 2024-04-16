@@ -1,0 +1,28 @@
+The Internet Systems Consortium just released a couple of days ago a new patch (version 9.10.3-P4) to fix some issues in the most popular DNS server software in the world.
+The release note is available at https://kb.isc.org/article/AA-01363/81/BIND-9.10.3-P4-Release-Notes.html
+In this series of two articles, we will detail our investigation of these vulnerabilities and how we were able to protect our customers by deploying widely our detection.
+ISC released a patch for the BIND rndc control channel DoS vulnerability (CVE-2016-1285).
+According to ISC, this vulnerability is due to an assertion failure in the application called named when it’s handling a malformed packet received on its control channel.
+rndc is the utility that is designed to control the BIND DNS server by sending requests to its control channel.
+Following is an image of a normal rndc request.
+As you can see, this request contains multiple records, including _auth,_ctrl and _data.
+The record _auth is used to authenticate rndc client.
+The sub-record hmd5 inside _auth tells the dns server to use hmac-md5 digest for authentication.
+There are three sub-records nested inside _ctrl, which are _ser (serial No.
+for this request),_time (current time of rndc client) and _exp (expire time for this request).
+The record _data specifies the operation of this request.
+In this packet, the operation field is null, which is used to initialize the connection.
+The DNS server uses structure iscc_sexpr to store aforementioned records and sub-records.
+The following is its definition:
+Following types are defined in the code:
+This vulnerability is due to lack of error checking when parsing the type element of iscc_sexpr.
+By sending a crafted rndc request, an incorrect type value can be set in structure iscc_sexpr for records _auth or _ctrl, which caused an assertion failure later in named.
+The following code snippets were taken from BIND version 9.10.3-P3 source code.
+I added the comments to explain the code flow.
+To reach this vulnerable code, the request need to be well prepared to pass several validations in named.
+Following is a stack trace of named when it aborted:
+Please note that authentication is NOT required to exploit this vulnerability.
+From our analysis, we confirm this vulnerability could not be escalated to perform remote code execution.
+Fortinet released IPS signature ISC.BIND.rndc.Control.Channel.Input.Handling.DoS to protect from this vulnerability.
+Stay tuned for the next part which will describe vulnerabilities identified as CVE-2016-1286 and CVE-2016-2088.
+Dehui Yin and the FortiGuard Lion Team

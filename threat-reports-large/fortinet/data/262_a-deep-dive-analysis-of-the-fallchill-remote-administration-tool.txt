@@ -1,0 +1,103 @@
+Advanced Persistent Threat (APT) groups pose a great threat to global security.
+Over the years, many threat groups have emerged but none have attracted more attention than North Korean groups due to the ongoing nature of the conflict between North Korea and the west.
+That, together with the great damage done so far by this threat group (most well-known are the infamous Sony attacks and the related Operation Blockbuster), has prompted significant institutional interest.
+The U.S. Government in particular refers to the malicious threat actor connected to the North Korean government as HIDDEN COBRA.
+US-CERT recently published several alerts [1] [2] detailing the actions of this threat actor.
+In its most recent report, US-CERT warns about a special component that allows HIDDEN COBRA to remotely control a victim’s computer, called FALLCHILL.
+FortiGuard Labs has been actively monitoring FALLCHILL, validating all its IOCs (indicators of compromise), and providing protection for our customers.
+In a previous post we provided a high level overview of FALLCHILL.
+In this research report we dig even further, providing a deep dive analysis of the FALLCHILL Remote Administration Tool (RAT) in order to shed additional light on this threat, and thereby help our customer and the security community at large defend against this threat and similar threats.
+At a high level, there are two variants of FALLCHILL.
+Key data points about each are given in the following table:
+Figure 1 Summary
+At first first glance, the samples seemingly look very different: one is a Dll (and 64 bit) while the other is a normal executable (32 bit).
+But as we shall see, they actually share more similarities than differences.
+Our analysis began by getting a feel for what the malware could possibly do on victim’s system.
+One of the quickest ways to do that is to observe what Operating System (OS) functionalities (APIs) the malware invokes.
+After a quick analysis, we noticed that the import table is rather short.
+That, coupled with the fact that we saw weird strings (e.g.
+‘WTSQfvibUhviTlpvm’) in the binary, brought us to the conclusion - with a high degree of confidence - that the sample had encrypted its API names so that it could decrypt them and dynamically load them later on.
+In our experience, this is a common technique used by cybercriminals to hinder static analysis.
+Figure 2 Encrypted Windows API Names
+And sure enough, after more reverse-engineering, we figured out the algorithm used to decode the strings above.
+As an example, the string ‘WTSQfvibUhviTlpvm’ is decoded to ‘WTSQueryUserToken’.
+Figure 3 Algorithm Used to Decrypt API Names
+Interestingly this is not a xor-based algorithm (the only xor instruction is xor eax, eax which is an idiomatic way to quickly set a register to zero – clearly not for encryption).
+Another interesting pattern to note is that capital letters are not being encrypted at all, allowing researchers to roughly guess what a string will decrypt into.
+With the algorithm at hand, we managed to dump the entire function table of the RAT.
+From there, we patched the original binary in IDA Pro, which greatly helped with static analysis later on.
+Figure 4 Function Table (32 bit variant)
+The 64-bit variant of FALLCHILL is trickier to reverse.
+In a nutshell, it expects to be loaded by certain components that we do not have access to.
+Not to be deterred, we reverse-engineered the checks, and from there we circumvented the logic, allowing us to trace the 64-bit variant just like we did with the 32-bit variant.
+We then applied similar techniques to dump the function table of the 64-bit variant:
+Figure 5 Function Table (64 bit variant)
+Aside from the major differences detailed above, we also observed some small variations here and there.
+Most notably is the presence of the Zlib library (which is a common compression library) statically linked into the 64-bit variant.
+This strongly indicates the usage of compression in its communication.
+The usage of Zlib, together with the fact that default operand size in 64-bit binary is 64-bit, explains why the size of the 64-bit variant is about 50% larger than the 32-bit variant.
+Figure 6 Zlib Inside the 64-bit Variant
+With this part of the analysis completed we were finally able to dig deep into the function of the FALLCHILL Remote Administration Tool, as described in the sections below.
+We first reverse-engineered the logic that the malware uses to connect back to its C2 infrastructure and uncovered the target IP addresses that the RAT uses to receive commands from its botmaster (HIDDEN COBRA).
+Figure 7 C2 IP Addresses
+As can be seen, besides the main IP addresses (“125.212.132.222" and "175.100.189.174") the bot also uses the address '10.10.30.110', which is a private address found on many networks using NAT (Network Address Translation).
+The logic surrounding the block of code strongly indicates that this is a test address used by the malware author to test the C2 functionalities that was not removed in the final version.
+Figure 8 Bot C2
+The address "125.212.132.222", in turn, is from Viettel Corporation, which is a major telecom company in Vietnam.
+Once the malware has successfully established a connection to its C2 IP address, it spawns a thread waiting for commands from the botmaster, illustrated in the control flow graph below.
+Figure 9 Control Flow Graph (CFG)
+Each box in the CFG above represents a basic block (BB).
+As can be seen, the control flow of a typical shell is clear.
+At the beginning, there is the common logic of parsing and decoding the command and its parameters.
+And then there is an infinite loop with a distinctly huge switch-case to handle each command.
+And finally, the RAT replies the result back to the RAT manipulator (the common red block at the end).
+The CFG corresponds to the function below:
+Figure 10 Logic of the Shell (32 bit Variant)
+We reverse-engineered the logic of FALLCHILL and found many classical features of a RAT:
+Iterates files in a folder
+Retrieves and launches additional payloads from the internet
+Iterates processes and modules
+Terminates a process
+Creates a process
+Creates a process as another user
+Writes a file
+Reads a file
+Gets and modifies file or directory timestamps
+Connects to a remote host
+Moves a file
+Gets information about installed disks, including the disk type and the amount of free space on the disk
+Gets the current directory
+Changes to a different directory
+Removes itself and artifacts associated with it from the infected system
+We next turned our attention to the 64-bit variant.
+The DllMain function creates a thread that eventually spawns a shell thread to handle commands from the botmaster, just like in the case of the 32-bit variant.
+Figure 11 DllMain of the 64 bit Variant
+The command set for the 64-bit variant is almost identical to the 32-bit variant.
+For example, 65334 is for terminating a process and so on.
+The loop to handle commands is given below:
+Figure 12 Logic of the Shell (64 bit Variant)
+Attribution is almost always a tricky business, as malware artifacts themselves come from the malware author, which in turn can be manipulated to blame other threat actors - aka distancing from himself or herself.
+With that being said, the locale ID of the dialog resource inside the RAT (below), together with the fact that the C2 IP addresses overlap with the infrastructure used by HIDDEN COBRA, indicates this RAT is indeed connected to North Korea.
+Figure 13 Resource Section Inside the RAT
+Figure 14 Ground Truth Per Microsoft
+Internal testing by FortiGuard Labs shows that all networks and devices being protected by FortiGate solutions running the latest updates were automatically protected from this malware.
+In addition, a fine-grained IPS signature has been created.
+It will be identified as FALLCHILL.Botnet.
+Further, all IOCs that have been validated as part of FALLCHILL are now an active part of our Threat Intelligence System.
+FortiGuard Antivirus service detects samples as the following:
+0a118eb23399000d148186b9079fa59caf4c3faa7e7a8f91533e467ac9b6ff41 W64/NukeSped.M!tr
+a606716355035d4a1ea0b15f3bee30aad41a2c32df28c2d468eafd18361d60d6 W32/Agent.YDV!tr
+FortiSandbox rates the samples as High Risk.
+FortiGuard WebFilter service blocks and tags all C2 IP addresses as Malicious.
+Organizations that detect any of the IOCs identified as part of the FALLCHILL malware should refer to the ‘Detection and Response’ and ‘Mitigation Strategies’ sections found in the US-CERT Alert (TA17-318A).
+As usual, FortiGuard Labs will keep an eye on advanced threats like this and work to keep everybody protected.
+-= FortiGuard Lion Team =-
+Samples:
+0a118eb23399000d148186b9079fa59caf4c3faa7e7a8f91533e467ac9b6ff41 W64/NukeSped.M!tr
+a606716355035d4a1ea0b15f3bee30aad41a2c32df28c2d468eafd18361d60d6 W32/Agent.YDV!tr
+IPs:
+125.212.132.222
+175.100.189.174
+[1] https://www.us-cert.gov/ncas/alerts/TA17-164A
+[2] https://www.us-cert.gov/ncas/alerts/TA17-318A
+Sign up for our weekly FortiGuard Labs intel briefs or to be a part of our open beta of Fortinet’s FortiGuard Threat Intelligence Service.

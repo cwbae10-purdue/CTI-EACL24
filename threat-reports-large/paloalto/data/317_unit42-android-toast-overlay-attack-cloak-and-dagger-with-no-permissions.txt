@@ -1,0 +1,54 @@
+Palo Alto Networks Unit 42 researchers have uncovered a high severity vulnerability in the Android overlay system, which allows a new Android overlay attack by using the “Toast type” overlay.
+All Android devices with OS version < 8.0 are affected by this vulnerability and patches are available as part of the September 2017 Android Security Bulletin.
+Android 8.0 was just released and is unaffected by this vulnerability.
+Because Android 8.0 is recent, this vulnerability affects nearly all Android devices currently in the market (see Table 1) and users should apply updates as soon as possible.
+Overlay attacks permit an attacker to draw on top of other windows and apps running on the affected device.
+To launch such an attack, malware normally needs to request the “draw on top” permission.
+However, this newly discovered overlay attack does not require any specific permissions or conditions to be effective.
+Malware launching this attack does not need to possess the overlay permission or to be installed from Google Play.
+With this new overlay attack, malware can entice users to enable the Android Accessibility Service and grant the Device Administrator privilege or perform other dangerous actions.
+If these privileges are granted, a number of powerful attacks can be launched on the device, including stealing credentials, installing apps silently, and locking the device for the ransom.
+The research was inspired by the paper “Cloak and Dagger: From Two Permissions to Complete Control of the UI Feedback Loop” by Yanick Fratantonio of UC Santa Barbara and Chenxiong Qian, Simon P. Chung, Wenke Lee of Georgia Tech (PDF Link).
+This paper was recently presented at the IEEE Security & Privacy 2017 conference in May 2017.
+This paper proposed several innovative accessibility attacks but with the assumption that the malicious app must explicitly request two permissions and be installed from Google Play.
+Our new research shows that the accessibility attacks proposed in the paper can be launched successfully even if the app is not from Google Play and declares only one permission “BIND_ACCESSIBILITY_SERVICE”.
+As with Cloak and Dagger, this overlay attack works by modifying regions of the screen to change what the user sees, tricking them into enabling additional permissions or identifying their inputs.
+A video of the this attack in action is available here:
+This vulnerability was assigned CVE-2017-0752 and was disclosed in the Android Security Bulletin September.
+New Overlay Attack using Toast
+The “Toast” window (TYPE_TOAST) is one of the supported overlay types on Android.
+The Toast overlay is typically used to display a quick message over all other apps.
+For example, a message indicating that an e-mail has been saved as draft when a user navigates away without sending an e-mail.
+It naturally inherits all configuration options as for other windows types.
+However, our research has found using the Toast window as an overlay window allows an app to write over the interface of another App without requesting the SYSTEM_ALERT_WINDOW privilege this typically requires.
+This discovery allows an installed app to craft an overlay on the screen with a Toast window.
+In this way, the app can launch an overlay attack without any special permissions.
+The crafted overlay includes two types of views (Figure 1), both of which are embedded in a Toast window.
+In the sample below, view1 covers the bottom GUI and monitors user clicks to infer the attack progress while view2 is a clickable view that the attacker tries to lure the victim to click on.
+Figure 1: Using a Toast window to craft an overlay
+This vulnerability is caused by a missing permission check.
+The related code segment in Android AOSP (version <= 7.0) is shown in the Figure 2.
+Normally, overlaying a window on top of other apps requires both permission check and an operation check.
+However, in the case of TYPE_TOAST, neither of those checks are in place.
+The request will be granted automatically.
+According to the inline comments in Figure 2, the app will be granted complete control over TYPE_TOAST window.
+Figure 2: No permission check for the TYPE_TOAST
+Vulnerability on Android OS version 7.1
+Android 7.1 introduces two layers of mitigations: timeout and the single toast window per UID at a time (See Table 1).
+The first mitigation forcibly assigns a maximum timeout (3.5s) for each Toast window (Figure 3).
+Upon timeout, the Toast window will fade away to mimic the normal Toast behavior on Android.
+Not surprisingly, this can be defeated with deliberately aligned repetitive popup Toast windows.
+For the second mitigation, Android 7.1 allows only one Toast window per app to be shown at a time (Figure 4).
+These two defensive mechanisms pose challenges on deceiving victims using a Toast window overlay.
+However, it does not address the fundamental causes: an app does not need any permission to display a Toast window on top of any other apps.
+Figure 3: Timeout for the Toast window in Android 7.1 (mitigation 1)
+Figure 4: Only one Toast window is allowed per UID in Android 7.1 (mitigation 2)
+For Android 7.1, to achieve the same overlay attack, a malicious app can use a LooperThread to continuously show a Toast window (Figure 5).
+Since only one overlay can be used at the same time, the malicious app cannot monitor whether the user has clicked on the expected area in the overlay.
+An alternative approach is to show one overlay to lure users to click on it, sleep for several seconds and then switch to another overlay for future steps.
+Obviously, the success rate of the overlay attack has been reduced by this mitigation.
+This alternative approach is also applicable on Android versions ranging from 2.3.7 to 4.3.
+Because, the Flag “FLAG_WATCH_OUTSIDE_TOUCH” has been removed forcibly in the Toast window ( Figure 6).
+Fortunately, we have confirmed that, a proper permission check has been added in Android O (8.0) Beta.
+Figure 5: Bypassing the timeout limitation with a loop
+Figure 6: FLAG_WATCH_OUTSIDE_TOUCH flag is removed in the version 2.3.7 – 4.3

@@ -1,0 +1,84 @@
+As a reverse engineer on the FLARE (FireEye Labs Advanced Reverse Engineering) team, I regularly perform basic dynamic analysis of malware samples.
+The goal is to quickly observe runtime characteristics by running binaries in a safe environment.
+One important task during dynamic analysis is to emulate the network environment and trick the malware into thinking it is connected to the Internet.
+When done right, the malware reveals its network signatures such as command and control (C2) domain names, User-Agent strings, URLs queried, and so on.
+One tool of choice is FakeNet.
+In this blog, I will discuss a major overhaul to FakeNet and how it helps you perform basic malware dynamic analysis.
+Some of the new features include full support for Windows Vista and later operating systems, process logging, advanced process and host traffic filtering engine, support for third party tools (e.g.
+debuggers, HTTP proxies, etc.)
+and many others.
+This blog covers the basic installation and most common scenarios for running FakeNet-NG.
+I invite you to review the complete documentation available here.
+The tool can be found on FLARE’s official Github repository here.
+From the releases page, download the latest pre-compiled archive.
+Next, copy the release archive to the Malware Analysis VM and extract it in an easily accessible location.
+The simplest way to run FakeNet-NG is to double click on fakenet64.exe or fakenet32.exe for the 64-bit or 32-bit versions of Windows, respectively, as illustrated in Figure 1.
+Figure 1: Running FakeNet-NG
+The tool requires Administrator access, so you will have to confirm the UAC prompt requesting elevated privileges.
+Once launched you will see a console window similar to the one in Figure 2.
+Figure 2: FakeNet-NG Startup
+By default, FakeNet-NG is configured to start several most commonly used services:
+DNS Listener on UDP port 53
+HTTP Listener on TCP port 80
+HTTPS Listener on TCP port 443
+SMTP Listener on TCP port 25
+Raw Binary Listener on both TCP and UDP ports 1337.
+This service is also used as a default listener to handle all communications.
+Default listeners are explained below.
+At this point you are ready to run a malware sample and observe its behavior.
+Figure 3 illustrates sample malware communication to the C2 server.
+Figure 3: Sample malware communication
+There are quite a few things going on in the log output above so let’s break it down into smaller components.
+Once launched, the malware attempts to resolve a C2 domain evil.mandiant.com by querying the configured DNS server 4.2.2.2.
+Figure 4 illustrates how FakeNet-NG diverts the traffic from 4.2.2.2 to the local machine’s IP address 172.16.163.131.
+Figure 4: Diverting DNS traffic
+A major benefit of running FakeNet-NG on the same host as the malware is that it can perform additional analysis of running executables.
+For example, FakeNet-NG is capable of detecting the exact executable name that is generating traffic.
+In this case, we can see that level1_payload.exe is generating the above DNS traffic.
+Continuing with the analysis, Figure 5 shows FakeNet-NG’s DNS listener providing a fake response to the query pointing malware to a fake C2 IP address 192.0.2.123.
+Figure 5: Faking DNS response
+After successfully resolving the domain, the malware proceeds to communicate with the C2 domain name, as shown in Figure 6.
+Figure 6: Faking C2 communication
+FakeNet-NG implements a few popular network listeners.
+In this case, the malware is communicating using the HTTP protocol on port 80.
+The output above provides us with several good network indicators such as the exact URL requested and User-Agent used in the communication, as well as the unencrypted beacon payload containing the compromised host’s machine name.
+All of these indicators can be used to create good network signatures to detect this malware sample.
+By default, FakeNet-NG captures all of the intercepted traffic in PCAP files so you can perform additional analysis.
+For example, Figure 7 shows both original and diverted packets performing DNS resolution as well as HTTP POST requests to the C2 server.
+Figure 7: Wireshark PCAP
+Captured PCAP files are stored in the same directory as the FakeNet-NG’s executable.
+As an added logging feature, FakeNet-NG will also preserve complete HTTP POST payloads in separate text files also stored in the executable’s working path.
+By default, FakeNet-NG is configured to cover the majority of malware analysis scenarios.
+However, if you encounter a more complex sample, then you can easily adapt the tool by editing one of the few configuration files located in the configs directory.
+By default, FakeNet-NG loads default.ini configuration file when it loads.
+You can either modify that file or create a new one and point FakeNet-NG to load it with the –c command-line parameter.
+Consider a sample scenario, where you have malware communicating using a binary protocol on port 4444.
+Figure 8 illustrates a sample listener configuration that will fake this service.
+Figure 8: Custom Listener Configuration
+The key elements of the configuration above are Port, Protocol and Listener.
+Port and Protocol attributes define the port and protocol used to both setup the listener service and define the rule to divert traffic.
+The Listener attribute is used to define a specific listener class.
+In this case, RawListener is used to handle arbitrary binary protocols.
+Alternatively, if you wanted to setup a listener to handle HTTP or HTTPS traffic you would use HTTPListener instead.
+Please refer to the documentation for a complete list of supported listeners and available options.
+With the above configuration appended to the active configuration file, we can now launch FakeNet-NG and intercept traffic destined to TCP port 4444, as shown in Figure 9.
+Figure 9: Diverting to Custom Listener
+The scenario above was for a single, known port that the malware would use for its communication.
+In many cases it is hard to predict the exact port used from basic static or dynamic analysis.
+Instead, let’s use another powerful feature that essentially allows you to handle any traffic to any port by a default listener.
+In order to configure the default listener, edit the [Diverter] section in the configuration file as follows in Figure 10.
+Figure 10: Default Listener Configuration
+Now, if the same malware sample decided to communicate on another port (e.g.
+5555), it would still be intercepted and handled by the previously defined CustomListener4444.
+Figure 11: Diverting to Default Listener
+The Figure 11 illustrates traffic going to the unknown port 5555 being diverted to the previously defined custom listener on port 4444.
+It is important to note that any explicitly defined listeners will take precedence over the default listener.
+So if you have DNS or HTTP listeners defined on UDP port 53 and TCP port 80 respectively, then they would handle diverted traffic instead of the default listener as expected.
+The new FakeNet-NG is developed completely in Python so it is easy to implement new services and features.
+It no longer uses the deprecated LSP (WinSock Layered Service Provider) driver implemented in the original FakeNet.
+Instead, FakeNet-NG relies on the excellent PyDivert\WinDivert library, which comes with a WFP (Windows Filtering Platform) driver that performs all of the traffic redirection.
+This blog shares a few techniques that can be used to quickly perform basic dynamic malware analysis and extract good network-based indicators.
+FakeNet-NG is a powerful and highly configurable tool that can be used to perform more advanced tasks such as process and traffic filtering, aiding in automatic malware unpacking, security assessment of thick-client applications and many others.
+Stay tuned for future blog posts that demonstrate the full features of this tool.
+Try out FakeNet-NG the next time you need to perform malware analysis, security assessment or simply to divert network traffic and fake network responses.
+We hope you love this tool as much as we do on the FLARE team.

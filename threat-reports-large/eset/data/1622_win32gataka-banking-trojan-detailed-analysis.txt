@@ -1,0 +1,106 @@
+Win32/Gataka is an information-stealing banking Trojan that can read all of your web traffic and alter the balance displayed on your online banking page to hide fraudulent transfers.
+It exhibits a modular architecture similar to that of SpyEye, where plugins are required to achieve most of the malware functionality.
+In our previous blog post, we
+Win32/Gataka is an information-stealing banking Trojan that can read all of your web traffic and alter the balance displayed on your online banking page to hide fraudulent transfers.
+It exhibits a modular architecture similar to that of SpyEye, where plugins are required to achieve most of the malware functionality.
+In our previous blog post, we gave an overview of the botnet’s capabilities and some of its recent campaigns.
+In this second blog post, we will look in more detail at two of the main components of Win32/Gataka: the Webinject and Interceptor plugins.
+As also shown in the previous blog post, here is the general architecture that characterizes Win32/Gataka.
+Please refer to the first blog post for a description of each plugin’s functionalities.
+This plugin creates a proxy server on the local machine so that all outbound and inbound network traffic can be examined.
+In the case of HTTPS traffic, fake certificates, embedded in encrypted form in the plugin resources, are exchanged between the client and the proxy server.
+The browser certificate checking functions are also patched in an attempt to hide from the user the fact that fake certificates are used.
+This plugin must be used in conjunction with other plugins to allow the botnet operator to steal personal information from the user.
+For instance, the Webinject plugin will set specific filters through the NextGenFixer plugin, enabling web traffic injection and modification when the user visits specific web pages.
+The way the interceptor module works is shown in the next figure:
+1.
+As soon as the user launches a browser, the malware will inject its malicious payload into it, then patch the certificate checking functionality and also hook selected API functions such as connect in order to intercept all web communications.
+2.
+In our example, the user tries to connect to a bank server which is targeted by a webinject configuration file downloaded by the malware.
+When the browser uses the connect API to connect to the bank server, the call will be intercepted by the malware, thanks to the installed hook.
+The API hooking mechanism is quite standard: it will put a jump to the malware code at the beginning of the call so that all calls to the API are redirected.
+The function’s first few patched bytes are saved in a separate buffer so that the malware can call the original API when needed.
+3.
+The malware will then connect to the bank server using the information provided by the user, acting as a proxy between the two.
+4.
+The bank communicates back to the malware.
+5.
+The malware will relay this information to the user.
+It is interesting to note here that all of this is possible without the user realizing what is happening because the malware uses fake certificates to communicate with the client’s browser.
+Since the certificate checking functions for the browser are patched, the browser believes the transaction to be a legitimate SSL/TLS session.
+The fake certificates are embedded in the interceptor plugin resources:
+Both certificates are invalid: the one on the left has expired and the one on the right was not issued by a trusted certificate authority (CA).
+The certificate verification routines used by the following browsers can be patched by Win32/Gataka:
+Firefox
+Internet Explorer
+Netscape Navigator
+Opera
+Maxthon
+There are some strings referring to Chrome, but it seems that this browser is not yet supported.
+It is interesting to note that Maxthon, a lesser-known browser but available on several platforms, is supported, but not Chrome.
+This becomes understandable once we know that the same certificate verification routine is patched for both Maxthon and Internet Explorer.
+All Firefox versions are supported, even the latest one (i.e.
+14.0.1).
+This version of Firefox was released on July 17, 2012 and the interceptor plugin version supporting this release was compiled on July 19, 2012.
+This shows that the malware is still being actively developed.
+We will now look further at the way Internet Explorer’s certificate verification routine is patched.
+The routine responsible for verifying the certificate validity is WinVerifyTrust() in wintrust.dll.
+According to MSDN documentation relating to WinVerifyTrust():
+If the trust provider verifies that the subject is trusted for the specified action, the return value is zero.
+Thus, in order to patch this function, the interceptor plugin finds the routine’s start address and patches the last bytes so that it always returns zero.
+6.
+Once the malware has performed these steps, it can intercept all communications between the user and his or her bank in clear format, even if SSL/TLS is used.
+Decryption of the SSL/TLS traffic is made possible thanks to the fake certificates.
+If the bank URL is present in the webinject configuration file, the webinject plugin will register callback with the Interceptor plugin in order to inject or modify content in the web pages the user is seeing, even if it is using HTTPS connection.
+The injection content may take the form of additional fields on a specific web page requiring extra personal information.
+The content modification may be effected through scripts that will alter an account balance in order to hide an automatic fraudulent transfer.
+As seen in the previous Gataka blog post, attacks against financial institutions are performed through HTTP injections.
+These injections are configurable and are sent to the client following a predefined format.
+For each target URL, it is possible to specify where in the HTML page the malicious content should be injected.
+Of course, this needs customization for each targeted institution.
+The Webinject plugin is responsible for reading the webinject configuration file and injects the content into the targeted webpages.
+One really interesting observation is that the format of the webinject file used by Win32/Gataka is very similar to the one used by SpyEye.
+This is probably to leverage the webinject programmer base already used to write injects for SpyEye and Zeus.
+The following screenshot shows a Win32/Gataka file and a SpyEye webinject file to illustrate the striking similarities.
+The tags used to determine where the scripts should be inserted are identical for Gataka and SpyEye.
+The only difference we see is the usage of the end_url in the case of Win32/Gataka.
+Having a compatible format allows the cybercriminal to easily migrate from one malware to another, or to have bots infected with different malware and yet still be able to use the same HTTP inject configuration file.
+The configuration files used for injecting malicious content into webpages visited are kept in an internal database.
+The database is encrypted using 3DES and is located in the following location.
+The password to decrypt the database is kept in the file and appears as cfvsq ckj;ysq GfhjKm.
+Interestingly, when typed on a Cyrillic keyboard layout, this string is rendered as самый сложный ПароЛь.
+This roughly translates to the most complex password , a personal touch from the malware author.
+Once decrypted, the file is XML-based and contains Base64-encoded data:
+The HTTP injection configuration files are compressed and kept within the <injdata>.
+During Webinject plugin initialization, the database file is read and the filters are put in place to allow successful injections.
+One campaign we monitored was using an advanced type of webinject that automatically sends user information typed in by a user to a predefined URL.
+The webinject file downloaded from the C&C server shown below contains a link to a script on a remote server:
+When the user visits the targeted webpage, the script above is injected and causes the webpage to download an additional script from a server controlled by the botnet operator.
+This script is then inserted into the target page in order to steal personal information from the user.
+In this example, the downloaded script will show a form to the user asking for personal information as soon as he logs in the targeted web page.
+In order to entice the infected user into entering his personal information, he is shown a message stating that his account was locked and that personal information is needed in order to regain control of the account.
+The following screenshot shows the kind of information the criminals are after.
+The following countries had their own personalized messages:
+United States
+Canada
+United Kingdom
+Australia
+Spain
+France
+Germany
+Once the user has entered all the information required, a quick check is made by the injected JavaScript to make sure that the information entered is valid.
+As an example, Luhn’s algorithm is used to make sure that a valid credit card number has been entered.
+The data is then sent back to the control panel through a link and password provided in the script previously downloaded:
+It is very interesting that the link and, more important, the password are stored in clear text in the downloaded JavaScript.
+The harvested information is sent through a GET request to the C&C.
+The ability to save user information using a webinject file like the one shown above has the great advantage of being malware independent.
+This means that the same webinject file can be used to gather personal information from users infected with different strains of banking Trojan.
+It can be very useful if a bot master is managing computers infected with different malware such as SpyEye or Win32/Gataka.
+In summary, Win32/Gataka employs interesting techniques in order to steal valuable information from an infected user.
+Through API hooking, the interceptor plugin is able to view all communications coming in and out of the computer.
+The Webinject plugin can in turn access this information and modify or inject new content in the web sites the user is seeing.
+For instance, this allows the botmaster to inject advanced scripts attempting to automatically empty a user bank account or to harvest private information.
+In one campaign we have followed, Win32/Gataka botnet operators make use of advanced webinject configuration that can be used by different types of malware.
+These advanced scripts are a good example of the ways in which malware writers specialize.
+People specializing in writing web inject configuration files are able to sell their work to a larger customer-base and are not tied to a particular type of malware.
+By allowing the script itself to communicate with the control panel, it is easier to implement compatibility with a wide range of information stealing malware.

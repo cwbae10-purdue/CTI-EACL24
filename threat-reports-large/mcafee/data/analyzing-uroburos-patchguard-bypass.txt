@@ -1,0 +1,80 @@
+A few weeks ago G Data Software released a report detailing alleged intelligence agency software.
+Following the release of that report, BAE Systems published a whitepaper further describing the threat.
+In this blog we reveal some additional information not previously discussed.
+(Note: G Data did report an older Microsoft PatchGuard bypass used by a different component of this threat.)
+We believe what follows has not been previously documented publicly.
+Because we have examined earlier PatchGuard bypasses, the 64-bit version of the Uroburos malware caught our attention.
+Details have already been released describing how it exploits a signed virtual box driver to disable the kernel-mode signing check, so we will limit our discussion to a new PatchGuard bypass aspect of the threat.
+To recap, PatchGuard, also called Kernel Patch Protection, is a kernel-mode feature of 64-bit Microsoft Windows that checks for the integrity of various kernel-mode constructs (modules, structures, registers, etc.)
+at regular intervals.
+If it finds any inconsistencies, the system is immediately halted and the compromise is reported to the user.
+Let’s get back to analysis of the 64-bit kernel driver used by Uroburos.
+The malware uses an inline hooking mechanism.
+Inline hooks are very unconventional.
+They are not simple “jmp” instructions or any “push, ret” combination as we have seen in many inline hooks.
+It’s kind of motivated by binary translation, as we will see below.
+Let’s first check the consistency of the image loaded in memory, using the WinDbg command chkimg.
+We have to ignore nt!SwapContext_xxxxx and nt!EnglightenedSwapContext_xxxxx because they are related to internal hot patching in the Windows kernel.
+The highlighted lines are of interest; the rest are for the functional purpose of the rootkit and have been documented in other blogs and white papers.
+The highlights are interesting because they are used by PatchGuard in an obfuscated way to invoke its own validation routine.
+KiRetireDpcList, an undocumented function, is called by the kernel to invoke DPCs in the queue until the queue is empty.
+If you have read publications by skywing about the workings of PatchGuard, DPCs are the place from which the chain starts for the execution of PatchGuard validation routines.
+In short, an invalid pointer dereference is set up to be done in predetermined DPC routines and that will invoke the exception handler associated with the DPC routine; thus invoking the PatchGuard validation routine later.
+RtlLookupFunctionEntry is a well-documented function to obtain the function table for a specified program counter (RIP in this case).
+This table is used for unwinding the stack in case an exception is raised in the program.
+Hook Mechanism
+As evident from above, the driver is hooking into several places in kernel memory.
+So let’s discuss the hooking mechanism: If we look into the body of any hooked function, we see that code is being pushed onto the stack followed by the instruction “int 0C3h.” The C3 interrupt vector is unused and thus is utilized by the threat to appropriately route all its hooks.
+Below are screen shots of three of the hooked functions.
+The rest have similar hook bodies.
+The next command to execute is !idt:
+As evident from the disassembly, “rax” holds the code pushed from the inline hook and is shifted left 4 (multiply by 16) and added to the address of the function call table, shown below:
+PatchGuard Bypass
+Now that we have analyzed the hook infrastructure, let’s look at some of the hooks to see how the malware bypasses PatchGuard.
+Each hook has its own significance, essentially either deny the validation routine to run or, if an inconsistency is reported, to not allow KeBugCheckEx to happen.
+Let’s analyze the hooks.
+RtlCaptureContext
+As evident from msdn documentation, this function captures the current execution state.
+Inside the Windows kernel the function is called from many places; the one we care about is KeBugCheckEx, which calls this function to record current state.
+Here the hook handler of RtlCaptureContext looks as if it is being called by KeBugCheckEx.
+If it is called by KeBugCheck, then it checks for a value in ECX against 0x109.
+ECX is first parameter to KeBugCheckEx and 0x109 is PatchGuard’s inconsistency bugcheck.
+If it happens to be true and IRQL is PASSIVE_LEVEL, it resumes the execution from the start of the worker thread by modifying the thread context address.
+Below are some screen shots showing this in action.
+In the case of IRQL equal to DISPATCH_LEVEL and bugcheck code equal to 109h, it can’t restore the worker thread context because the call is still in DPC.
+Thus the DPC stack and context is applicable.
+However, the malware plays another trick, which we will see in the KiRetireDpcList section.
+Earlier versions of PatchGuard were not invoked directly by DPC, but as PatchGuard evolved its validation routine may be called directly from the DPC routine.
+That’s why Uroborous hooks KiRetireDpcList and makes a check for DISPATCH_LEVEL.
+This is quite an advanced technique because hooking KeBugCheckEx doesn’t serve any purpose as reported in the G Data analysis.
+The current PatchGuard makes a copy of KeBugCheckEx at boot time and before calling into KeBugCheckEx, PatchGuard copies the function and calls it.
+It looks like the sample documented by G Data is an older one.
+But KeBugCheckEx has to call RtlCaptureContext, which can eventually redirect the execution to normal execution using one of the methods suggested by skywing.
+KiRetireDpcList
+In the newest sample, nt!KiRetireDpcList simply acts as a pass-through.
+All this does is save the context before the KiRetireDpcList call and later restore it.
+However, there is a quirk here.
+In the last section we saw that if RtlCaptureContext is called at DISPATCH_LEVEL, it plays a trick.
+The trick is that the context at the time of the call of KiRetireDpcList would be restored by the RtlCaptureContext hook.
+Thus DPCs will be processed again, including PatchGuard’s DPC, and if this time it doesn’t invoke a validation routine directly at DISPATCH_LEVEL, then it will be disabled permanently by the previous method.
+(See last section.)
+RtlLookupFunctionEntry
+Hooking RtlLookupFunctionEntry is suspicious as well because it gets called whenever an exception is raised.
+Common exception handlers use this API to locate an appropriate exception handler for the associated function that raised the exception; thus it is a possible detour to the execution of the exception handler and PatchGuard’s validation routine.
+We have not been able to complete this analysis due to time constraints.
+In future, we may provide more details.
+Detection Using McAfee Deep Defender
+Fortunately McAfee Deep Defender proactively detects, by default, all the operations of this kernel-mode threat on x86 and x64 platforms.
+Because the malware modifies key kernel data structures and system registers and Deep Defender protects those on access, all such modifications are reported by Deep Defender.
+With reasonably good policies in effect, Deep Defender can easily thwart this kernel-mode threat.
+Windows 8+
+The malware installer does not function the same under Windows 8 or 8.1.
+Rather the driver in question is deleted by the threat rather than attempting to compromise the kernel.
+Summary
+Without a doubt this piece of code was written by extremely skilled programmers who have deep knowledge of Windows kernel internals and x64 architecture.
+PatchGuard offers countermeasures each time a public disclosure has been made about a bypass.
+We expect that will happen again this time.
+However, as we see in this example, the malware already has number of tricks up its sleeve, and author’s understanding of the Windows kernel is excellent.
+So it will be just a matter of time before we see a new technique to stop the execution of PatchGuard.
+I would like to extend my thanks to my colleague Craig Schmugar for helping out in analyzing this threat.
+SHA256 of 64bit binary analyzed: bb975dc17d871535ddeadfb6ec34089ba02eef3f2432e7a4f37065b53d67c00a

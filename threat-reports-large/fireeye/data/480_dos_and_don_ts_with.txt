@@ -1,0 +1,119 @@
+Phishing emails are one of the most common delivery mechanisms for malware authors.
+The attachments in those phishing emails have a variety of payloads.
+Well-known delivery methods include: exploiting vulnerabilities in the document program (e.g., doc, xls, rtf), using macros, or embedding user-clickable objects that drop payloads.
+Out of all these methods, embedding objects in the document is considered a “gray area” because both IT professionals and malware authors use this technique.
+Don’t let your employees get into a habit of blindly double-clicking on any embedded objects in Documents, Excel spreadsheets, or PowerPoint presentations.
+While this is useful for IT professionals, it is the perfect social engineering tactic to install malware.
+Figure 1 is an example of a clean PowerPoint presentation for install instructions with an embedded executable.
+Figure 1.
+Legitimate Embedded Object Scenario
+Figure 2 is the typical anatomy of a phishing document attack.
+First, the user will be tricked into double-clicking on the embedded object in the document which activates the payload execution.
+Secondly, the object is created on the filesystem.
+And lastly, the object extracts the backdoor or infostealer and carries out its final objective.
+Figure 2.
+Typical Phishing Document Anatomy
+Let’s explore some phishing samples found in the wild.
+The following two documents use the Microsoft Office Object Packager tool to embed an executable into a Word document.
+With this tool, the author can configure the appearance of the packaged file and insert a file to trick the user into double-clicking.
+[1] This is a simple method for getting the user to install a payload, but it can also evade some automated sandboxes and AV solutions because it requires user interaction.
+The first document is not as sophisticated as most phishing documents, but its simplicity still fulfills the attacker’s objective.
+This document tricks the user into thinking that the YouTube player is a link when it is actually just a screenshot of a YouTube player.
+When the user double-clicks the image, that action activates an executable to install the payload.
+The user sees a program start up called AdobeUpater.exe, this is actually a remote desktop client called Teamviewer.
+Figure 3.
+Screenshot of the Fake YouTube Player
+The Microsoft Object Packager module allows a user to insert files into an Microsoft Office document.
+Microsoft office gives you the ability to view the configuration menu for the embedded object.
+Figure 4 shows how the object should appear in the document as well as the content embedded.
+Figure 4.
+Object Packager Configuration Menu
+This nesting or layered approach to social engineering malware has been very common in several email campaigns in the last several months dating back to August 2014.
+Figure 5.
+Screenshot of the Original Document
+Below are the steps the embedded object takes to steal the target’s data:
+Figure 6.
+Attack Flow
+1.
+The embedded object, TT PAYMENT COPY.exe, is a self-extracting RAR archive (rar_sfx) that extracts and hides the AutoIt[2] executable called uyifile.exeand supporting payload files.
+2.
+The AutoIt executable then begins to RC2 decrypt the supporting payload file iwnLAowlFJ.JPC.
+As it turns out this is the InfoStealer kit called Predator Pain v14.
+See the Appendix for the AutoIt decryption script.
+3.
+The AutoIt script uses the following hard-coded process names in which to inject the InfoStealer code:
+4.
+As the injected process then injects into vbc.exe, it then extracts the information and collects into the following files:
+5.
+The injected InfoStealer then exfiltrates the following types of data:
+6.
+The InfoStealer sends this information back to the email server in the following format:
+Predator Logger Details:
+Time Logs will be delivered: Every % minutes
+Time Log will be delivered: Average 2 to 4 minutes
+Local Date and Time:
+Internal IP Address:
+External IP Address:
+If you must send someone an installation executable or even a form helper program, compress the executable in a password protected ZIP file, where the password is not easily guessable.
+Using a standardized strong password limits access to users or employees that need to access the program.
+Educate your employees to not click on objects in documents without first confirming the source email address.
+Enforce content filtering on web and email to prevent employees receiving executable files from the internet
+Remove admin/local admin privileges to prevent employees installing new and unknown software onto devices.
+Consider Advanced Threat Prevention technologies that can examine emails for sophisticated multi-stage droppers that evade detection of all email security gateways today.
+%TEMP%\TT PAYMENT COPY.exe
+$uniscriptdir = FileGetShortName(@ScriptDir)
+Global Const $prov_rsa_full = 1
+Global Const $prov_rsa_aes = 24
+Global Const $crypt_verifycontext = + -268435456
+Global Const $crypt_exportable = 1
+Global Const $crypt_userdata = 1
+Global Const $calg_md5 = 32771
+Global Const $calg_rc2 = 26114
+Global Const $calg_userkey = 0
+Func _crypt_decryptdata($vdata, $vcryptkey, $ialg_id, $ffinal = True)
+If $ialg_id <> $calg_userkey Then
+$vcryptkey = _crypt_derivekey($vcryptkey, $ialg_id)
+If @error Then
+$ierror = 1
+$vreturn = + -1
+$hbuff = DllStructCreate("byte[" & BinaryLen($vdata) + 1000 & "]")
+DllStructSetData($hbuff, 1, $vdata)
+$aret = DllCall(__crypt_dllhandle(), "bool", "CryptDecrypt", "handle", $vcryptkey, "handle", 0, "bool", $ffinal, "dword", 0, "struct*", $hbuff, "dword*", BinaryLen($vdata))
+If @error OR NOT $aret[0] Then
+$ierror = 2
+$vreturn = + -1
+$iplaintextsize = $aret[6]
+$htempstruct = DllStructCreate("byte[" & $iplaintextsize & "]", DllStructGetPTR($hbuff))
+$ierror = 0
+$vreturn = DllStructGetData($htempstruct, 1)
+If __crypt_refcount() = 0 Then
+Local $hadvapi32 = DllOpen("Advapi32.dll")
+If @error Then Return SetError(1, 0, False)
+Local $iproviderid = $prov_rsa_aes
+If @OSVersion = "WIN_2000" Then $iproviderid = $prov_rsa_full
+$aret = DllCall(__crypt_dllhandle(), "bool", "CryptAcquireContext", "handle*", 0, "PTR", 0, "PTR", 0, "dword", $iproviderid, "dword", $crypt_verifycontext)
+If @error OR NOT $aret[0] Then
+Return SetError(2, 0, False)
+Func _crypt_derivekey($vpassword, $ialg_id, $ihash_alg_id = $calg_md5)
+$aret = DllCall(__crypt_dllhandle(), "bool", "CryptCreateHash", "handle", __crypt_context(), "uint", $ihash_alg_id, "ptr", 0, "dword", 0, "handle*", 0)
+If @error OR NOT $aret[0] Then
+$ierror = 1
+$vreturn = + -1
+$hcrypthash = $aret[5]
+$hbuff = DllStructCreate("byte[" & BinaryLen($vpassword) & "]")
+DllStructSetData($hbuff, 1, $vpassword)
+$aret = DllCall(__crypt_dllhandle(), "bool", "CryptHashData", "handle", $hcrypthash, "struct*", $hbuff, "dword", DllStructGetSize($hbuff), "dword", $crypt_userdata)
+If @error OR NOT $aret[0] Then
+$ierror = 2
+$vreturn = + -1
+$aret = DllCall(__crypt_dllhandle(), "bool", "CryptDeriveKey", "handle", __crypt_context(), "uint", $ialg_id, "handle", $hcrypthash, "dword", $crypt_exportable, "handle*", 0)
+If @error OR NOT $aret[0] Then
+$ierror = 3
+$vreturn = + -1
+$ierror = 0
+$vreturn = $aret[5]
+If $hcrypthash <> 0 Then DllCall(__crypt_dllhandle(), "bool", "CryptDestroyHash", "handle", $hcrypthash)
+Return SetError($ierror, 0, $vreturn)
+$__g_acryptinternaldata[2] = $hcryptcontext
+$__g_acryptinternaldata[1] = $hadvapi32
+$__g_acryptinternaldata[0] += 1

@@ -1,0 +1,46 @@
+There is a buffer overflow vulnerability in the WebDAV service in Microsoft IIS 6.0 identified as CVE-2017-7269 that allows remote attackers to execute arbitrary code via a long HTTP header.
+This vulnerability was reportedly first exploited in July or August of 2016, and the PoC was publicly disclosed in March 2017 on GitHub.
+Over the past month, however, FortiGuard Labs has been documenting a spike in new attacks targeting this vulnerability, peaking on Apr 13, 2018 when we logged over 4 million triggers.
+Fortinet released an IPS signature for this vulnerability in March of 2017 named MS.IIS.WebDAV.PROPFIND.ScStoragePathFromUrl.Buffer.Overflow.
+The daily trigger rate of this signature had never reached 500k until early last month.
+I decided to collect some attack data to find out what is happening.
+From May 15 to May 17, I found eight different payloads in over 6,000 attack samples.
+I decided to focus on the following payload, which appears in more than 4,000 of those samples.
+This payload was encoded using the Metasploit encoder ‘AlphanumUnicodeMixed’ based on the decoder stub.
+I wrote a simple python script, shown below, to decode it.
+for i in range(l):
+block=encoded_bytes[i*2:i*2+2]
+decoded_byte_low = ord(block[1]) & 0x0F
+decoded_byte_high = ((ord(block[1]) >> 4) + (ord(block[0]) & 0x0F)) & 0x0F
+decoded_byte=chr(decoded_byte_low + (decoded_byte_high <<4))
+decoded_bytes+=decoded_byte
+print decoded_bytes
+The following is the decoded shellcode.
+This looks very similar to the shellcode generated using the Metasploit uploadexec payload.
+As you can see, It tries to download the payload from hxxp://192.144.150.188/images/abc/DL.php, save it as C:\Recycler\svchost.exe, and then execute it.
+I was given a “404 not found” error when I tried to access the download link.
+But the following links serving malwares on this IP address are still accessible at the time of writing (thanks to David Maciejak for this information).
+hxxp://192.144.150.188/images/abc/x86.exe
+a69d53c9acd115bf3cb90eb23522a0b0d399cdaf96744774d3819f6b979d901d
+W32/Miner.DQ!tr
+hxxp://192.144.150.188/images/test/x64_vmp.exe
+e19756e3a7eb2f7345f9e898feeef3472854919663ac7362988db35c3f2d2c5d
+Adware/CoinMiner
+So a reasonable guess is that the PHP script is responsible for distributing these malwares.
+Based on similar examples we are regularly encounering, it is also possible that the intent of the PHP script is to download and run other riskware on the victim servers (such as cryptominers) hosted on the same fileserver/directory.
+The IP address 192.144.150.188 belongs to a big cloud service provider in China.
+The web server on this IP address is badly maintained.
+Detailed debug information was provided when I accessing a non-existing page, for example hxxp://192.144.150.188/images/aaa.
+I decided to stop there since this is not a very sophisticated attack.
+FortiGuard Labs will continue to monitor and track this vulnerability and provide updates once new information becomes available.
+Solution
+Fortinet customers still using IIS 6.0 are protected with the following IPS signature:
+MS.IIS.WebDAV.PROPFIND.ScStoragePathFromUrl.Buffer.Overflow
+Microsoft did not release a patch for vulnerability CVE-2017-7269.
+Instead, they have the following message posted on their support website:
+We strongly recommend that all users upgrade to Microsoft Internet Information Services (IIS) version 7.0 running on Microsoft Windows Server 2008.
+IIS 7.0 significantly increases Web infrastructure security.
+For more information about IIS security-related topics, visit the following Microsoft Web site.
+For more information about IIS 7.0, visit the following Microsoft Web site.
+Check out our latest Quarterly Threat Landscape Report for more details about recent threats.
+Sign up for our weekly FortiGuard intel briefs or for our FortiGuard Threat Intelligence Service.

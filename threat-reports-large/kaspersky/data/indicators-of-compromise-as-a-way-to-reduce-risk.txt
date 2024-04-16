@@ -1,0 +1,92 @@
+Infrastructure owners must regularly check their resources for the presence of malicious components.
+One of the ways in which a resource may become infected is as a result of “zero-day” vulnerability exploitation by cybercriminals.
+In this case, the developers of security tools used to protect the information system may be as yet unaware of the new threat.
+At the same time, experts may be investigating incidents related to the new threat.
+Moreover, some findings of these investigations may already be publicly available.
+Such reports have practical value.
+A typical report on an APT campaign includes the following information:
+Attack victims and the objectives of cybercriminals;
+List of victim nodes (IP addresses);
+Current activity of malicious components and/or cybercriminal groups;
+Detailed descriptions of tools and malicious components used by the cybercriminals;
+Description of the command-and-control (C&C) server infrastructure;
+Indicators of compromise.
+Of all the detailed technical information on any given APT, “indicators of compromise” have the greatest practical value for security administrators.
+This is a set of data that can help an administrator of the corporate IT infrastructure to discover any malicious activity in the system and take appropriate action.
+How should information system administrators use this data in practice?
+This paper is intended to provide an answer to this question.
+An indicator of compromise is information on the signs of malicious activity, which is structured in such a way that it can be fed into automated tools designed to check the infrastructure for signs of infection.
+Although there is no generally accepted format for descriptions of these indicators, several types of structured data are widely used and supported in the industry.
+IOC (indicator of compromise) – a list of threat data (e.g., strings defining file paths or registry keys) which can be used to detect a threat in the infrastructure using automated software-based analysis.
+Simple IOC usage scenarios involve searching the system for specific files using a variety of search criteria: MD5 hashes, file names, creation dates, sizes and other attributes.
+Additionally, memory can be searched for various signs specific to the threat and the Windows registry can be searched for specific records.
+This data can be presented in a variety of formats, one example of which is OpenIOC.
+The different formats enable the data to be imported into different security solutions to provide further processing of the indicators.
+An administrator can integrate IOCs taken from reports into such security solutions as:
+Solutions of the Endpoint Security class
+SIEM
+IDS/IPS
+HIDS/HIPS
+Various incident investigation tools
+There are many commercial solutions for working with IOC, but in many cases the capabilities of similar open-source programs are sufficient to check the target system for signs of infection.
+One example is Loki – an IOC scanner distributed under the GPL license, which can be used to search the target system for various indicators appearing as a result of malicious activity.
+To scan the system using the Loki scanner, it is sufficient to unpack the archive containing the utility and add the relevant IOC attributes to the scanner’s knowledge base.
+The following IOC categories are located in the application’s folder named “signature”:
+“filename-iocs” – a text file containing lists of file system attributes produced by the activity of various threats;
+“hash-iocs” – a list of MD5, SHA1 and SHA256 hashes of malicious components that appear in the system after it is infected;
+“falsepositive-hashes” – a list of exceptions: MD5, SHA1 and SHA256 hashes that are marked as false positives by the scanner when detecting the relevant components.
+As an example, consider the report we released after an investigation of the Carbanak APT.
+Page 36 of the report lists the MD5 hashes of all malware components that may be present in the system as a result of this infection.
+We can open the scanner’s file named “hash-iocs” and enter a rule for this threat in the following format: <MD5>;<description> .
+List of Carbanak APT components’ MD5 hashes in Loki scanner’s “hash-iocs” file
+The next step is to create an indicator in the text file named “filename-iocs”, which describes malicious components’ attributes in the file system.
+The indicator should have the following format:
+# COMMENT
+# REGULAREXPRESSION;SCORE
+IOC for the file system in Loki “filename-iocs” list
+After entering the relevant indicators in the scanner’s knowledge base, we can launch a scan of the workstation.
+This requires launching the “loki.exe” executable file with administrator privileges (otherwise the scanner won’t be able to scan the contents of RAM for attributes) and wait for the scan to complete.
+The process of scanning using Loki utility
+Upon completing the scan, the application will generate a report and save it in the program’s folder under the name “loki.txt”.
+In addition to the various IOC indicators, there are files with the “.yar” extension attached to some reports.
+These files contain rules for YARA – a tool for identifying and categorizing malicious samples.
+The so-called YARA rules use a special syntax to describe attributes that indicate the presence of malicious activity in the system.
+If one of the rules is met, the analyzer returns an infection verdict that includes the relevant details (e.g., the threat’s name).
+Loki scanner described above also supports YARA rules, which means that administrators can use .yar files taken from reports to scan the system for the threats described in these reports.
+This is done by copying a .yar file to the “signature” folder and launching a scan.
+However, the official tool created by developers of the YARA project is much better suited to working with YARA rules, because its knowledge base is regularly updated and is much more extensive than the databases of other similar utilities.
+As a result, scanning provides a more comprehensive view of an information system’s security, with more complete information on the presence of malicious components in the system.
+To scan a workstation, it is sufficient to launch the YARA utility with the necessary parameters.
+For example:
+yara32.exe –d md5= <MD5_hash><this_is_yara_rule.yar><dir_for_check>
+where “-d” is a parameter used to define external variables.
+If any matches to any of the rules are detected, the utility will display a notification including the rule name and the component triggering the rule.
+Sample notification of a YARA rule match
+The administrator can, for example, launch such scans at system startup.
+This can be done by writing a simple PowerShell script that will launch utilities with the right parameters and, if necessary, schedule it to run on all hosts at logon using the Active Directory: User configuration -> Windows configuration -> Scenarios ->Logon.
+Structured Threat Information Expression (STIX) is a unified language for recording threat information and importing it into software solutions.
+Many security solutions can import information in the STIX format (as well as JSON, which is described below) for using that information in the following kinds of infrastructure:
+SIEM
+Indicator-based security solutions (such as scanners)
+Forensic platforms
+Solutions of the Endpoint Security class, etc.
+A STIX report can be imported into IBM QRadar, a popular SIEM solution, using a specially designed python script:
+./stix_import.py -f STIXDocument.xml -i 192.168.56.2 -t XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX -r MyReferenceSet
+where the “-f” parameter defines the location of a local STIX document, “-i” defines a host with a QRadar console installed on it, and “-t” defines a service token for QRadar.
+STIX reports are also supported by the Splunk App for Enterprise Security intelligence platform and can be imported.
+A STIX file must have a .xml extension to be read and parsed.
+It is worth noting that there is a Python utility called openioc-to-stix which can be used to convert OpenIOC format to STIX Indicators, enabling indicators of compromise to be imported as STIX rules into solutions that do not support OpenIOC.
+JSON is one of the most popular data presentation formats, which is also often used to format data provided with reports.
+The use of JSON data depends on the administrator’s needs and on the software solution into which the data is imported.
+For example, if a JSON file contains IP addresses of command servers to which infected workstations connect, the administrator of the infrastructure protected by the solution can include these IPs in the denylist of a firewall supporting JSON imports.
+If the firewall does not support importing data in this format, the administrator can use a parser (a JSON file analyzer) to export the IP list from the file and then import it into the firewall’s denylist.
+“Indicators of compromise” help to use threat data effectively: identify malware and quickly respond to incidents.
+These indicators are very often included in threat reports, which are often skimmed by readers.
+Even if a document providing details of a research project does not have a dedicated Indicators of Compromise section, a reader can always extract useful data (information on the attributes found in infected systems) from the text, present the data extracted in any of the formats described above and import it into a security solution.
+Our latest researches with indicators of compromise:
+Wild Neutron – Economic espionage threat actor returns with new tricks
+The Mystery of Duqu 2.0: a sophisticated cyberespionage actor returns
+The Great Bank Robbery: the Carbanak APT
+Icefog OpenIOC Release
+Darkhotel Indicators of Compromise (PDF)
+Crouching Yeti — Appendixes (PDF)

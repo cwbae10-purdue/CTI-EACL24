@@ -1,0 +1,144 @@
+Our follow-up investigation of a nasty Android banking malware we identified at the tail end of last year has not only revealed that the trojan is more persistent than we initially realized – thus making for a much more dangerous threat – but that it is also being used as part of an ongoing and evolving campaign.
+On Wednesday, Dec. 17, 2015, FireEye published SlemBunk: An Evolving Android Trojan Family Targeting Users of Worldwide Banking Apps.
+The blog exposed SlemBunk – a family of Android trojan apps that attempt to steal the login credentials of mobile banking users.
+Those trojan apps masquerade as common, popular applications and stay incognito after running for the first time.
+They have the ability to phish for and harvest authentication credentials when specified banking apps are launched.
+In our initial investigation, we identified more than 170 SlemBunk samples that targeted users of 33 mobile banking apps, whose service regions cover three major continents: North America, Europe, and Asia Pacific.
+The previous article described the technical details of SlemBunk, covering how it is composed, how it steals user credentials, and how it communicates with the command and control (CnC) server to conduct a variety of supporting functions.
+We also noted that drive-by downloads from porn sites were one distribution mechanism for the SlemBunk payload.
+After releasing those findings, we continued to monitor the development of SlemBunk and conducted a more in-depth study.
+Our investigation identified a much longer attack chain (as depicted in Figure 1) than we reported in the previous article.
+Before the invocation of the actual SlemBunk payload, up to three apps have to land on the device in order to fire the last deadly shot.
+This makes it much harder for analysts to trace the observed attacks back to their actual origin, and thus the malware can have a more persistent existence on the victim’s device.
+Figure 1.
+Prolonged attack chain of latest SlemBunk development
+In this follow-up post, we present the technical details of this prolonged attack chain:
+A drive-by download starts the prolonged attack chain and puts the first app onto the victim’s device.
+We call this app the SlemBunk dropper.
+The dropper optionally uses a packer to hide its own payload, and thus runtime unpacking is needed to recover the second app: the SlemBunk downloader, which conducts in-app downloading to grab the actual malicious payload.
+The downloader app queries a customized CnC server for the SlemBunk payload, the final app in the attack chain, and this app fires the last shot.
+The details of how the SlemBunk payload works is described in our previous blog.
+Our additional research also identified the URLs of a few CnC servers for this campaign.
+We looked into the communication protocol between the SlemBunk apps and the CnC server by studying relevant code and monitoring the exchanged messages.
+It reveals that SlemBunk is developing into a more organized campaign with highly customized CnC servers, including the use of what appears to be an administration panel to manage the campaigns.
+The registration records of the relevant domains suggest that this campaign activity is very recent, still ongoing, and possibly evolving into different forms.
+In this follow-up article, we present our analysis into this data as well.
+Early SlemBunk samples mainly distributed themselves by imitating popular apps, such as porn apps or essential tools.
+Drive-by downloads, however, can make it easier to reach more victims.
+The dropper app is the first app that lands on the victim’s device and the dropper app starts the prolonged attack chain that we will present in this article.
+Figure 2 shows an example website that provides porn content, as seen from the content hosted on the webpage.
+However, the website also serves additional hidden content.
+When a user accesses the website, a script embedded in the page first detects the device type that is accessing the site.
+If it is an Android device, and the version of Android is greater than 2 and less than 6.4 (as seen in the JavaScript code inside the lower box), the apkDownload function will be called.
+After the app is downloaded, the website also prompts its users to “Please Update Flash on Your Device” (as seen in pop-up window and also the JavaScript code in the upper box).
+Unwary users, who are more eager to see the video than to consider what this app is really about, would readily accept what the website is saying, and happily install the app that claims to be a Flash update.
+However, malware lands on the victim’s device instead.
+Figure 2.
+Porn site supports drive-by download of SlemBunk dropper
+Usually, the app landing on the victim’s device is only a dropper for the actual malicious SlemBunk payload.
+By itself, the dropper can’t do much to compromise the user.
+To fire the last deadly shot, it has to go through a few other steps to achieve its surreptitious purpose.
+The next sections detail how the malicious payload finally lands on the victim’s device and enables theft of their banking credentials.
+The downloader is the second app in the attack chain.
+Its main goal is to download the actual SlemBunk payload, which will be used to steal banking credentials from victims.
+However, the downloading logic is not very easy to identify.
+When looking into the dropper app downloaded from the above porn site, we found that there is only one class, named “Application,” inside the app’s code.
+The app is intentionally obfuscated because there are only a few Android API calls identified, most of which are Android’s reflection API calls used for dynamically loaded code.
+Figure 3 shows a snippet of the code to be invoked when the dropper is started.
+Figure 3.
+Code to recover the in-app downloading logic
+Line 3 shows that the only class in the dropper app extends an Android framework class named "android.app.Application".
+The reason for this extension is so that any classes extending this Android API will be started before any other components of this app.
+Also, the overwritten method attachBaseContext will be executed when an application is newly created.
+The SlemBunk dropper uses this trick to recover the in-app downloading logic.
+The original in-app downloading logic is encoded into a 9-kilobyte Unicode string (in line 13).
+The code from lines 14 to 41 will decode this Unicode string, and write this code into a new app file, whose path is "/data/data/app_name/dex/new.apk".
+Runtime instrumentation shows that the content of variable v3 after the while loop (lines 19 to 26) will be the content of this apk file.
+The reflective write call will write the content of v3 into the particular path at line 42.
+The reflective method calls (from lines 29 to 39) are all file-relevant operations used to prepare for the writing operation at line 42.
+Table 1 shows the strings as encoded in the original code and as recovered at runtime.
+Original string (classes/methods/parameters)
+Actual string for reflective classes, methods & parameters
+Table 1.
+Reflective method calls to decrypt the in-app downloading logic
+After replacing the actual readable strings into these reflective calls, it is easy to see that the logic here is to write the content of v3 (the decoded in-app downloading logic) into the file, whose path is "/data/data/app_name/dex/new.apk".
+In the same way, we decrypted the logic of the code shown in Figure 4, which finishes the task of the SlemBunk dropper.
+This part of the code uses the loadDex method of class "dalvik.system.DexFile" to dynamically load the newly generated app, delete it from storage, and then call into its entry point.
+Figure 4.
+Dropper code snippet to load the downloader and transfer control
+At this point, the packer has recovered the in-app downloading logic and called into its entry point.
+The next section will present our analysis of how the in-app downloading works.
+The first two apps, although important, do not perform any of the intended malicious actions.
+Instead, they mainly serve as conduits that deliver the final malicious payload.
+They also help attackers to achieve a stealthier and more persistent existence on the device.
+First, a longer attack chain makes it much harder for an analyst to trace back the origin of the malicious actions.
+Second, the SlemBunk downloader, as shown in last section, will be deleted from storage after it is loaded, and thus will only exist in memory.
+Third, even if the malicious action of the SlemBunk payload were detected and removed, the more surreptitious downloader could periodically attempt to re-download the payload to the device.
+This section details how this downloader works.
+The downloader, when invoked, first performs a device check to see if the payload is already installed and running.
+If not, the downloader starts a thread talking to a remote HTTP server that customizes how the payload is to be distributed.
+The remote server is hardcoded in the source code, as shown in line 14 in Figure 5.
+Figure 5.
+The main thread of SlemBunk downloader (from an un-obfuscated sample)
+To grab the SlemBunk payload, the downloader first tries to start the mobile network (at line 20) and wireless network (at line 26).
+At line 28, it calls Tools.JSON with the hard-coded URL as a parameter to start the downloading.
+The code in lines 34 to 42 tries to install the downloaded payload.
+The code at line 44 starts the newly downloaded app.
+The code at line 45 sends an answering message back to the server.
+And the code at line 46 deletes the app from storage.
+Figure 6 shows the code snippet used to attempt downloading the app.
+First, the CnC server is contacted to get a response (at line 19), which is a JSON object.
+From the code, we can see that there are three parameters, as returned by the CnC server.
+The first one is a path for the actual place to download the SlemBunk payload (at line 22), the second is the package name for the downloaded app (at line 21), and the third parameter is the md5sum of the payload (at line 5).
+Interestingly, we found that the downloader incorporates a simple but effective mechanism to ensure that the correct payload is downloaded.
+From lines 24 to 27, it keeps attempting the downloading action until the MD5 value of the downloaded app is the same as the last parameter returned from the CnC server.
+Figure 6.
+Communication details with the CnC server
+Using a browser to access the hard-coded URL confirmed our findings.
+Figure 7 is a screenshot that shows an example of the returned JSON string.
+As shown in the red boxes, the three keys are “path”, “package” and “md5sum”, which are exactly the same as shown in lines 15 to 17 in Figure 6.
+The values for these keys further confirm our analysis.
+The first parameter gives the path to download the payload: "xxxvideotube.org/AdobeFlashPlayerUpdate".
+The second parameter is the package name of the downloaded app: “org.slempo.service”.
+And the third parameter is the md5sum for this app: “288AD03CC9788C0855D446E34C7284EA”.
+Figure 7.
+The response from the CnC server
+The use of a drive-by download to distribute the SlemBunk payload and the details of the CnC server communication suggest that this campaign is well-organized and continuing to evolve.
+As we continued our investigation, we found other interesting facts that support this assessment.
+First, the administrative interface hosted on the CnC server (described below) implies that the CnC server is customizable and that the SlemBunk payload can easily adapt per the attacker’s specifications.
+Second, the timeline information for the domains associated with this attack showed that this campaign is very recent, still ongoing, and very likely to continue evolving into different forms.
+We will keep a close eye on its development.
+Line 14 in Figure 5 shows the CnC server and the query string that the SlemBunk downloader uses to determine the payload to download.
+Opening the CnC server in a web browser brings us to the login page shown in Figure 8.
+The title of this page shows “app-setuper-admin – login page”.
+The text on the page, when translated into English from the original Russian, reads “authorization,” “login,” and “password.” We believe this is the administrative interface for the attacker to customize how the CnC server should feed the payload to the downloader clients.
+It seems that the attackers are trying to develop this into a more organized campaign.
+The JSON object, as returned by the CnC server (as shown in Figure 7), also strengthens this theory.
+Figure 8.
+App setup admin UI to customize the CnC configuration
+We identified three domains directly related to this drive-by downloading campaign.
+Domain “xxxvideotube,” registered on Aug. 28, 2015, is used to host the SlemBunk dropper and payloads.
+Domain “brutaltube4mobile,” registered on Nov. 22, 2015, acts as the CnC server to host the payload configuration query and also the admin panel.
+Figure 9.
+A new CnC domain found in one SlemBunk dropper
+Among the latest samples we collected, we found a domain named “f8gr8e8tg.com” that replaces “brutaltube4mobile” as the CnC server (as shown in Figure 9).
+However, this domain seems to be dormant right now, and the corresponding app also reported failure when we attempted to start the app on the device.
+The domain registration records show that this domain was registered on Dec. 1, 2015.
+Putting the registration records of these three domains together (Figure 10), we might be able to deduce a kind of developing relationship.
+When the first domain, "xxxvideotube.org," was created on Aug. 27, 2015 (four months ago), it might have been used only for the SlemBunk payload.
+The SlemBunk payload app hosted at "xxxvideotube.org/AdobeFlashPlayerUpdate.apk" has no dependency on the CnC server (the second domain in Figure 10).
+When the second domain (the CnC server) was set up on Nov. 22, 2015 (one month ago), the SlemBunk dropper app hosted at "xxxvideotube.org/AdobeUpdate.apk" was able to use this new CnC server to download the customized payload.
+The last domain seems to be a new attempt from the attacker.
+For some reason, it is not functioning well.
+In summary, we believe that this campaign activity is very recent, still ongoing, and possibly evolving into different forms.
+Figure 10.
+Registration records for SlemBunk domains
+Finally, the domain “brutaltube4mobile.com” was registered using the email address oodookree[@]gexmails.com.
+That email address was also used to register four other domains “brutalmobiletube[.com],” “brutalmobiletubes.com,” “adobeupdate,.org” and “australiamms.com”.
+Our initial study showed that the domain “australiamms.com” is used to host a CnC server for SlemBunk campaign.
+The domains “adobeupdate.org” and “brutalmobiletube.com” are dedicated for another malware campaign, which will be analyzed in detail in another upcoming blog.
+At this time we are not sure if there is a malicious purpose for the domain “brutalmobiletubes.
+[”]com".
+SlemBunk is an evolving family of Android trojans that target mobile banking app users throughout the world.
+In this article, we presented the prolonged attack chain that we identified in its latest development, and the data to show that this campaign is a very recent, still ongoing effort that might develop into different forms.
+The FireEye mobile research team will keep a close eye on this.

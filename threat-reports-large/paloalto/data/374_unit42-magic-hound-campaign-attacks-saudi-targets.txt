@@ -1,0 +1,95 @@
+Unit 42 has discovered a persistent attack campaign operating primarily in the Middle East dating back to at least mid-2016 which we have named Magic Hound.
+This appears to be an attack campaign focused on espionage.
+Based upon our visibility it has primarily targeted organizations in the energy, government, and technology sectors that are either based or have business interests in Saudi Arabia.
+The adversaries appear to have evolved their tactics and techniques throughout the tracked time-period, iterating through a diverse toolset across different waves of attacks.
+Link analysis of infrastructure and tools also revealed a potential relationship between Magic Hound and the adversary group called “Rocket Kitten” (AKA Operation Saffron Rose, Ajax Security Team, Operation Woolen-Goldfish) as well as an older attack campaign called Newscasters.
+Artifacts of this campaign was also recently published by Secureworks CTU.
+We were able to collect over fifty samples of the tools used by the Magic Hound campaign using the AutoFocus threat intelligence tool.
+The earliest malware sample we were able to collect had a compile timestamp in May 2016.
+The samples themselves ranged from IRC bots, an open source Python remote access tool, malicious macros, and others.
+It is believed the use of specific tools may have coincided with specific attack waves by this adversary, with the most recent attacks using weaponized Microsoft Office documents with malicious macros.
+Due to the large amount of data collected, and limitations on attack telemetry, this blog will focus primarily on the most recent attacks occurring in the latter half of 2016.
+The samples initially collected and associated with Magic Hound were Microsoft Word and Excel documents containing embedded malicious macros.
+We were able to expand our data set by pivoting on infrastructure and tool behavior, which uncovered additional types of tools in use by Magic Hound, such as regular portable executable (PE) payloads, PE files compiled in .NET Framework, various forms of IRC bots, and an open source file-less Python remote access tool called Pupy.
+The weaponized Office documents were found to be hosted either on what appeared to be compromised legitimate websites, or on websites using domain names similar to legitimate domain names in appearance.
+The two legitimate websites we were able to identify were owned by organizations in the government and energy sectors.
+Based on the existence of these malicious files on the legitimate websites, it is highly probable that the websites had already been compromised in some fashion.
+At the time of investigation, the files had already been removed from the websites.
+The two other delivery sites were ntg-sa.com, which may be trying to spoof a Saudi based information and communication technology conglomerate and mol.com-ho.me, which may be trying to spoof the Ministry of Labor.
+A third delivery site was identified at its.com-ho.me which may appear to be a benign domain.
+Several of these documents were also found on a seemingly unrelated, but benign-looking domain, briefl.ink.
+It is highly likely the adversary then used spear-phishing attacks containing links to these malicious documents as a delivery mechanism.
+We were ultimately able to identify multiple organizations in the government, energy, and technology sectors targeted by Magic Hound.
+The weaponized documents themselves all contained malicious macros which were designed to call Windows PowerShell to retrieve additional tools.
+A handful of lures with different themes were used repeatedly with variations throughout the eighteen collected documents.
+They ranged from documents masquerading as official Saudi government forms to a holiday greetings card.
+The forms masquerading as official government documents specifically used imagery from the Ministry of Health and the Ministry of Commerce claiming to be mandatory forms that required macros to be enabled.
+Examples of the documents can be seen below:
+Analysis of the weaponized documents revealed some peculiarities right away.
+The majority of documents used the name “gerry knight” for the author field in the document metadata, and the embedded macros largely used direct IP connections to command and control (C2) servers rather than using domain names.
+These C2 servers also appeared to lack any relationships to each other and were hosted on a variety of VPS providers.
+Two of the Word documents using the “gerry knight” author name however were found to be communicating to C2 servers on two specific domains, www1.chrome-up.date and www3.chrome-up.date.
+Using these domains as pivot points, we were able to expand our data set.
+As seen below, the relational analysis proved to be quite fruitful:
+Figure 1 Overview of relationships
+We rapidly discovered a different set of tools communicating to the exact same C2 servers as those two Word documents, in addition to other tools communicating to other subdomain variations of chrome-up.date as seen in the following graphic:
+Figure 2 Command and control overlaps
+From there, we were able to map out a large infrastructure separating out into four categories of tools: downloaders, droppers, loaders, and payloads.
+What initially appeared as a disparate and segregated attack campaign appeared very rapidly to be a persistent and prolonged attack campaign with very specific goals in mind.
+In total, we were able to collect over fifty different samples via infrastructure reuse, behavioral matching, and the reuse of a specific file for maintaining persistence.
+These tools included Microsoft Office documents, portable executables (PE), .NET Framework PE files, Meterpreter, IRC bots, an open sourced Meterpreter module called Magic Unicorn, and an open sourced Python RAT called Pupy.
+Interestingly as we continued to expand and pivot in our data set, one of the C2 IPs used by an IRC bot payload from Magic Hound was found to be the same IP used to deliver a different IRC bot called MPK.
+Figure 3 Rocket Kitten and Magic Hound infrastructure overlap
+The MPK bot is not publicly available and had previously been attributed to an adversary group called “Rocket Kitten” which has often been thought to be a state sponsored adversary operating in the Middle East region.
+Although the likelihood of two different adversaries focused on espionage operating in the same geographical region using one specific IP and not being related somehow is fairly slim, due to limited telemetry, we lack additional corroborating evidence of a conclusive relationship.
+The Magic Hound attacks did not rely on exploit code to compromise targeted systems, instead relying on executables and Microsoft Office documents, specifically Excel and Word documents containing malicious macros.
+During our analysis, we were able to determine the ultimate payload for several of these attacks.
+One payload was a Python based open source remote administration tool (RAT) called Pupy.
+A second payload was an IRC bot we have named MagicHound.Leash.
+We have also seen this group use the Magic Unicorn module to generate a PowerShell script to deliver a shellcode-based payload.
+While we have not been able to obtain a secondary payload from the Unicorn generated PowerShell script, we believe that this group uses the script to deliver Metasploit’s Meterpreter as a potential payload as well.
+We have categorized the custom tools in use by the Magic Hound campaign into five categories, with corresponding names in Table 1.
+Additional details for these tools may be found in the appendix.
+Table 1 Types of MagicHound tools and their Corresponding Names
+The Magic Hound campaign used Word and Excel documents containing malicious macros as a delivery method, specifically attempting to load either the Pupy RAT or meterpreter which we have called MagicHound.Rollover.
+The malicious macros were all designed to use Windows PowerShell to download a shellcode-based payload from a remote server.
+We discovered two different techniques used in the PowerShell scripts, the first being a straightforward execute command of a string retrieved from the remote server.
+The second technique appeared to be from a tool called Magic Unicorn, an open source module for meterpreter.
+Specifically, we discovered code in the PowerShell script that was a match for code in Magic Unicorn containing the comment “one line shellcode injection with native x86 shellcode”.
+In addition to loading payloads using macros within delivery documents, we observed the Magic Hound campaign using executables to load secondary payloads from a remote server.
+Both a custom developed loader, which we have named MagicHound.Fetch, as well as the default loader that comes with Pupy were found to be in use.
+The Fetch loader allowed us to use attributes within the loader to uncover more tools used by this group, which included a backdoor and an IRC bot.
+Fetch first attempts to create persistent access to the targeted host then retrieve a secondary payload from a remote server.
+To set up persistence, the loader writes a file to “c:\temp\rr.exe” and executes it with specific command line arguments to create auto run registry keys.
+All Fetch samples drop the same exact executable to set up persistence.
+Many of the Fetch samples we analyzed attempted to obfuscate their functionality by encrypting their embedded strings using AES.
+However, they all used the same key “agkrhfpdbvhdhrkj”.
+The loader’s main goal was to run a PowerShell command to execute shellcode.
+We found the PowerShell command used by Fetch within the source code of Magic Unicorn, which was also used in the Magic Hound delivery documents.
+The shellcode executed by this PowerShell is the exact same as in the delivery documents, using code from Metasploit which can obtain additional shellcode to execute using an HTTP request to the following URL:
+http://www7.chrome-up.date/0m5EE
+We were not able to retrieve the shellcode hosted at this URL.
+However, as alluded to above, we believe that this adversary used the open source Magic Unicorn tool to load a shellcode-based payload which is likely to be meterpreter.
+The Pupy RAT comes packaged by default with loaders that can run the RAT on a variety of platforms such as Windows, macOS, Linux and Android.
+We have seen the Magic Hound campaign use both the 32-bit and 64-bit DLL loaders that come with Pupy to infect Windows systems.
+Analysis of their configurations show that the C2 servers used both fully-qualified domain names and IP addresses.
+Also, the configurations show the use of the “obfs3” (The Threebfuscator) transport, which is an obfuscation method to hide the true TCP-based communications protocol.
+The “obfs3” is used in the Tor project and the specifics of this transport can be found at the Tor Project.
+The Magic Hound campaign was also discovered using a custom dropper tool, which we have named MagicHound.DropIt.
+The DropIt Trojan we analyzed is an executable that builds another executable by decoding embedded blobs of base64 encoded data and concatenating them together in the correct order.
+In all of the DropIt samples we collected, the dropper then saves the executable to the user’s %TEMP% folder and executes the file.
+We have also seen Magic Hound using DropIt as a binder, specifically dropping a legitimate decoy executable along with the malicious executable onto the target host.
+The legitimate decoy executable and the malicious executable are then both executed, but with the malicious file running in the background and the decoy presented to the user.
+These types of tactics are generally used for evasion and to not trigger and suspicion from the victim.
+In one example, the decoy executable was a legitimate Flash installer, therefore from the victim’s perspective, they would experience the expected behavior of a Flash installer.
+We observed a DropIt sample installing another Trojan we call MagicHound.Retriever.
+At a high level, Retriever is a .NET downloader that retrieves secondary payloads using an embedded URL in its configuration as the C2.
+Retriever uses .NET web services and the SoapHttpClientProtocol class to communicate with its C2 server, which generates HTTP requests resembling the example request in Figure 4.
+Figure 4 Retriever HTTP request sent to its C2 server
+The Magic Hound campaign was also discovered deploying an IRC Bot, which we have named MagicHound.Leash.
+We discovered this connection when we observed a DropIt sample installing a backdoor Trojan that used IRC for its C2 communications.
+Leash obtains its commands via private messages (PRIVMSG) sent from the adversary who must also be connected to the IRC server.
+All of its available commands (see Appendix), except for the VER command seen in Figure 5, must be issued by individuals in the IRC channel with nicknames that start with “AS_” or “AF_”.
+Figure 5 Lecash bot responding to VER command
+There are a great deal of similarities between the IRC bot originally discussed in iSight’s NEWSCASTER whitepaper and LEASH.
+iSight’s whitepaper provided details on an IRC bot, which some refer to as Parastoo based on the password used to join the IRC channel, as seen in the following network traffic generated when attempting to connect to the C2:

@@ -1,0 +1,74 @@
+We have already seen some cryptor attacks where malicious programs with different functions have been used in combination.
+For example, one version of the Shade cryptor checks victim computers for signs of accounting activity; if it finds any, it doesn’t encrypt the files, but instead installs remote control tools in the infected system.
+The bot can then be used by cybercriminals to steal money, a much more profitable outcome than just receiving a ransom to decrypt some files.
+The owners of the RAA cryptor, however, took a different tack.
+The Trojan is delivered in emails that mostly target corporate users.
+After a successful infection, RAA executes its main task, i.e.
+encrypts the user’s files.
+However, it doesn’t stop there: some versions of RAA also include a Pony Trojan file, which steals confidential information from the infected computer.
+Using the stolen data, the cybercriminals can gain access to the victim’s mail clients and other resources.
+We can assume that the owners of RAA use these resources to carry out targeted attacks – sending out emails with the cryptor malware to the addresses on the victim’s contact list.
+This substantially improves the probability of subsequent infections.
+In this article, we will provide details of how a pair of malicious programs – a new version of the RAA cryptor and the Pony stealer Trojan – work in unison.
+The RAA cryptor (Kaspersky Lab verdict: Trojan-Ransom.JS.RaaCrypt) was first detected in June 2016.
+It caught the attention of researchers and analysts due to the fact that it was written entirely in JavaScript, which is a rarity when it comes to ransomware cryptor Trojans.
+We recently detected a new version of this Trojan that has a few differences from earlier known modifications.
+Let’s have a closer look at this particular sample, which has been assigned the verdict Trojan-Ransom.JS.RaaCrypt.ag.
+The body of this new version of RAA is a script in JScript (with a .js file extension).
+The malicious script is sent to potential victims attached to a spam message in a ZIP file with the password ‘111’.
+The attack is aimed primarily at corporate users: the message mimics finance-related business correspondence, and the script’s name is similar to those shown below:
+Счета на оплату _ август 2016 согласовано и отправлено контрагенту для проведения оплаты _aytOkOTH.doc.js (Invoice_August 2016 approved and sent to contractor for payment _aytOkOTH.doc.js)
+Счета на оплату _ август 2016 согласовано и отправлено контрагенту для проведения оплаты _EKWT.doc.js (Invoice_August 2016 approved and sent to contractor for payment _ EKWT.doc.js)
+“Let’s presume we made a concession when we allowed you to postpone your due payment.
+“We understand you may have difficulties, but do we have to wait for another two months?
+To be honest, we don’t really want to go to court.
+Please make all the payments in next few days.”
+The message includes a notice saying:
+“The company… notifies you that in line with internal security regulations, all outgoing emails are subject to asymmetric encryption.
+Dear client, your password for this message is 111.”
+People who know what ‘asymmetric encryption’ is will probably just smile at this; however, the message is obviously targeting a different audience.
+It should be noted that sending malicious content in a password-protected archive is a well-known trick used by cybercriminals to prevent anti-malware systems installed on mail servers from unpacking the archive and detecting any malicious content.
+To unpack an archive like this, the anti-malware product must automatically retrieve the password from the message, which isn’t always possible.
+For an infection to occur, users have to unpack the archive themselves and launch the .js file.
+The code of the malicious script was deliberately obfuscated to complicate things for malware analysts.
+The content of the script looks like this in the source code:
+Fragment of the obfuscated code
+If we restore the line breaks and indents, it becomes obvious that the obfuscation involves renamed variables and functions, as well as strings hidden in the global array.
+After de-obfuscation and function renaming, the same section of code becomes much easier to read.
+Fragment of de-obfuscated code
+The script is nearly 3,000 lines long.
+Most of this is taken up by an implementation of the legitimate DLL CryptoJS, and an implementation of the RSA encryption procedure, which was also taken from public sources by the cybercriminals.
+To lull the victim into a false sense of security, the RAA cryptor demonstrates a fake Microsoft Word document immediately after it launches.
+This document is in fact an RTF file specially crafted by the cybercriminals.
+(The document is contained in the Trojan’s body encoded in Base64 format.)
+The fake document displayed to the victim
+While the user is reading the message about a document that’s supposedly not being displayed properly, the Trojan is doing its dirty work:
+Registers itself to be autostarted with Windows;
+Deletes the registry key associated with the VSS service (to prevent the restoring of files from shadow copies);
+Sends a request to the C&C server (unlike all previous versions of this Trojan, this version doesn’t wait for the delivery of keys from the server – the request is only sent so the cybercriminals can collect statistics);
+Proceeds to search for files and encrypts them.
+Unlike earlier RAA modifications, this version of the cryptor does not request an encryption key from the C&C.
+Instead, the Trojan generates a session key on the client.
+To do so, it calls the WinAPI function RtlGenRandom which is considered a cryptographically secure generator of pseudorandom numbers.
+To ensure it can call WinAPI functions from JS code, the Trojan uses a legitimate third-party OCX component called DynamicWrapperX.
+The Trojan stores it in its body in a Base64-encoded format, and installs it in the infected system.
+RAA has both 32-bit and 64-bit versions of DynamicWrapperX so it can attack systems running under both Windows architectures.
+The Trojan encrypts the generated session key with an RSA algorithm (the public RSA-2048 key is contained within the script) and saves it to a file with the name “KEY-…”, where the multiple periods stand for a unique 36-character infection ID.
+RAA searches for and encrypts files with the extensions .doc, .xls, .rtf, .pdf, .dbf, .jpg, .dwg, .cdr, .psd, .cd, .mdb, .png, .lcd, .zip, .rar, .csv whose names do not contain the substrings “.locked”, “~”, “$”.
+When searching for files, the Trojan skips folders named “WINDOWS”, “RECYCLER”, “Program Files”, “Program Files (x86)”, “Windows”, “Recycle.Bin”, “RECYCLE.BIN”, “Recycler”, “TEMP”, “APPDATA”, “AppData”, “Temp”, “ProgramData”, and “Microsoft”.
+When processing each file, RAA uses the session key to generate a file key and initialization vector (IV).
+The contents of the files are encrypted in different ways depending on the file size:
+0 to 6,122 bytes: the file is encrypted in full.
+6,123 to 4,999,999 bytes: three fragments are selected for encryption in different sections of the file.
+The first, 2000- to 2040-byte fragment is selected at the beginning of file; the location and size of the two other fragments depend on the size of the first fragment and the overall size of the file.
+5,000,001 to 500,000,000 bytes: two fragments of 90000-125000 bytes are selected for encryption (from the beginning and end of the file).
+500,000,001 bytes and larger: not encrypted.
+A string is added at the end of the encrypted file that contains “IDNUM” (infection ID), “KEY_LOGIC” (indexes to construct the file key from the session key), “IV_LOGIC” (indexes to construct the IV from the session key), and “LOGIC_ID” (possible values are “1”, “2” or “3” – the selected encryption method depending on the file size).
+The encrypted file is given the additional extension .locked.
+The string added to the end of the encrypted file
+When the files are encrypted, RAA displays a file with the cybercriminals’ demands and contacts in WordPad.
+The Trojan fills the text template with a 36-character ID which is unique for each case.
+The file containing the cybercriminals’ demands
+The cybercriminals suggest that the victims purchase a file decryption key and software from them.
+Two methods of communication are available: email and the Bitmessage service.
+The victim is expected to pay for the decryption key in bitcoins.

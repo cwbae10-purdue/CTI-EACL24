@@ -1,0 +1,73 @@
+ESET researchers reveal the modus operandi of the elusive InvisiMole group, including newly discovered ties with the Gamaredon group
+In our tracking of the InvisiMole group, which we discovered, named, and first reported on in 2018, we have found a new campaign targeting high-profile organizations in Eastern Europe.
+Investigating the attacks, in close cooperation with the affected organizations, we uncovered its updated toolset and previously unknown details about InvisiMole’s tactics, techniques and procedures (TTPs).
+In this blogpost, we summarize the findings published in full in our white paper, InvisiMole: The hidden part of the story.
+InvisiMole: The hidden part of the story
+The InvisiMole group is a threat actor operating at least since 2013.
+We previously documented its two backdoors, RC2CL and RC2FM, notable for their extensive spying capabilities, but we didn’t know how these backdoors were delivered, spread or installed on the system.
+In this recent campaign, the InvisiMole group has resurfaced with an updated toolset, targeting a small number of high-profile organizations in the military sector and diplomatic missions, both in Eastern Europe.
+According to our telemetry, the attack attempts were ongoing from late 2019 to the time of writing this report.
+Thanks to investigating the attacks in cooperation with the affected organizations, we were able to expose the inner workings of the updated InvisiMole toolset.
+We discovered InvisiMole’s arsenal is only unleashed after another threat group, Gamaredon, has already infiltrated the network of interest, and possibly gained administrative privileges.
+This allows the InvisiMole group to devise creative ways to operate under the radar.
+For example, the attackers use long execution chains, crafted by combining malicious shellcode with legitimate tools and vulnerable executables.
+They use DNS tunneling for stealthier C&C communications, and place execution guardrails on the malicious components to hide the malware from security researchers.
+During our investigation, we discovered that InvisiMole is delivered to the compromised systems by a .NET downloader detected by ESET products as MSIL/Pterodo, the work of the Gamaredon group.
+Gamaredon is a threat actor, operating at least since 2013, characterized by rapid development and making little effort to stay under the radar.
+We recently documented the newest Gamaredon components, distributed through spearphishing emails and used to move laterally as far as possible within the target’s network, while fingerprinting the machines.
+Our research now shows Gamaredon is used to pave the way for a far stealthier payload – according to our telemetry, a small number of Gamaredon’s targets are “upgraded” to the advanced InvisiMole malware, likely those deemed particularly significant by the attackers.
+Figure 1.
+Gamaredon’s .NET downloader can “upgrade” the victim’s machine to InvisiMole’s TCP downloader
+As we detail in the white paper, despite the evidence of collaboration, we consider Gamaredon and InvisiMole to be two distinct groups with different TTPs, rather than a single threat actor.
+We document three ways that InvisiMole spreads within compromised networks:
+Using the BlueKeep vulnerability in the RDP protocol (CVE-2019-0708)
+Using the EternalBlue vulnerability in the SMB protocol (CVE-2017-0144)
+Using trojanized documents and software installers, crafted using benign files stolen from the compromised organization
+To craft the trojanized files, InvisiMole first steals documents or software installers from the compromised organization, and then creates an SFX archive that bundles the file with the InvisiMole installer.
+The original file is then replaced with the weaponized version, while its name, icon and metadata are preserved.
+The attackers rely on the users to share and execute these files.
+This lateral movement technique is especially powerful if the trojanized file happens to be a software installer placed on a central server – a common way to deploy software in larger organizations.
+That way, InvisiMole is organically distributed to many computers that use this server.
+Regardless of the spreading method, the first InvisiMole component deployed on the newly-compromised machines is always InvisiMole’s TCP downloader – a simple addition to the toolset that downloads the next stage of the infiltration.
+The second addition to the updated InvisiMole toolset, the DNS downloader, has the same functionality but is designed for long-term, covert access to the machine.
+It uses a stealthier method of C&C communication, using a technique called DNS tunneling (see Figure 2).
+Figure 2.
+DNS tunneling
+With DNS tunneling, the compromised client does not directly contact the C&C server; it only communicates with the benign DNS server(s) the victim machine would normally communicate with, where it sends requests to resolve a domain to its IP address.
+The DNS server then contacts the name server responsible for the domain in the request, which is an attacker-controlled name server, and relays its response back to the client.
+The actual C&C communication is embedded in the DNS requests and replies, unbeknownst to the benign DNS server that operates as an intermediary in the communication.
+The most notable feature of the newest InvisiMole toolset is its long execution chains, used to deploy the final payloads – the updated RC2CM and RC2CL backdoors, and the new TCP and DNS downloaders.
+We reconstructed four execution chains, used by the attackers in various situations – based on the OS version of the victim’s computer, and on whether they were able to gain administrative privileges on the system:
+The Control Panel misuse chain uses a rare technique known from Vault 7 leaks, used to achieve covert execution in the context of the Control Panel.
+The SMInit exploit chain exploits a vulnerability in the legitimate Total Video Player software.
+It is used in cases where the attackers haven’t managed to obtain administrative privileges on the system.
+The Speedfan exploit chain exploits a local privilege escalation vulnerability in the speedfan.sys driver to inject its code to a trusted process from kernel mode.
+The Wdigest exploit chain is InvisiMole’s flagship chain, the most elaborate, used on the newest versions of Windows, where the attackers have administrative privileges.
+It exploits a vulnerability in the Windows wdigest.dll library and then uses an improved ListPlanting technique to inject its code into a trusted process.
+The vulnerable executables used in these chains are all introduced to the system by InvisiMole – the variation of this technique with a vulnerable driver has been previously referred to as Bring Your Own Vulnerable Driver by fellow researchers.
+For the other cases, we have named the technique Bring Your Own Vulnerable Software.
+We document these tactics in detail in the Execution chains section of our white paper.
+Figure 3.
+InvisiMole’s execution chains; padlocks indicate use of per-machine encryption
+Note the heavy use of legitimate tools and per-victim encryption, shown in the overview of these four chains in Figure 3.
+It is the tactic of InvisiMole’s operators to exclusively install legitimate tools, and reserve the malicious payloads for later stages.
+To place execution guardrails and encrypt the payloads individually per-victim, InvisiMole uses a Windows feature called Data Protection API (DPAPI), specifically:
+the CryptProtectData API for data encryption
+the CryptUnprotectData API for data decryption
+This symmetric encryption scheme uses a key derived from the user’s logon secrets, so the decryption must be performed on the same computer where the data were encrypted.
+Figure 4 shows a fragment of a typical InvisiMol loader that uses CryptUnprotectData for decryption and then checks whether the decrypted blob starts with a characteristic InvisiMole four-byte magic value:
+64 DA 11 CE for 64-bit payloads
+86 DA 11 CE for 32-bit payloads
+Figure 4.
+Fragment of a characteristic InvisiMole loader
+The DPAPI feature, intended for local storage of credentials such as Wi-Fi passwords or login passwords in web browsers, is abused by InvisiMole to protect its payload from security researchers.
+Even if they find InvisiMole’s components in telemetry or on malware sharing platforms, they can’t decrypt them outside the victim’s computer.
+However, thanks to direct cooperation with the affected organizations, we were able to recover the payloads and reconstruct four of InvisiMole’s execution chains, which are described in detail in the white paper.
+When we first reported about InvisiMole in 2018, we highlighted its covert workings and complex range of capabilities.
+However, a large part of the picture was missing.
+After discovering new activity in late 2019, we gained the opportunity to take a proper look under the hood of InvisiMole’s operations and piece together the hidden parts of the story.
+Analyzing the group’s updated toolset, we observed continuous development and substantial improvements, with special focus on staying under the radar.
+Our investigation also revealed a previously unknown cooperation between InvisiMole and the Gamaredon group, with Gamaredon’s malware used to infiltrate the target network and deliver the sophisticated InvisiMole malware to targets of special interest.
+Having provided a detailed report on InvisiMole’s TTPs, we will continue to track the group’s malicious activities.
+ESET detection names and other Indicators of Compromise for these campaigns can be found in the full white paper, InvisiMole: The hidden part of the story.
+Acknowledgements to fellow ESET malware researchers Matthieu Faou, Ladislav Janko and Michal Poslušný for their work on this investigation.

@@ -1,0 +1,143 @@
+URLZone, also known as Bebloh/Shiotob, is a sophisticated banking Trojan that first emerged in 2009.
+One of the most notable features of the URLZone Trojan is its extensive anti-research features, which keep its inner workings under wraps.
+Unveiling the secrets that malware developers fight to keep hidden is one of the most effective ways to develop defenses against their nefarious devices.
+In this special research post, we’ll show how to overcome URLZone’s most recent advanced anti-research techniques and ultimately install it in a testing environment.
+In the following sections, we will illustrate in detail:
+Bypassing the malware’s packer;
+Overcoming URLZone’s VM detection techniques; and
+Patching the unpacked malware in order to execute it on any virtual machine (VM).
+For the purpose of the analysis, the sample MD5 is: d0b0ada2c431b6c7343acf96704d808e.
+It was first uploaded to VirusTotal on July 5, 2016.
+In order to successfully research URLZone, we will:
+Execute the sample in a virtual environment; and
+Obtain the clean code of the modules that we want to research, including plaintext strings and the import table data.
+The goal is to achieve these two tasks efficiently and to easily reproduce the results on new versions of the malware.
+The initial stage of the research begins with attempting to run the malware sample in a sandbox environment.
+Due to URLZone’s anti-research protections, the sample did not properly execute within the sandbox.
+The next step is manual dynamic analysis of the sample on a VM.
+On the VM, we follow URLZone’s deployment routine with Sysinternals’ Process Monitor.
+We note that it uses the CreateProcessA API in order to create a new process with its own file path.
+After that, both the original process and the child process exit promptly.
+It appears that URLZone is once again detecting a research environment, this time a VM, and exists before deploying on the machine.
+Executing under Ollydbg and breaking at Kernel32!CreateProcessA teaches us that the malware executes itself with the CREATE_SUSPENDED flag, a strong indication for process hollowing.
+This is a classic technique, often used by malware to bypass antivirus products and add an anti-research layer.
+Process hollowing, or “run PE,” is not an inherently malicious action; it can be used by a legitimate Windows process as well.
+Process hollowing is typically implemented as follows:
+The sample creates a new child process, either with its own executable or with a different (usually legitimate) executable.
+In this case, URLZone uses its own executable.
+The parent process overwrites the child process’s memory image, in most cases using the WriteProcessMemory API.
+The written data is encrypted code, which is decrypted in memory before execution resumes.
+The parent process changes the child process’s entry point via the SetThreadContext API.
+Finally, the parent process calls ResumeThread to start the execution of the child process.
+Read the white paper: Accelerating growth and digital adoption with seamless identity trust
+A quick peek at the memory dump of URLZone’s child process, using IDA Pro, reveals that there are no imports and hardly any strings in this dump.
+This is suspicious and makes for a good hint that the malware is hiding quite a few secrets.
+Due to its ability to parse Windows structures, WinDBG was the debugger chosen to debug URLZone’s child process.
+Using “bp @$exentry” places a breakpoint (BP) at the executable’s entry point.
+At this point, the child process is running, but does nothing.
+It waits for the ResumeThread before proceeding.
+Resuming execution of URLZone’s parent process would result in the child process getting to the BP we set at the entry point.
+Since there are no imported functions, it’s very likely that the malware would use the PEB to dynamically find the Windows APIs it needs pretty soon after the entry point.
+A few functions in, we find the following function:
+The FS segment register holds a pointer to the thread environment block (TEB).
+We can look into the TEB data structure using WinDBG’s display type (dt) command, as follows:
+The code accesses the PEB at offset 0x0C, which is the Ldrfield of the PEB.
+PEB_LDR_DATA: This structure contains information about all currently loaded modules linked with the current process, which is URLZone’s solution to finding the addresses of the Windows APIs it needs.
+Next, the malicious code looks at the PEB_LDR_DATA at offset 0x1C:
+What we have here is a linked list that contains all the current process’s loaded modules.
+Looking at the code, we can see a loop that goes over the loaded modules until it encounters one that features the numeral “32” as part of its name, located at offset 0xC.
+This corresponds with the Unicode representation of the kernel32.dll.
+The function returns a pointer to the memory address of the kernel32.dll module via EAX.
+In the next stages, URLZone continues to locate specific functions, but instead of diving into every single opcode, we want to find a quicker method to continue the analysis.
+We guessed that the malware would soon use the LoadLibrary API to load additional modules, which turned out to be true.
+Let’s look at this call:
+The API is called using a pointer located at 0x41d11c.
+Looking at that address with the display dword symbols (dds) command reveals the following information:
+This just revealed the dynamically constructed import address table (IAT) that indicates that URLZone builds its own IAT.
+It is possible to find out where in the code this takes place by reverting to an earlier snapshot, placing a memory write BP on this specific location and then seeing which function fills it with a pointer to LoadLibraryA.
+We then executed URLZone with the debugger until it terminates.
+We can see that the dynamic IAT is now more complete:
+From this, we can deduce that URLZone loads new functions into its IAT on the fly.
+At this point, we have most of the addresses, but not all of them, because the program terminated prematurely.
+Also, keep in mind that not all code branches are actually reached on every execution, so one may never have the complete IAT when solely relying on dynamic methods.
+Another noteworthy point is that the strings were decrypted at this point:
+We just saw that URLZone terminated without infecting the machine.
+Here is the call stack after termination:
+The malicious code called RtlExitUserThread, effectively terminating the execution.
+Here is the call itself:
+We see a call to a function pointed by the ECX register, then a check if EAX equals 0 and then a branch that wasn’t taken in our case, leading us to the call of RtlExitUserThread.
+A quick test here shows that changing the value of the EAX register, which means taking the branch to 0x414f01, indeed skips the call to RtlExitUserThread, and URLZone continues execution.
+To analyze the function at ECX, we first need to add the IAT information into our IDB.
+Scylla is a common tool used for this purpose, but it can also be achieved with WinDBG.
+This is how a part of URLZone’s VM detection function appears while pointed by the ECX register:
+The SetupDi calls here are device installation functions, which are used for the enumeration of all devices installed on the machine.
+Each device name is thus searched for strings that may be indicative of VMs (“VMware,” for example).
+If such a string is found, the function returns 0, thus terminating URLZone’s execution.
+But this is not the end.
+URLZone possesses two other interesting VM detection methods that prevent it from running in virtual machines:
+URLZone checks its own file name for substrings like “Sample,” “Virus” and “Sandbox” before executing.
+If it finds any, it terminates (see image below).
+URLZone also uses timing checks as a method of VM detection.
+The malware calls the CPUID instruction 10 times and uses the time stamp counter’s (TSC) RDTSC instruction to calculate the total time required to execute these calls.
+If the total time is longer than defined by the developer, the malware will terminate.
+The logic behind using this check is that on a VM, CPUID triggers a hypervisor call; those take significantly longer than when running CPUID on a physical machine.
+When manually controlling the program’s flow using the debugger and bypassing the VM detection tricks, another process creation emerges in suspended state: a second process hollowing.
+At first, this may appear the same as the first process hollowing when the malware initially launched.
+In reality, the process created here is explorer.exe.
+This time, malicious shellcode is injected into explorer.exe to poison it.
+This is a stealthier method than simply injecting a complete PE, as URLZone did in the previous case.
+Analyzing the shellcode would be time-consuming.
+The code starts off by dynamically resolving some APIs and continues to allocate memory within the newly created explorer.exe process.
+It writes data into the allocated memory, transfers control flow to the newly written data and then repeats.
+Eventually, the new explorer.exe terminates.
+To save time on the analysis, after reverting to a snapshot taken just before the creation of the suspect explorer.exe process, we launch Process Monitor and detach the debugger (allowing execution to continue).
+After filtering, we see the following:
+Per the above log, we can see a few things:
+The child process (pdf.exe, PID 3960) is the one creating the hollow explorer.exe (PID 1380).
+The hollow explorer.exe (1380) creates a thread (TID 508).
+Then, marked in blue, we see TID 508, shown in the rightmost column, creating a new thread within the original explorer.exe (PID 1660).
+Hence, our hollow explorer.exe is being used here by URLZone to inject code into the original explorer.exe.
+Let’s take a look by attaching to the original explorer.exe (PID 1660) and running “.imgscan” on it to display all modules loaded to the process.
+The .imagscan command scans virtual memory for image headers:
+The result shows an image with protections of 0x40 (RWX), sized 0x23000, which did not exist before.
+This is the same image we had analyzed earlier on in the initial URLZone file.
+In reality, this module, inside the original explorer.exe, is URLZone’s main module, which is in charge of monitoring for browser processes and injecting the financial module into them, among other functions.
+At this point, URLZone’s multiple protections were overcome, and it was successfully installed on a VM.
+Taking a memory dump of the module injected into explorer.exe shows us that the strings are decrypted at this point, and it is possible to add the IAT data to IDA Pro, as explained above.
+We are now able to analyze an infected VM and statically examine the unpacked main module, including its visible strings and imports.
+But what if we need to infect another machine, say a 64-bit OS?
+We would not wish to manually repeat the process.
+It would be great if we had a sample that would run on a VM without all the manual labor.
+To do so, we can take the child process dump and statically patch the code so it never reaches the RtlExitUserThread call.
+This can be done as follows:
+Starting at the entry point of the child process, the next step is to take a memory dump.
+To properly do that, it’s possible that fixing the PE dump’s sections using CFF explorer (or a script) will be required, depending on how the memory dump is obtained.
+It’s important to dump the memory just at the entry point, because soon after that it would decrypt its encrypted strings.
+This would cause the strings to be decrypted again when the sample is executed, resulting in a crash.
+Find the VM detection functions; there are three of them in this version of URLZone.
+The simplest way would be to patch inline.
+A delicate point here is that the amount of bytes that the opcodes requires cannot be modified.
+If the patch code requires less space than the original instructions, it can be filled with NOPs (0x90).
+If it requires more space than the original code, it will not work.
+The patch itself can be applied either by using a hex editor, by loading the dump to WinDBG and patching there or by using IDA.
+This method ensures the ability to infect virtual machines with working URLZone samples without dealing with its protections every time.
+Below is a working patch example:
+Note that the “call ecx” at the top of both images is the call to the VM detection function, while “call ebx” on the before side is the call to RtlExitUserThread.
+We’ve completed our goals for this post.
+We obtained:
+The unpacked URLZone main module that can be easily researched with IDA Pro;
+A patched sample that would execute on any VM; and
+A pretty good understanding of the anti-research protections employed by URLZone.
+If we are to research future versions of this malware family, we should automate as much of this process as possible (read: all of it).
+Some options to consider for this purpose would be:
+Debugger scripts/extensions (available in any decent debugger);
+Modifying your sandbox/VM so it isn’t detected by URLZone; and
+IDA tools, such as BinDiff, to compare modules of different variants, or FLIRT to apply our research information from one IDB to a new variant’s IDB.
+URLZone is a longstanding threat that emerged in 2009 and has been around for many years in cybercrime terms.
+The closed gang that operates this malware typically targets banks in Europe, but interestingly added Japanese banks to its target lists at the beginning of 2016.
+As demonstrated by the evolution of its continually advancing anti-research protection layers, URLZone exhibits a technical sophistication indicative of experienced developers.
+Even though it attracts less attention than other financial malware such as Gozi or Neverquest, for example, URLZone is no less sophisticated or problematic a threat for the financial sector.
+This malware’s under-the-radar behavior is part of the reason URLZone has managed to remain active for such a long time since its inception, while more dominant Trojans are more easily detected, analyzed and stripped of their secrets soon after they emerge.
+Although it is a sophisticated and evolving threat, URLZone attacks can be detected and their malicious effects mitigated.
+To help stop this type of threat, banks and service providers can opt to deploy adaptive malware detection solutions and protect customer endpoints with malware intelligence that provides real-time insight into fraudster techniques and capabilities, designed to address the relentless evolution of the threat landscape.
+Read the white paper: Accelerating growth and digital adoption with seamless identity trust

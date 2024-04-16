@@ -1,0 +1,44 @@
+Detailed analysis of Rovnix.D reveal updates to the code injection technique employed, allowing multiple injections with a variety of payloads.
+In one of my previous blog posts I described the bootkit functionality included in modifications found in new Rovnix.D samples (Rovnix bootkit framework updated).
+However, further detailed analysis uncovered some interesting updates to the code injection technique employed.
+During the Rovnix.D code analysis process we found algorithms for multiple code injections with a range of payloads.
+In previous versions Rovnix worked with a single payload, and the Rovnix developer concentrated on the sales framework for that specific payload.
+In the new version we see multiple code injections into user-mode processes launched from hidden storage, opening up more ways in which the botnet can be leased.
+But right now we aren’t aware of large botnets based on Rovnix.D, and the C&C indicates that the number of currently active bots is 8,417.
+This C&C really seems to be much the same as the test panel for Carberp versions with bootkit functionality (Evolution of Win32/Carberp: going deeper).
+The small numbers of active bots suggest that the botmaster is not currently using an effective scheme for distributing the new Rovnix.D modification, and may be searching for a buyer or testing the botnet for future leasing.
+The communication interface with infected machines has two options: one to update the configuration file, and one to send a new payload to an infected machine.
+In the control panel this functionality is displayed like this:
+The control panel interface seems basic and even incomplete, because at this moment only minimum functionality for controlling bots has been implemented.
+In the next part of this blog I am going deeper into technical details with code injection process.
+The structure of _PAYLOAD_CONFIGURATION_BLOCK has already been described in one of our previous publications about the Rovnix bootkit (Rovnix Reloaded: new step of evolution).
+The payload configuration block is stored in the malicious driver module right after the section header.
+In Rovnix.D the marker for the beginning of payload configuration block was changed from JFA to JF .
+[Rovnix.D variant (left) and Rovnix.B variant (right)]
+Before the injection of a new or additional payload, as the first step the malicious driver parses the payload configuration block.
+The code for this action looks like this:
+The full call graph for extracting the payload routine from the malicious driver is presented here:
+The ExtractPayloads() routine extracts the payload after driver initialization stage, but itworks with an encrypted payload already stored in the malicious driver.
+Rovnix.D is able to downloading other payloads and install them into hidden storage for multiple injections into user-mode processes.
+A list of payloads for injection is kept in the configuration file INJECTS.SYS, itself in the hidden storage partition.
+The current version of the malicious driver sees the release of support for a full cycle of operations using the hidden file system (FAT16 modification):
+Create file
+Read/Write file
+Request file information (size, time of creation and etc)
+Request file access information
+At this moment functionality for working with directories is not supported and always returns the status STATUS_NOT_IMPLEMENTED.
+The payload can send requests to the malicious driver using the DeviceIoControl() function with the following codes:
+0x8E040 request information about file system
+0x8E0C0 add new payload to hidden storage
+0x8E100 add/delete inject of payload to/from context of active user-mode process
+0x8E080 execute other malicious driver from hidden storage
+The reconstructed double-linked list with payloads has a structure like this:
+For payload injection, mechanisms are used based on a queue of asynchronous procedure calls and looking at the list of payloads when creating a new process (code injection technique based on PsSetCreateProcessNotifyRoutine() callback).
+A call graph of functions in the process injection workflow is presented in this flow graph:
+The code of function QueueAPC()decompiled from the malicious driver looks like this:
+So the malicious payload can communicate with kernel-mode components and send the buffers with new components to the hidden file storage for the following injection into user-mode processes or for loading a new unsigned driver.
+Decompiled code for implementing code injection via themalicious driver using the buffer received from the user-mode payload looks like this:
+The algorithm for injection can check names of processes for the injection to follow and uses different process names for the injection of different payloads.
+Rovnix is a really interesting bootkit and this is not the end of the story.
+We continue to track new samples and to reverse-engineer Rovnix components.
+Eugene Rodionov and I will be disclosing more details in September, in our presentation Defeating anti-forensics in contemporary complex threats at the 2012 Virus Bulletin conference at Dallas.

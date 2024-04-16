@@ -1,0 +1,98 @@
+In the previous Bayrob blog, we described some of its interesting local features, such as code obfuscation and data encryption, which exist in most Bayrob variants from early versions to the latest ones we found.
+As you may already know know, early variants of Bayrob mainly perform “clicker” jobs.
+These jobs drive illegitimate traffic to websites so that they can earn money through Pay per Click or perform DDOS attacks.
+Compared to that, this latest Bayrob variant is much more dangerous, as it collects information on its victims and relays this to its command and control (C&C) server.
+As promised, in this blog we will delve into the most significant change of the new Bayrob variant: its new C&C communication protocol.
+There are two or three main streams of data in Bayrob’s C&C traffic.
+These streams follow a similar sending sequence: the size of each package in the sending sequence is 8 bytes, 1 byte, 2 bytes, <variable size>, and 2 bytes.
+Finally, after receiving several packets from the server, the bot sends 4 bytes of data back to server.
+How Bayrob sets up the connection with its C&C server is simple.
+It has an integrated a C&C server IP and port list.
+During execution, it attempts to connect the IP and port pair one by one from the list until it successfully connects to one of its C&C servers.
+The very first sending packet contains two pieces of DWORD data.
+The first DWORD is randomly generated, which is used as an initial key for the encryption of the following packets.
+The second DWORD has one byte of data that is used by the server to verify the communication.
+The initial encryption key and the second DWORD are combined as the first 8 bytes packet that are sent to the C&C server.
+Figure 1 First Sending Packet
+The details below show how this first packet is generated.
+Figure 2 Generating the first Sending Packet
+The second packet is one byte of hard-coded data - 13h - as shown below.
+Figure 3 Send the 2nd packet
+The third packet is two bytes of hard-coded data with a value of 2.
+Figure 4 Send the 3rd packet
+The fourth packet is two bytes of data, which indicates the size of the fifth packet.
+Figure 5 Send the 4th packet
+The fifth packet in the first sending sequence is a 13h-sized package, which has the structure shown below.
+It contains the C&C server’s IP address and port number that may be used for verification.
+Figure 6 Fifth sending packet in the first stream
+The sixth packet is two bytes of hard-coded data with a value of 0, which is the same in all streams.
+The purpose of this packet is to tell the server that the sending of this stream is complete.
+Figure 7 Sending the sixth packet
+After these six packets are sent out and the C&C’s response is received, Bayrob then sends a final packet to inform the server that this stream’s communication has finished.
+The last packet’s size is 4 bytes, and its content is the same size as the main received packet.
+Figure 8 Sending the last packet
+From these snapshots shown above, we can see that most of sending the packets use the same subfunction, which we named “encrypt_and_send_packet”.
+This subfunction contains two parts: an encryption routine and a sending packets component.
+Bayrob maintains a key pool for the encryption routine to use.
+As shown below, the first DWORD of this key pool is a size of “available_keys”.
+“available_keys” is a block of data with variable size for the Bayrob encryption routine to use as a key.
+After this keys is used, “next_key” is then used as a seed to generate new keys and move the previous “next_key” to the “available_keys” list.
+Figure 9 Structure of the key pool
+The second stream uses almost the same format as the first stream to send packets.
+The only difference is the fifth sending packet.
+The fifth packet in the second stream contains information about an infected machine, including the computer name and adapter hardware address.
+Again, Bayrob makes detection of this traffic more difficult by encrypting it before sending it to the server.
+The image below shows the main part of this original data:
+Figure 10 Fifth packet in 2nd stream
+As you can see, this data contains the following parts:
+1.
+The first part of this data is a fixed string
+“jm<removed>ro@pira<removed>nacional.com”
+2.
+The data is then appended with names (fixed strings in the same sample) of created directory and dropped files.
+Up until now, all the Bayrob samples we discovered were not packed.
+We have collected a lot of samples with different dropped folder names and file names.
+This is probably because the malware author can easily change strings in the unpacked sample.
+Sending those unique names to the C&C server might be a way to verify which sample or variant it is.
+3.
+A fixed string, “Driver Web Client very”, is a service name string “SSDP Secure Tools Agent Connect Config” and another fixed string of “020”.
+Bayrob names the service name “SSDP Secure Tools Agent Connect Config” when it creates a service on its drop file.
+4.
+Next is the infected machine’s computer name.
+If it fails to get a computer name, it will append the data with a string of “NOT_AVAILABLE”.
+Figure 11 Get computer name
+5.
+This shows the infected machine’s adapter hardware address.
+Figure 12 Adapter hardware info
+6.
+Other fixed strings.
+Before sending this information out, the original data is first encoded with base64 encoding.
+Bayrob then appends it with a prefix string of “/index.php?is_p2ppost=”.
+Figure 13 Part of the combined data
+Finally, this combined data is encrypted using the same customized algorithm used to encrypt other packets, and sent out.
+Third Sending Sequence (in third stream)
+Most of the sending packets in the third stream share the same format as in the first and second stream, except for the fifth packet.
+The first part of the fifth packet in the third stream is exactly the same as in the second stream.
+However, the second part of the fifth packet contains the local services names, along with the status of the infected machine.
+Figure 14 Second part of the Fifth sending packet in the third stream
+Figure 15 Getting local services
+Similar to the second stream, Bayrob uses base64 encoding to encode this data, and then adds the string “/index.php?is_p2penv=” at the beginning.
+Figure 16 Part of the combined data
+There are two main packets that the botnet receives from C&C server.
+After decryption, we found that the first received packet contains a list of IP addresses and ports.
+Bayrob searches the C&C server’s IP address and port against this list.
+If not found, Bayrob considers it to be a failed connection and restarts the whole C&C communication.
+For the second received packet, it is decrypted by Bayrob it, followed by some calculations, but the purpose seems unknown.
+We deduce that this part is still in development.
+For both of the two main packets, after they are received the C&C server responds with a two-bytes packet (value zero).
+This packet just lets the bot know that the receiving is done.
+The C&C communication in this new version of Bayrob could do more than just collect information from a victim’s machine.
+It could also facilitate pushing out new commands to infected clients.
+However, in this the current version, there is no such feature implemented in the C&C communication.
+We believe that the C&C communication code is still in a development stage, and could be enhanced in the future.
+Our team will continue to track this botnet newbie and share any new developments we come across.
+MD5: f3fc7891f9a8205354324d6f890890f1
+SHA256: 5685707a428bf6134a21e581866734522ba41e729c1bb1d945245e2659fd8a80
+Fortinet Detection Name: W32/Bayrob.C!tr
+https://blog.fortinet.com/2016/05/26/bayrob-an-ancient-evil-awakens
+http://www.welivesecurity.com/2016/01/28/application-not-compatible-bayrob-may-be-stealing-your-info/

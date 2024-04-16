@@ -1,0 +1,103 @@
+This blog was written by Yakun Zhang.
+A virtual machine is a completely isolated guest operating system installation within a normal host operating system.
+Virtual machine escape is the process of breaking out of a virtual machine and interacting with the host operating system, which can lead to infections and malware execution.
+VMware escapes demonstrated at the most recent PwnFest, organized by Power of Community in Seoul, South Korea, grabbed our attention as VMware was publicly pwned for the first time.
+The McAfee IPS Vulnerability Research Team decided to look deeper into the issue to better understand the vulnerability.
+VMware responded well by very quickly pushing a fix for these exploits and releasing a security advisory.
+As we often do for security issues in closed-source software, we looked into the advisory.
+It includes this:
+“The drag-and-drop (DnD) function in VMware Workstation and Fusion has an out-of-bounds memory access vulnerability.
+This may allow a guest to execute code on the operating system that runs Workstation or Fusion.
+On Workstation Pro and Fusion, the issue cannot be exploited if both the drag-and-drop function and the copy-and-paste (C&P) function are disabled.”
+The vulnerability resides in the drag-and-drop and copy-and-paste functions.
+Both use the VMware remote procedure call (RPC) mechanism.
+VMware’s RPC has been a very popular attack surface for guest-to-host escapes.
+Before we go deeper into the patch for VMSA-2016-0019 (CVE-2016-7461) we must have a basic idea of how VMware Workstation handles guest-to-host or host-to-guest copy-and-paste operations.
+The following diagram shows the VMware drag-and-drop copy-and-paste (DnDCP) model by class hierarchy.
+(Source: Open VM Tools source code.)
+To seamlessly perform a guest-to-host or host-to-guest copy-and-paste operation, VMware tools need to be installed on the guest operating system.
+VMware tools handle the guest-to-host or host-to-guest communication.
+In our investigation, we used Windows guest and Windows host.
+In Windows guest, the main tools process is vmtoolsd.exe.
+One way guest and host communicate with each other is by RPC.
+VMware has an RPC interface called Backdoor.
+Guest RPC mechanism
+Let’s take a close look at how a guest and host OS communicate with each other over RPC.
+To understand the guest RPC mechanism, we referred to the open-source component of VMware tools, open-vm-tools, which primarily use the following functions for guest RPC calls:
+Theoretically, anything using RpcChannel_Send() or RpcOut_send() can be sent with the command-line tool rpctools.exe, which ships with VMWare Workstation.
+RpcOut_Send() invokes Message_Send(), which calls the function Backdoor().
+The Backdoor function is responsible for sending the message through the VMware special I/O port.
+Usually we see the following set of instructions while invoking Backdoor from guest to host.
+In the VMware tools installation, the function resides in vmtools.dll.
+Here we see Backdoor() calling the function sub_10050190.
+Digging into this, we find this function executes the privilege instruction “in.”
+Let’s return to the vulnerability.
+We are mainly interested in DnDCP RPC message(s) because the vulnerability lies in DnDCP RPC, per the advisory.
+The VM Tools source code reveals the DnDCP RPC message structure for us.
+From the source code, we see the first member of the structure is the RPC command.
+When we break into vmtools!RpcOut_send(x,x,x,) of the vmtoolsd.exe process in guest, we see the same thing.
+Bool RpcOut_send(RpcOut *out, char const *request, size_t reqLen,char const **reply, size_t *repLen);
+In RpcOut_Send(), the second argument is the request-RPC packet.
+If we dump the packet from the guest OS vm-tools process, in the data packet we first see the RPC command (as in the DnDCPMsgHrV4 structure) and we also see a copy-and-paste request packet for our test file debasish.txt on the guest desktop.
+RPC packet handling in guest
+Let’s look at how the host operating system handles the RPC request.
+On the host, each running virtual machine has a separate process, vmware-vmx.exe.
+When a guest RPC is issued by the guest, code inside vmware-vmx.exe searches the guest RPC handler table for a handler corresponding the request.
+If we search the raw string in vmware-vmx.exe disassembled in IDA Pro, we find almost all the handlers.
+From this, we know vmware-vmx.exe is the main component in the host, responsible for handling the vulnerable component, the copy-and-paste RPC.
+We next performed a binary “diffing” of the patched and unpatched binaries.
+The patch was shipped through VMware Workstation Version 12.5.2, so we ran the binary diffing between the vmware-vmx.exe of Version 12.5.2 and 12.5.1.
+We can see a few functions in vmware-vmx.exe that were modified by the patch.
+One interesting modified function is vmware_vmx!sub_140621520.
+This function grabbed our attention because it has a call to memcpy(), which is a perfect situation for triggering an out-of-bounds condition.
+After running some debugging and reverse engineering, we confirmed the function vmware_vmx!sub_140621520 handles RPC packets, and we were able to control one argument of the modified function from the guest operating system.
+The argument is a pointer to a structure, giving us control of the content of the passed structure.
+The following screenshot demonstrates the statement.
+The window at left is the guest virtual machine and the window at right is windbg attached with the vmware_vmx.exe process.
+In this screen, we have modified an RPC packet in the main vm-tools process vmtoolsd.exe (RpcOut_send) at runtime, and the modified packet is received by the function vmware_vmx!sub_140621520 in the vmware-vmx.exe process.
+Now, let’s look at the decompiled source code of our patched function to identify which fixes were added to kill the bug.
+To send a valid RPC packet we referred to the source code of VM Tools, which defines the RPC packet structure.
+The following screen shows the definition of an RPC packet header; we can see the size is exactly 0x38.
+The fields binarySize and payloadSize are actually the variables v6 and v5 in our decompiled code.
+We can control the values of these two fields to cause an out-of-bounds access.
+To send an arbitrary RPC packet from guest to host, we developed a standalone tool that can send an RPC from guest to host via the function Backdoor.
+After thorough reverse engineering, we found that using the vulnerable function we can achieve an out-of-bounds read/write in the vmware-vmx.exe process.
+Out-of-bounds read
+As we know, the payloadSize is in our control.
+If we send a packet with a large payloadSize without a payload buffer, when the program reaches memcpy() it will read some memory out of bounds.
+The preceding screen shows the code will copy 0x500-length contents from 0x36E4D96 to 0x378A0D0.
+However, our data ends only with 0x4C in 0x36E4DB7.
+The data after 0x36E4DB7 will cause an out-of-bounds read.
+Out-of-bounds write
+If the RPC message contains multiple packets, we will get into the function sub_1406215F0.
+To create an out-of-bounds write in the preceding function we have to send more than one RPC packet in one session; then vmware-vmx will create a new buffer to combine the payloads of all packets.
+After some thorough reverse engineering trials, we conclude that RPC packets with the following characteristics can be sent from guest to host to achieve an out-of-bounds write.
+First, we send a drag-and-drop RPC packet with these characteristics:
+packet->binarySize is 0x10000.
+packet->payloadOffset is 0x0.
+packet->payloadSize is 0x500.
+With these options, all preceding check conditions are satisfied.
+packetSize is certainly larger than DND_CP_MSG_HEADERSIZE_V4.
+packet->payloadSize is less than 0xFF64.
+packet->binarySize is less than 0x400000.
+packet->payloadOffset + packet->payloadSize < packet->binarySize.
+The procedure will create a new buffer and copy all our packet payloads to it.
+Then, we send another packet with the same session ID, in which
+packet->binarySize is 0x10100.
+packet->payloadOffset is 0x500.
+packet->payloadSize is 0xFC00.
+These options also satisfy the sanity checks.
+packetSize is certainly larger than DND_CP_MSG_HEADERSIZE_V4.
+packet->payloadSize is less than 0xFF64.
+packet->binarySize is less than 0x400000.
+packet->payloadOffset + packet->payloadSize < packet->binarySize.
+Because this packet has the same session ID as the first packet, and the new buffer is already allocated, the code continues to copy payloads to the current buffer—because 0x500 + 0xFC00 = 0x10100, not 0x10000.
+This leads to an out-of-bounds write to memory of 0x100 bytes.
+The preceding screenshot shows the memory state of the vmware-vmx.exe process before the out-of-bounds write happens.
+The preceding screenshot shows the memory state of the vmware-vmx.exe process after the out-of-bounds write, where 0x40E3070 is the memory after the new buffer ends (0x10000).
+After we sent the second packet, we successfully overwrote 0x100 bytes of memory at 0x40E3070.
+This post gives a brief overview of the RPC mechanism in VMware Workstation and how the RPC attack surface can be exploited to escape from the guest to the host operating system.
+In a series of posts, we will discuss each step of this exploitation in detail and demonstrate how these exploits can be chained together to achieve a complete VMware guest-to-host escape.
+RPC is not the only vector to attack VMware.
+In future posts, we will discuss other virtual machine attack surfaces, techniques, and exploits.
+The authors would like to thank Bing Sun for his valuable assistance throughout this analysis.

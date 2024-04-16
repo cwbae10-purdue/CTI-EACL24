@@ -1,0 +1,92 @@
+While investigating a recent security incident, Unit 42 found a webshell that we believe was used by the threat actor to remotely access the network of a targeted Middle Eastern organization.
+The construction of the webshell was interesting by itself, as it was actually two separate webshells: an initial webshell that was responsible for saving and loading the second fully functional webshell.
+It is this second webshell that enabled the threat actor to run a variety of commands on the compromised server.
+Due to these two layers, we use the name TwoFace to track this webshell.
+During our analysis, we extracted the commands executed by the TwoFace webshell from the server logs on the compromised server.
+Our analysis shows that the commands issued by the threat actor date back to June 2016; this suggests that the actor had access to this shell for almost an entire year.
+The commands issued show the actor was interested in gathering credentials from the compromised server using the Mimikatz tool.
+We also saw the attacker using the TwoFace webshell to move laterally through the network by copying itself and other webshells to other servers.
+The web server logs on the system we examined that was compromised with the TwoFace shell gave us a glimpse into the commands the actor executed through their malware.
+These commands also enabled us to create a profile of the actor, specifically their intentions and the tools and techniques used to carry out their operation.
+Our analysis determined that five different IP addresses from four countries issued commands on the TwoFace shell, as seen in Table 1.
+As it is possible these originating IP address may themselves have been targeted and compromised, we have redacted the full IP addresses to hide the identities.
+The first command in the logs was issued on June 18, 2016, which was a simple “whoami” command to get the username on the server.
+This single command was the only one by this specific IP address which appears to be in Iran, and suggests that the actor may have initially compromised the server around this time and performed a quick check to see if the shell was loaded successfully.
+Table 1 IP Addresses seen issuing TwoFace Commands
+Three months after this single, initial command the next set of commands were sent.
+This time on September 28, 2016 a series of twelve commands were sent from an IP address apparently in France.
+These commands provide additional insight into the actor’s intentions.
+It is not certain why a time gap exists in issuing commands to the TwoFace webshell, although it is highly plausible this may simply be a visibility gap or even anti-detection measure taken by the actor.
+Rather than speculating on this gap and subsequent time gaps between interactions, we will focus on the commands actor issued that provide insight into this actor’s tactics, techniques, and procedures (TTPs).
+The first command issued from this second IP address attempts to run a variant of the Mimikatz post-exploitation tool (m64.exe), specifically the Sekurlsa module that gathers the passwords of accounts currently logged into the system and saves the results locally to a text file.
+The actor then issues a command that uses the “type” command to read the contents of the text file containing the passwords, followed by a command that uses “del” to delete the text file.
+c:\windows\temp\m64.exe privilege::debug sekurlsa::logonpasswords exit > c:\windows\temp\01.txt
+Just over five months later on March 3, 2017, a third IP address, a different one apparently in France, issued a series of 16 commands to the TwoFace webshell.
+The first command of interest is as follows:
+net group “Exchange Trusted Subsystem” /domain
+According to MSDN, the “Exchange Trusted Subsystem” group is defined as follows:
+The “Exchange Trusted Subsystem” is a highly privileged universal security group (USG) that has read/write access to every Exchange-related object in the Exchange organization.
+It’s also a member of the Administrators local security group and the Exchange Windows Permissions USG, which enables Exchange to create and manage Active Directory objects.
+Using hostnames obtained from the previous command, the actor issues several commands to determine if they have access to Microsoft Exchange related folders.
+The actor then issued several commands that attempt to copy a different webshell onto these additional systems, which resembles the following:
+copy c:\windows\temp\Exchange.aspx “\\[hostname]\d$\Program Files\Microsoft\Exchange Server\V14\ClientAccess\exchweb\ews\”
+This clearly shows the threat actor attempting to use the TwoFace webshell to pivot to other servers on the network.
+The “Exchange.aspx” file copied over to the other systems appears to be a different webshell from TwoFace.
+We analyzed this additional webshell and have named it IntrudingDivisor, which we will describe in detail later in this blog.
+On April 24, 2017, a fourth IP address, this one apparently in the United States, issued 61 commands to the TwoFace webshell.
+Like the previous set of commands issued in March 2017 from France, this IP address issued the command to obtain objects in the Exchange Trusted Subsystem group, and it appears the actor copied over yet another webshell named “global.aspx” and set the file’s attributes to be hidden using the following command:
+attrib h “\\[hostname]\d$\Program Files\Microsoft\Exchange Server\V14\ClientAccess\exchweb\ews\global.aspx”
+The actor then issued commands that suggests the use of the Mimikatz tool, but this time Mimikatz was named “mom64.exe” instead of “m64.exe”.
+The following two commands show the actor killing the process and using the “type” command to read the contents of a text file “01.txt,” which was also used in the password gathering activity observed on the day of the initial compromise on Jun 2016, ten months earlier:
+taskkill /f /im mom64.exe type c:\windows\temp\01.txt
+Nine days later on May 3, 2017 the next commands came from a fifth IP address apparently in Germany.
+This time the threat actors issued 10 commands to the TwoFace webshell: fewer than nine days before but still more than during the other sessions.
+The actor first issues a command to ping the IP address “4.2.2.4”, which is the legitimate DNS resolver operated by Level 3.
+The actor then checks the “Domain Admins” group to determine the accounts with domain administrator privileges using the following command:
+net group “Domain admins” /domain
+After this command, the actor runs a variant of the Mimikatz tool to gather locally logged in passwords, this time using a filename of “MicrosoftUpdate.exe” for the executable and “mic.txt” to store the results, as seen in the following command:
+c:\windows\temp\MicrosoftUpdate.exe p::d s::l q > c:\windows\temp\mic.txt
+These commands show the threat actors rely heavily on the TwoFace webshell to interact with compromised servers, but it also appears that other webshells are used in addition to TwoFace, such as IntrudingDivisor.
+The commands also show the threat actor’s reliance on the Mimikatz tool to steal passwords from systems, which they will then use to attempt to move laterally amongst other servers by copying over webshells.
+Lastly, the timestamps of the commands suggest that the threat actor had maintained persistent access that they used intermittently to the compromised network using the TwoFace shell since at least June 2016.
+Both components of the TwoFace shell, which we will refer to as the loader and payload components were written in C# and meant to run on a webserver that supports ASP.NET.
+The author of the initial loader webshell included legitimate and expected content that will be displayed if a visitor accesses the shell in a browser.
+The inclusion of expected content suggests that the actors wished to use the TwoFace webshell for extended periods while remaining hidden.
+The code in the loader webshell includes obfuscated variable names and the embedded payload is encoded and encrypted.
+To interact with the loader webshell, the threat actor uses HTTP POST requests to the compromised server.
+As its name suggests, the loader component is mainly responsible for saving and loading the payload component on the same server, allowing the actor to interact with the payload component that has far more functionality than the loader.
+However, the loader is also capable of the following functionality:
+Save the TwoFace payload to a specified file on the server
+Delete the TwoFace payload saved on the server
+Write data to a specified file on the server
+Delete the entire folder on the server used to store the TwoFace payload
+The TwoFace loader parses the HTTP POST requests issued by the actor and references data at specific locations, more specifically at certain indexes within the posted data (C# “Request.Forms”) that the shell will use to determine the functionality the actor wishes to execute.
+While we did not have logs of HTTP requests for the loader shell, we were able to determine some of the indexes that the webshell will specifically access within the data.
+Table 2 shows the known indexes within the HTTP POST data that TwoFace references.
+Table 2 Indexes within Request.Forms that the TwoFace loader relies on
+As you can see in the descriptions in Table 2, none of these locations contain the command that the actor wishes to execute.
+Instead, the actor must provide data in index 9 that was constructed to not only contain the command the actor wants to execute, but also contains the key to decrypt the TwoFace payload component that is embedded within the loader.
+The data in index 9 will contain data at specific offsets, seen in Table 3 that the loader component will use to determine the command and the location of command specific data within the posted data (C# “Request.Forms”).
+Table 3 Offets of actor provided data used by the TwoFace loader
+The main purpose of the loader shell is to install a secondary webshell on demand.
+The secondary webshell, which we call the payload, is embedded within the loader in encrypted form and contains additional functionality that we will discuss in further detail.
+When the threat actor wants to interact with the remote server, they provide data that the loader will use to modify a decryption key embedded within the loader that will be in turn used to decrypt the embedded TwoFace payload.
+The decryption algorithm (below) is very simple, as it relies on basic arithmetic operations, specifically addition and subtraction to decrypt the embedded payload.
+The pseudocode above provides the logic used by the TwoFace loader to decrypt the ciphertext of the payload, which is
+Iterate through the key, modifying each byte by adding a value from the actor’s provided data
+Iterate through TwoFace payload ciphertext and subtracting each byte using a value from the modified key
+We were able to determine the data that the threat actor would have to provide to successfully decrypt the embedded TwoFace payload, which is as follows:
+\x15@^\xbbs\xfa\xae\x876\x03`\xffs\x89\xb9 \x9a\xcb\x02\xec\x8e\xc3\x92\x7f\xd6b\xa8\x1ag\xb8\xff\x82\x08\xd0ALB\xd8\x0c)\x91\x82\xc4\x85\xb2\xa7\xe6\xea\x8e\x92\xf9u\x96\xc1\xef\xfd\xe9.
+!\x047\xc8#y
+As you can surmise from the above characters, this does not appear to be a human generated string.
+We believe this is a machine generated string used for this input data, which gives a bit of insight into the actors behind this webshell, as they would have to use a tool to interact with to automate the use of these webshells, or at a minimum they would need to keep track of these machine generated user input strings to be able to interact with their webshells manually.
+The TwoFace payload shell requires a password that is sent within HTTP POST data or within the HTTP Cookie, specifically with a field with a name “pwd”.
+The “pwd” field is used for authentication as a password, which the payload will generate the SHA1 hash and compare it with a hash that is hardcoded within the payload.
+We extracted the SHA1 hashes used for authentication from the known TwoFace shells, as seen in Table 4 and were able to find the associated password string for three of them.
+One of the passwords, “RamdanAlKarim12” contains a phrase that means “Ramadan the generous” in Arabic (رمضان الكريم).
+Another known password is “FreeMe!”, while the last known password contains what may be an acronym of a middle eastern energy organization followed by “pass”.
+It is possible that the actor chose this acronym based on the targeted organization, but we cannot confirm this.
+Table 4 Authentication hashes and matching password strings used for TwoFace webshells
+Much like the authentication password, a threat actor can issue commands to the TwoFace payload using either data sent within the HTTP Cookie or HTTP POST data itself.
+If using an HTTP Cookie to issue commands, the payload will split the cookie data using the delimiter “#=#” and will treat the first value as the command and the second value the data to pass to the command.
+We enumerated the command handler, which can be seen in Table 5 that accepts a variety of commands to interact with the compromised server.

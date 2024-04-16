@@ -1,0 +1,85 @@
+In this 3rd Hesperbot blog post we’ll look at the most intriguing part of the malware – the way it handles network traffic interception.
+Win32/Spy.Hesperbot is a new banking trojan that has been targeting online banking users in Turkey, the Czech Republic, Portugal and the United Kingdom.
+In this 3rd Hesperbot blog post we’ll look at the most intriguing part of the malware – the way it handles network traffic interception.
+The malware spreading campaigns and their victims, and an technical overview of the malware architecture, its mobile component and other features are covered in three blog posts: Hesperbot – A New Advanced Banking Trojan in the Wild, Hesperbot Technical Analysis Part 1/2 and Hesperbot Technical Analysis Part 2/2.
+You can download the comprehensive whitepaper here.
+Other well-known banking trojans such as Zeus and SpyEye are able to intercept and modify HTTP and HTTPS traffic by hooking WinSock functions (send, WSASend, etc.)
+and the higher-level WinInet functions (HttpSendRequest, InternetReadFile, etc.).
+As the web-injects, form-grabbing and other shenanigans performed by these banking trojans take place inside the affected browser, the method has collectively been labeled as the ‘Man-in-the-Browser’ attack.
+Win32/Spy.Hesperbot, however, takes a different approach, which is not very common, but has, in fact, already been used by the Gataka banking trojan.
+A good technical analysis of Win32/Gataka by my colleague Jean-Ian Boutin can be found here.
+The network traffic interception and HTML injection functionality in Win32/Spy.Hesperbot is accomplished by the plug-in modules nethk, httphk and httpi working together.
+Figure 1 – Relations between network interception modules
+Here’s a brief description of each module’s purpose:
+nethk – used to set up a local proxy, hook socket functions to drive connections through the proxy and hook browser SSL certificate verification functions.
+Also handles decryption and encryption of HTTPS traffic flowing through the proxy.
+httphk – used for parsing HTTP traffic intercepted by the proxy
+httpi – used for screenshots, video capturing, form-grabbing and web-injects according to the configuration file
+Now let’s take a closer look at how the modules work together and accomplish their tasks.
+As mentioned above, the modules expose their functions in a vtable for other modules to use.
+The program flow in between the modules as each HTTP request or response is intercepted is ensured through callback functions.
+nethk
+Nethk is the first plug-in module to be loaded by the core module.
+Win32/Spy.Hesperbot performs a man-in-the-middle attack by creating a local proxy through which it directs all connections from the browser.
+Figure 2 – Local proxy IP address in Hesperbot code
+Figure 3 – Internet Explorer connected through Hesperbot proxy
+To achieve this, the trojan’s nethk module creates a proxy on a random port at the address 127.0.1.1 and hooks the following functions in mswsock.dll, the lower-level Winsock SPI library:
+WSPSocket
+WSPIoctl
+WSPConnect
+WSPCloseSocket
+The pointers to these functions are modified in the WSPPROC_TABLE.
+To understand how the proxy redirection works, let’s look at the hooked WSPConnect function.
+Figure 4 – Hooked WSPConnect API
+The browser socket – when trying to connect to a secured online banking website, for example – is connected to the proxy created by Hesperbot instead.
+In another thread, the legitimate connection to the website is established.
+Figure 5 – Overview of HTTPS traffic interception via Hesperbot’s proxy
+An httphk-callback is invoked each time the proxy intercepts a request from the browser, before passing it on to the real server.
+Likewise, an httphk-callback is invoked each time the proxy intercepts a response from the real server, before passing it on to the browser.
+The httphk module then works further with the traffic.
+There’s also a difference between the handling of HTTP versus HTTPS traffic.
+In the case of HTTP, the request- or response-data is simply passed to httphk.
+In the case of HTTPS, nethk first “gets rid of the encryption”.
+When an HTTPS request from the browser is intercepted (encrypted using its own fake SSL certificate – explained below), it is decrypted, and the decrypted data is passed to httphk through the callback and then encrypted using the real certificate of the server (e.g.
+bank website), and then sent to the real destination.
+Reciprocally, when an HTTPS response is received from the server, it’s decrypted using the real certificate, the decrypted data is again passed to httphk and then encrypted using Hesperbot’s fake certificate before being passed to the browser.
+In effect, through the man-in-the-middle proxy, Win32/Spy.Hesperbot can access the victim’s outgoing HTTPS communication before it’s encrypted and their incoming HTTPS communication after it’s decrypted.
+The same effect is essentially accomplished by Zeus’s and SpyEye’s MitB hooks, but this new approach is slightly stealthier.
+Now, of course, this malicious proxy redirection should be given away by an invalid certificate for an HTTPS website.
+The Hesperbot authors thought of this as well.
+The nethk module carries its own crafted, self-signed SSL certificates and these are substituted for legitimate certificates.
+Figure 6 – SSL certificates inside nethk binary
+Figure 7 – Example of Hesperbot’s fake certificates in use.
+On a clean system, Google’s certificate would displayed here, of course.
+In order to trick the browser into believing that the certificate is valid and avoid the display of a warning message, the malicious module also hooks functions responsible for certificate verification.
+The implementation differs depending on the browser.
+The following table shows which browsers are supported by Win32/Spy.Hesperbot and which functions are hooked:
+Figure 8 – Certificate verification functions hooked by Hesperbot for various browsers
+An interesting feature of the malicious code is that the authors have used hashes instead of using the browser process names directly, so as to complicate analysis and, more importantly, to protect the malware from signature based AV detection.
+Figure 9 – Code obfuscation in Win32/Spy.Hesperbot – hashes are used instead of process names
+The figure below shows the code of the hooked CertVerifyCertificateChainPolicy.
+Figure 10 – Hooked CertVerifyCertificateChainPolicy API
+In the case of an SSL client/server chain policy verification check (other types are neglected and passed on to the original function) the hooked function simply returns a result indicating that the policy check was passed.
+httphk The httphk module is merely responsible for parsing the HTTP protocol data.
+When the httphk-callback is invoked, it parses HTTP headers and data and fills in an internal structure.
+This structure will subsequently be accessed by the httpi module.
+Again, httphk exposes two callback functions for invoking httpi: httpi_request_callback and httpi_response_callback.
+httpi This is the main module that actually carries out the modification of the HTTP data, according to the configuration file.
+When httpi_request_callback is invoked, the following actions are performed:
+Video capture and screenshots – The module reads the configuration file and checks the request URL.
+If specified in the config, video capture and/or creating screenshots is started.
+Form grabbing – The module checks whether it’s a POST request via the HTTPS scheme and if content-type is either “application/x-www-form-urlencoded” or “text/plain”.
+If these conditions are true, it’s likely that the user has submitted a login form.
+If the configuration file specifies that the current URL should be monitored, the data is written to a log.
+When httpi_response_callback is invoked, the following happens:
+HTML injects – First, the trojan checks whether the HTTP response code is 200.
+Afterwards, the configuration file is read and if there are web-inject entries for the responding web-page, they are inserted into the HTML content.
+The figure below shows a decrypted configuration file used in the Portuguese botnet.
+You may notice the first group of domains – these are ignored by httpi – domains which are of little interest to the bot masters.
+While stolen Google or Facebook login credentials would be considered valuable to other spying malware, this shows that the perpetrators behind Hesperbot are only interested in online-banking-related data.
+The targeted bank websites are listed after those that are ignored.
+The rest of the configuration file contains the HTML code that’s supposed to be injected into the online banking websites.
+Figure 11 – Decrypted web-inject configuration file used in the Portuguese botnet
+It appears that the people who wrote the web-injection scripts speak Russian, as evidenced by source-code comments.
+Note, however, that the scripts may or may not have been written by the same perpetrators who created the Win32/Spy.Hesperbot malware and/or operate the botnets.
+Web-inject scripts are often shared and reused – this is made possible when a similar format is being used by different malware families – and specialization among cybercriminals is commonplace.

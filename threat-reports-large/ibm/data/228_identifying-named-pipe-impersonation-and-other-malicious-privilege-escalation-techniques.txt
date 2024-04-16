@@ -1,0 +1,99 @@
+Privilege escalation is one of the key components of any attack that involves penetrating a system.
+If threat actors have limited access due to a current user’s privilege levels, they will naturally aim to escalate their privileges before expanding the scope of the attack.
+How can security professionals detect malicious escalation techniques before adversaries get a chance to compromise critical systems and sensitive data?
+There are several ways to do that, but let’s focus specifically on one of the tricks most commonly employed by malware developers and attackers: the named pipe impersonation technique.
+One of the most well-known penetration testing frameworks is called Metasploit.
+Although designed for testing purposes, attackers can — and often do — use concepts from this framework maliciously to escalate their privileges on a compromised host to a system account, which is a high-privilege account type on Windows-based endpoints.
+Named pipe impersonation is a technique used in the Metasploit platform to escalate these privileges.
+The legitimate named pipe technique is built into the Windows OS to facilitate communications between processes.
+The pipe technique uses a file to exchange messages between the two processes.
+For example, if one process wants to contact another, it can send a message over the network or by using a file, where one process writes the message to that file and the other one reads it.
+Pipes are also used by various malware codes for covert communications.
+In the NotPetya ransomware attacks, for example, the malware reportedly spread through organizational networks.
+To move from one user to the next, it needed credentials, and it needed to obtain them stealthily.
+To do that, NotPetya typically started a new process to dump the victim’s credentials, and then used a named pipe to communicate between the NotPetya process and the credential-dumping process.
+This enabled it to covertly collect the dumped credentials.
+But what do we mean by impersonating a named pipe?
+How do attackers use it to escalate their privileges to a system account?
+This malicious action goes back to the concept of privilege levels.
+Let’s reflect by means of the following example: Let’s say I’m a service provider, you are my client and you ask me to execute a database query.
+As a provider, I may have full access to that database, but you, as a client, may have limited access that corresponds to the rights attributed to you as a user.
+Since you are a user/client, I can use your credentials to execute the query on your behalf — if your access rights allow you to perform that database query.
+You will then receive the results, also according to the rights level.
+If the results cannot be provided to you as a user, it could mean that you don’t have sufficient access.
+But what if you, as the client, somehow have higher privileges than the service provider?
+You can pass those escalated rights to the service provider by letting it use privileged credentials.
+In such a case, what if the provider should impersonate or abuse the client’s privileged account to perform malicious activities?
+The same idea can be applied in the named pipe context.
+If a process creates a pipe, this process will be the pipe owner or the pipe server.
+When another process connects to this pipe, it will be called the pipe’s client.
+Once connected, the pipe server can use the pipe client’s privilege level, the client’s security context or the client’s access rights.
+This is a Windows feature that helps perform activities based on the client’s privileges, since the server may have full access, but the client typically has more limited rights.
+This feature can be exploited by creating a pipe server with limited or low privileges and then attempting to connect a much more privileged client to that pipe server.
+When that happens, the pipe server can abuse the client’s elevated privileges to perform activities based on those access rights.
+Metasploit facilitates and automates the abusing process and allows penetration testers to perform it by executing a single command.
+Behind the scenes, the tool creates a pipe server with limited privileges, then configures a Windows service (the client) to connect to that pipe.
+The tool commonly used to test the potential of impersonating a pipe is the Metasploit Meterpreter module.
+Meterpreter is a modular part of the Metasploit penetration testing framework.
+It is an advanced, dynamically extensible payload that uses in-memory Dynamic Link Library (DLL) injection stagers and is extended over the network at runtime.
+This tool is typically used in schemes that bear on communications between Windows processes, which makes it useful to an attacker looking to impersonate a legitimate named pipe.
+Now let’s say a threat actor executes a malicious process called myLove.exe under user MARY, who has limited privileges on the compromised host.
+This malicious process will connect back to the attacker’s host and can allow the threat actor to remotely execute other commands via MARY.
+The malicious process starts out with MARY’s limited privileges, but the attacker’s goal is to escalate his or her privileges from MARY’s level to a system-level user.
+By executing a getsystem command, myLove.exe will create a pipe with a random name.
+In our example, that random name was “dqwfqx,” but it could have been another name as well.
+This pipe is originally created with MARY’s user privilege level.
+Figure 1: Meterpreter session showing the malicious process created a reverse connection to the attacker’s host
+By executing a getsystem command, myLove.exe will create a pipe with a random name.
+In our example, that random name was “dqwfqx,” but it could have been another name as well.
+This pipe is originally created with MARY’s user privilege level.
+<img title=”a windows sysmon event indicating a pipe has been created” src=”https://securityintelligence.com/wp-content/uploads/2018/01/figure-2-a-windows-sysmon-event-indicating-a-pipe-has-been-created.png” alt=”A Windows Sysmon eFigure 2: A Windows Sysmon event indicating that a pipe has been created
+The attacker’s challenge now is to convince a client with system-level privileges to connect to the new pipe.
+This is not hard to achieve, since Windows services can run as a system user and the attacker can install a new service or reconfigure an existing one to send any message to the named pipe “dqwfqx.”
+Figure 3: Windows event indicating that a service was installed
+The Windows Registry event shown below indicates that a service was installed and configured to connect to the named pipe “dqwfqx.”
+Figure 4: Windows registry event indicating that a service has been installed in the system
+When the service starts, this time it launches cmd.exe as a system-level user and connects to a pipe created by MARY, which now leads to a system-level client connecting to a pipe server that was created by a lower-privileged user.
+Figure 5: A new process has been created and the process will use cmd.exe to connect to the pipe
+This malicious activity may happen relatively smoothly, but it can be detected by using an SIEM solution to look for a pipe creation event followed by a service that connects to the same pipe.
+Figure 6: Screen capture from QRadar SIEM showing an alert about abuse of a named pipe
+This approach can be expanded by creating or modifying a scheduled task to connect to a lower-privilege pipe.
+In general, it’s important to check whether any service or scheduled task is configured to connect to a pipe and to examine the underlying activity’s source.
+There are many ways in which attackers can exploit misconfigured services to conduct privilege escalation schemes.
+Below are some of the most prominent ones I have worked with in the past year, as well as some tips that can be useful in detecting them.
+One of the easiest techniques to escalate privileges is to look for any service with an unquoted executable file location.
+For example, if we have a service and the service binary file is located in C:\users\MyCompanyService\myService.exe, then Windows will try to locate the service binary file and execute the following files:
+C:\users\my.exe;
+C:\users\my.exe;
+C:\users\my company.exe; and
+C:\users\my company.exe; and
+C:\users\my company Service\myService.exe.
+C:\users\my company Service\myService.exe.
+If an attacker can place a malicious file with the name my.exe in C:\users\my.exe, he or she may be able to escalate to the service user’s privileges during the next service restart.
+The Windows OS service will start to search for the service executable file after a reboot and, while doing that, will execute the malicious file my.exe.
+A proactive way to identify this type of activity is to use rules to detect any new service with an unquoted binary file location.
+Another great technique is to baseline or profile the processes that can run at the endpoint level and then check for any new unknown processes.
+It’s also important to profile and baseline the processes that can run with system-level privileges to trigger an offense in cases where any new process attempts to run with system user privileges.
+This enables the security team to detect any privilege escalation attempts, even if a zero-day exploit is being used.
+Attackers can also abuse the permissions assigned to the service executable folder, since a poorly written access control list (ACL) may allow local users to add or override these files.
+Threat actors can look for a service configured to run with higher user privileges.
+If they can override the service binary executable file with another malicious service executable file, then they can escalate their privileges to the service user level.
+Security professionals can detect this technique by profiling and mapping the process name to the process hash.
+This enables security teams to identify known processes that start with unknown or unseen hashes.
+A misconfigured permission may allow a local user to change service attributes or reconfigure a service, which can allow an attacker to change the service binary location to another malicious executable.
+A common technique is to change the service binary location to a set of commands to add a new or existing user to the local administrators group.
+This can enable the attacker to escalate his or her limited privileges by hijacking the new admin user.
+Security teams can detect such activity by looking for a service binary executable change followed by the addition of a new user to the admin group.
+They can also profile the service binary file attributes (e.g., name, hash), then trigger an offense if a known service starts with a new attribute (e.g., a new binary file hash or a different location for the service binary file).
+In most privilege escalation attacks, threat actors attempt to get a command line with the highest privileges possible.
+In Windows, a highly privileged user is the system user.
+Normal endpoint users and even Windows administrators do not launch command lines as system-level users, so determining whether a command line is launched as a system user is a good place to start when it comes to detecting various privilege escalation techniques.
+In a typical attack that uses Metasploit, attackers launch a command line as a system user after escalating their privileges.
+They may also opt to use legitimate Windows utilities, such as Sysinternal PsExec, which would help them execute processes as a system user on a local or remote machine.
+Monitoring for command lines launched with system privileges is a great method to detect malicious processes.
+Another good approach is to profile the processes that can run as system and trigger an alert when a new unseen or unknown system-level process starts.
+View the X-Force Exchange collection for a list of legitimate Windows processes that do start with system-level privileges.
+Figure 7: Getting a command line shell as a system-level user using Metasploit
+Privilege escalation activity is often a precursor to a potentially devastating data breach involving the enterprise’s most sensitive data.
+Detecting the above techniques before they cause harm and using well-managed SIEM solutions to monitor pipe creation events and other suspicious activity, security professionals can save their organizations time, money and negative headlines.
+Mutaz Alsallal is an MSS SIEM Analyst with IBM.

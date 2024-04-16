@@ -1,0 +1,59 @@
+On September 8, FireEye published details about an attack exploiting zero day vulnerabilities in Microsoft Office (CVE-2015-2545) and Windows (CVE-2015-2546).
+The attack was particularly notable because it leveraged PostScript to drive memory corruption in a way that had never been seen before.
+The exploit used similar strategies as browser exploits in common languages such as JavaScript and Flash, but PostScript served as an overlooked attack vector that is powerful and convenient in Office.
+Following the release of the patch for CVE-2015-2545, FireEye notified Microsoft of a way to bypass the patch.
+Microsoft not only fixed the bypass, but proactively hardened code throughout the Encapsulated PostScript (EPS) filter.
+The updates were quietly released on November 10 (Patch Tuesday).
+At around 10:00AM in Japan on November 26 (around close of business the day before Thanksgiving in the U.S.), threat actors launched a spear phishing campaign.
+The emails contained document attachments that exploited a previously unknown EPS vulnerability.
+But there was a catch: the vulnerability was proactively patched in the Microsoft update released two weeks earlier.
+The spearphishing emails to FireEye EX customers were blocked in the wild.
+FireEye appliances detect the exploit as Exploit.Dropper.docx.MVX and Malware.Binary.Docx.
+In the first part of this blog series, we summarize recent threat group activity using this exploit and provide complete technical details of the vulnerability.
+Stay tuned for part two wherein we outline the operational details of the attack.
+In late November and early December of 2015, FireEye observed multiple spear phishing campaigns exploiting a previously unknown Microsoft Office EPS vulnerability (detailed below) and Windows local privilege escalation vulnerability CVE-2015-1701.
+Over the course of several days, known and suspected China-based advanced persistent threat (APT) groups sent phishing emails containing malicious Word attachments to Japanese and Taiwanese organizations in the financial services, high-tech, media and government sectors respectively.
+These attachments exploited a silently patched user-mode Microsoft EPS vulnerability (similar to Microsoft EPS use-after-free vulnerability CVE-2015-2545) and subsequently used CVE-2015-1701 to obtain SYSTEM level access to compromised machines.
+Following successful exploitation of each vulnerability, the exploit shellcode deployed either the IRONHALO downloader or the ELMER backdoor.
+FireEye currently detects IRONHALO as Trojan.IRONHALO.Downloader and ELMER as Backdoor.APT.Suroot.
+In the form dict1 dict2 copy, the copy operator copies all of the elements from the first operand (dict1) into the second operand (dict2).
+The PostScript Language Reference Manual (PLRM), as cited in Figure 1, states that the copy operator does not affect elements remaining in the second operand.
+For example, if dict1 contained an element under key k1, and dict2 contained elements under keys k1 and k2, then the operation dict1 dict2 copy should overwrite the element under k1, but should not affect the element under k2.
+However, Microsoft’s EPS deviates from this standard.
+In Microsoft’s implementation, the copy operator iteratively deletes all key-value entries from the dict2 internal hash table.
+Then, it deletes the hash table itself, and allocates a new one.
+Finally, it copies elements from dict2 into dict2.
+This deletion process is depicted in Figure 2.
+Using the dict1 dict2 copy operation while enumerating dict2 with forall causes a use-after-free.
+During each iteration of the forall loop, dict2 dereferences a pointer (ptrNext) to push the next key-value pair onto the operator stack.
+When copy deletes the next key-value pair, ptrNext becomes stale.
+The next iteration of the forall loop will then push objects from the stale pointer onto the operator stack.
+In an attack scenario, the attacker can allocate memory under the stale pointer.
+The attacker can then supply data that the forall enumerator reads as a key-value pair.
+In the appendix, we include a minimized PoC that shows how to allocate a string under the stale pointer and forge a key-value pair.
+The attacker gains access to memory by forging a string.
+Specifically, the attacker places a forged key-value pair under the stale ptrNext, and the key-value pair points to a forged string.
+The attacker uses a hardcoded address (130e0020h) in the forged key-value pair, and sprays memory at the address with PostScript strings.
+Figure 3 shows the PostScript that creates the sprayed string object, and the layout of the string in memory.
+Figure 3: The attacker's sprayed PostScript string
+Each PostScript string object allocates a buffer to store the actual contents of the string.
+The address and size of this buffer is stored within the string object.
+In the attacker’s forged string object, the address of the buffer is 0, and the size of the buffer is 0x7fffffff.
+Once the attacker has forged a string with size 0x7fffffff, they can use the string to freely read and write process memory.
+The attacker uses this capability to search for ROP gadgets and build a ROP chain.
+Figure 4: Attacker's ROP chain
+The ROP chain, shown in Figure 4, uses a few known tricks to bypass security products.
+First, the ROP chain skips 5 bytes past the beginning of ntdll!NtCreateEvent.
+This would bypass any hooks placed on the beginning of the routine (and is known as “hook hopping”), but the real purpose of this offset is to pass over an instruction that sets eax.
+This allows the attacker to specify their own parameter in eax, and call an arbitrary system call instead of NtCreateEvent.
+The attacker chooses the system call NtProtectVirtualMemory, which marks the attacker’s shellcode as executable.
+Since the system call numbers differ between environments, the attacker reads the correct value for eax from the ntdll!NtProtectVirtualMemory function (which is the user-mode function that is normally used to call the NtProtectVirtualMemory syscall).
+To transfer execution to the ROP chain, the attacker forges a file type object.
+Within the forged file type object, the attacker modifies the bytesavailable function pointer to point to a pivot (Figure 5).
+Then, when the attacker uses the forged object in PostScript, it calls the pivot and transfers execution to the ROP chain.
+When the ROP chain is complete, it returns into the attacker’s shellcode.
+Figure 5: bytesavailable operator with the forged file type object
+Once the ROP chain finishes and returns to the attacker’s shellcode, the shellcode loads a DLL that exploits CVE-2015-1701 to elevate the process to SYSTEM.
+The CVE-2015-1701 exploit is based on published source code from GitHub.
+Once the shellcode process has SYSTEM privileges, it will execute further payloads to be discussed in part two of this series.
+Thank you to Wang Yu, Dan Regalado and Junfeng Yang for their contributions to this blog.

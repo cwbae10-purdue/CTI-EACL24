@@ -1,0 +1,76 @@
+Introduction In this blog post I’m going to be taking a look at a tool called PowerStager, which has been flying under the radar since April of 2017.
+The main reason it caught my attention was due to a fairly unique obfuscation technique it was employing for its PowerShell segments which I haven’t seen utilized in other tools yet.
+When tracking this technique, I saw an uptick in usage of PowerStager for in-the-wild attacks around December 2017.
+I’ll cover how the tool works briefly and then touch on some of the attacks and artifacts that can be observed.
+PowerStager Overview At its core, PowerStager is a Python script that generates Windows executables using C source code and then, utilizing multiple layers of obfuscation, launches PowerShell scripts with the end goal of executing a shellcode payload.
+There are quite a few configuration options for PowerStager which gives it a fair amount of flexibility.
+Below are a some of the listed configuration options from the code:
+Ability to choose target platform (x86 or x64)
+Ability to use additional obfuscation on top of defaults
+Ability to display customized error messages/executable icon for social engineering
+Ability to utilize Meterpreter or other built-in shellcode payloads
+Ability to fetch remote payloads or embed them into the executable
+Ability to escalate privileges using UAC
+For the samples I’ll be covering, the general flow is laid out in the following image.
+Figure 1.
+PowerStager Execution Flow
+I’ll cover each piece before diving into the bulk analysis of all samples observed thus far.
+PE Analysis It should be noted that most of this analysis was prior to actually finding the source code.
+After looking at numerous samples, it was clear that they were being generated programmatically and so I set out to try and identify the source.
+Within each of the executables was an embedded string for the file that gets created.
+The file name is randomized between samples which was a major clue that there was a builder.
+This value is again referenced later on deep within multiple layers of PowerShell scripts and gave further credence to this theory, as typically these random file names are generated on the fly and not embedded within.
+The initial executable created by PowerStager is pretty straight forward.
+It gets the %TMP% environment path and creates the file with the embedded file name.
+Afterwards it performs two memcpy() calls for data found within the .data section of the executable and moves them into a new memory page.
+For the sample looked at in this analysis, the first memcpy() grabs data from offset 0x20 in the .data section, whereas the second memcpy() grabs the same size of data from offset 0x67E0.
+Finally, it runs a decoding function on it before finally saving it to the file.
+The second set of data is an equal length XOR key and this function just XORs each byte of the two segments of data and then writes the output to the file.
+It goes through this process one again, copying two sections of data from the .data section and XOR’ing them together to decode the first of the PowerShell commands which it then passes to CreateProcessA(); this command will be analyzed in the next section.
+Finally, the executable calls MessageBoxA and displays a fake error message.
+Note that tool gives the user the option whether to include this error message.
+PowerShell Analysis The first PowerShell script that gets launched begins with simple Hex -> ASCII obfuscation.
+Between samples, the arguments are random camel case and shortened differently each time.
+Looking at the source code now, you can see where it passes these arguments to an obfuscation function which makes identification from this perspective alone more difficult.
+While the commands and case may change, the order does not.
+The decoded script is the first one utilizing the unique obfuscation technique mentioned previously.
+Its combines multiple styles of token replacement obfuscation and chains together Invoke functions to build a new script which simply base64 decodes and executes a third script.
+Below is what you typically find with token replacement (composite formatting) obfuscation.
+This builds the string “Set-Variable” by replacing each “{#}” with the respective string value found at that index in the array.
+The new method works on the same premise but instead of directly calling the index, it builds the initial string of format items by doing two replace() calls.
+Visually, it’s not much more difficult to understand and builds the string “value”, but from a scanning perspective it helps to further obfuscate commands and protect against common signature techniques.
+The third script that gets executed in this phase is again a combination of obfuscation techniques that, as now known from the source code, go through individual obfuscation functions that vary this code sample to sample.
+The meat of this script is towards the very end.
+Here you can see that it loads the file that was written to disk by the executable (“A62q1gMHhRWy”) and then does a binary XOR with the key “cwqslBksSTba7qa7VJqrWOEWo4nQo41P”.
+Again, this is all randomized, including the XOR key, but seeing the static file name value this deep into the sample was a key indicator that this was likely generated from a tool and not manually crafted at scale.
+Once decoded it results in another PowerShell script that begins like the very first, with a Hex->ASCII obfuscation that gets invoked.
+Finally, it launches a script which does the tried and true shellcode injection technique.
+The framework for this script can be found in most PowerShell offensive tools, but effectively it calls VirtualAlloc() to create memory for the shellcode to reside, memset() to copy the shellcode in, and then CreateThread() to transfer execution to the shellcode after a long sleep, which is included for sandbox avoidance.
+The shellcode is fairly standard and won’t be looked at here; however, there are multiple static shellcode blobs within the source code and then the option to embed a Meterpreter reverse_tcp shellcode.
+For the handful of ones I manually looked at, every single instance was the embedded “reverse_tcp stager” found in the source code.
+In total, there are 7 total PowerShell scripts that can be generated from the script and the commented names are listed below and show the general process of execution that I tried to illustrate at the beginning.
+All in all, I feel it’s a well put together framework that offers good obfuscation and flexibility in avoiding detection.
+Detection in the Wild Now that I’ve analyzed the samples and found the source code, which confirms a lot of the above analysis efforts, I’ll talk briefly about attacks seen in the wild.
+As of December 29th 2017, Palo Alto Networks has observed 502 unique samples of PowerStager in the wild.
+In instances where I was able to identify a target, they all belonged to Western European Media and Wholesale organizations; however, there were also many samples that were identified as being used for testing and sales proof-of-concepts demonstrations.
+I don’t find this surprising as blue teams, red teams, and security companies frequently test out new tools to continue innovating.
+Looking at the statically configured file name across the samples, only 7 file names were used more than once with one file name found across 9 samples.
+All of the duplicate file names were related to testing – eg.
+scan a file, add a byte, scan the file again, slightly modify the file in some other way, scan again, so on and so forth.
+When building the samples, PowerStager includes a Manifest in the C source code that defines certain attributes of the executables.
+This provides a decent mechanism to track the samples, although it is trivial to change.
+Specifically, the “Description” field is static and the “Company Name” always ends with “ INC.”.
+You’ll note that the “Original Filename” field is set to part of the “output” variable.
+This is a mandatory field specified at compile time and provides a tiny glimpse into the person behind the sample.
+While there were over 427 unique values in this field, the below table shows the names for files tied to more than one sample.
+Table 1 Repeated filenames across samples Other notable names include the usual targets for executable masquerading: vnc, vlc, Skype, Notepad, and Minecraft.
+Additionally, the “ProductName” field will always be a 10-character string with mixed upper-case letters and digits.
+These all provide useful methods to statically characterize these files and, coupled with unique obfuscation and PowerShell methods during dynamic analysis, a solid way to identify them.
+For error messages, all but 30 samples included the default error message.
+The ones that did not simply contained no error message.
+The following YARA rule will provide additional coverage for the x86 and x64 variants of the generated Windows executable.
+Conclusion While it’s not the most advanced toolset out there, the author has gone through a lot of trouble in attempting to obfuscate and make dynamic detection more difficult.
+As I mentioned previously, PowerStager has covered a lot of the bases in obfuscation and flexibility well, but it hasn’t seen too much usage as of yet; however, it is on the rise and another tool to keep an eye on as it develops.
+Palo Alto Networks currently tracks PowerStager in AutoFocus via the PowerStager tag.
+Wildfire has been updated with new signatures to ensure protection against these executables.
+The YARA file, PE meta data, and a list of hashes related to this tool, can be found on the Unit 42 GitHub.

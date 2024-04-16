@@ -1,0 +1,209 @@
+I was recently approached by one of my friends in the threat research field about shellcode extraction from PostScript.
+If you are not aware, PostScript, which is developed by Adobe Systems, is a simple interpretive programming language with powerful graphics capabilities that has been integrated into most of today’s modern printers.
+Over the last couple of years, the software has been targeted by attackers to carry out a number notorious attacks, including a campaign discovered by FortiGuard Labs last year that exploited the CVE-2015-2545 Encapsulated PostScript (EPS) vulnerability.
+Attackers who exploit vulnerabilities found in PostScript often make analysts’ lives harder by obfuscating them using an encoding algorithm.
+So if you are one of those analysts that only has some basic knowledge of PostScript, then you might find it hard to understand the obfuscated code statically.
+If that happens to you, know that you are not alone.
+That’s why I decided to write a quick guide on how to analyze PostScript.
+Some readers might ask why we need to analyze PostScript statically if we merely wanted to know its behaviors.
+Unfortunately, some malicious samples do not just work on the fly when executed, probably due to a variety of reasons, including different testing environments such as an incompatible Operating System or software version, corrupted or truncated files, etc.
+In those circumstances where black-box analysis is not feasible, analysts need to be able to apply static analysis to the malicious samples.
+In the case brought to my attention by my friend, I was presented a shellcode with the decoding routine written in PostScript, as shown in Listing 1.
+At first glance, I thought it would be easy to decode statically, but after several trial and error attempts I failed to obtain the decoded shellcode.
+Apparently, the main reason is because I did not understand PostScript in the first place.
+So I decided to play around with PostScript, which is something I always wanted to experiment with.
+Line 1:/shellcode <..redacted..> def
+Line 2:0 1 shellcode length 1
+Line 3:{
+Line 4: /xor_proc exch def shellcode dup
+Line 5: xor_proc get 16#29 xor
+Line 6: xor_proc xor 255 and xor_proc exch put
+Line 7:} for
+Listing 1: Shellcode written in PostScript
+Perhaps I did not use the correct keywords in my search queries, as I could not find any helpful articles on PostScript shellcode analysis until I came across Ghostscript, which is an interpreter for PostScript and PDF files.
+When I fired up Ghostscript, I was happy to see an interactive shell prompt similar to Python’s interactive console, which helped me feel like I could possibly debug the shellcode’s stub that I had encountered.
+If you have just started to experiment with PostScript, you might be puzzled by the syntax and sequence of PostScript commands, as shown in Listing 1.
+Fortunately, you will get a better picture once you enter the commands into Ghostscript’s console.
+It is also worth mentioning that PostScript commands are well documented by Adobe Systems.
+You may have heard of PostScript being described as stack-based language and wondered what what that meant.
+Here’s a clue in Listing 2:
+$ gs -dNODISPLAY
+GPL Ghostscript 9.18 (2015-10-05)
+Copyright (C) 2015 Artifex Software, Inc. All rights reserved.
+This software comes with NO WARRANTY: see the file PUBLIC for details.
+GS>1
+GS<1>2
+GS<2>stack
+2
+1
+GS<2>
+Listing 2: Ghostscript interactive shell
+You get the idea?
+Every command in PostScript is pushed to the operand stack.
+In other words, the last command you use in PostScript will always be at the top of the stack.
+I’m sure this concept is familiar to you if you are familiar with reverse-engineering.
+Ghostscript is also user friendly enough to tell you the number of commands/elements in the stack by displaying the number between the “<>” brackets.
+When you want to clear the stack, you can use clear command, which are also known as stack operators according to Adobe’s terminology.
+$ gs -dNODISPLAY
+GPL Ghostscript 9.18 (2015-10-05)
+Copyright (C) 2015 Artifex Software, Inc. All rights reserved.
+This software comes with NO WARRANTY: see the file PUBLIC for details.
+GS>1
+GS<1>2
+GS<2>stack
+2
+1
+GS<2>clear
+GS>
+Listing 3: Ghostscript’s stack operator - clear
+I mention this because it is important though to make sure that the stack is clear before you start debugging to ensure that you are not messing up what you are about to debug.
+Next we are ready to look into the shellcode shown in Listing 4:
+GS>/shellcode
+<414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141> def
+GS>stack
+GS>
+Listing 4: Define literal name as variable
+As can be seen, the command we entered in Ghostscript presents a variable definition named shellcode.
+It is a literal name when the name is appended with forward slash “/” and ended with a def operator.
+While the data within the bracket “<>” is defined as a hexadecimal string, in this example,we use dummy shellcode bytes for demonstration purposes as the actual shellcode data we got is around 10 kilobytes.
+Unfortunately, Ghostscript has a hard time to parse large data, probably due to memory overrun.
+One of the important aspects in debugging is to display the variable value.
+Typically, the variable value can be shown via “=”, “==” and the print operator:
+GS>shellcode ==
+(AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA)
+GS>shellcode =
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+GS>shellcode print
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+Listing 5: Operators to check the variable value
+Basically if we divided the commands in Listing 5 separately, they can be read as
+Push shellcode value in operand stack
+Pop (==) the value from operand stack
+It is worth mentioning that the “==” operator is similar to “=”, but it expands the values of arrays, as you can see in Listing 5.
+So far, we have discussed how PostScript command is interpreted, as well as some operators which are helpful in debugging PostScript.
+We can now proceed to Line 2 from Listing 1.
+It is the start of ‘for loop’ control structure.
+Essentially, the for loop control structure has a syntax that looks like “Initial increment limit {proc} for”:
+GS>0 1 shellcode length 1
+GS<4>stack
+1
+48
+1
+0
+Listing 6: Start of for loop control structure
+When we break down the commands in Listing 6 they can be interpreted as:
+Push 0 to the operand stack, which is the initial value
+Push 1 to the operand stack, which is the increment value
+Push the shellcode object to the operand stack Push the length operator, a special operator for array/string object, to the operand stack.
+It takes an argument from the previous operand and returns the number of elements, which is the limit value.
+Push 1 to the operand stack
+GS<4>/xor_proc exch def shellcode dup
+GS<5>stack
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+48
+1
+0
+GS<5>xor_proc ==
+1
+GS<5>
+Listing 7: Commands in Line 4 from Listing 1
+The commands in Listing 7 can be defined as following:
+/xor_proc exch def => Defines the variable xor_proc and pushes the variable to the operand stack.
+It then exchanges the positions of the top two elements on the stack (xor_proc, 1, 48, 1, 0) -> (1, xor_proc, 48, 1, 0).
+Finally, the def operator takes the value at the top of the stack, assigns it to xor_proc, and then removes these two values from the stack
+Pushes out the shellcode object to the operand stack
+Duplicates the shellcode object
+Lines 5 and 6, as shown in Listing 1, contain actual decoding commands.
+After the commands at Line 5 have been executed, it yields the following result:
+GS<5>xor_proc get 16#29 xor
+GS<5>stack
+104
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+48
+1
+0
+Listing 8: Commands in Line 5 from Listing 1
+Pushes the xor_proc value to the operand stack, which serves as an index to the shellcode array object
+Pushes the GET operator, a special operator for array/string object, to the operand stack to retrieve the value at the index specified in the previous operand stack.
+As a result, the value at shellcode[1] will be pushed to the operand stack
+Pushes hexadecimal 0x29 to the operand stack, which then serves as the XOR key.
+Take note that the integer’s base can be defined by using a hashtag symbol before the number (eg: 16#<number> represents a hexadecimal number or 8#<number> represents an octal number)
+Pushes the XOR operator to the operand stack to take value from the previous two operands stacks for an arithmetic operation.
+As a result, it yields 104 (0x29 ^ 0x41)
+If we expand the commands in Line 6, we can see that the decoding routine performs another XOR operation, which takes the current index of the array and the XOR with the value we obtained at the top of the stack in Listing 8:
+GS<5>xor_proc stack
+1
+104
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+48
+1
+0
+GS<6>xor stack
+105
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+48
+1
+0
+GS<5>255 stack
+255
+105
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+48
+1
+0
+GS<6>and stack
+105
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+48
+1
+0
+GS<5>xor_proc stack
+1
+105
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+48
+1
+0
+GS<6>exch stack
+105
+1
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+48
+1
+0
+GS<6>put stack
+48
+1
+0
+GS<3>shellcode ==
+(AiAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA)
+Listing 9: Commands in Line 6 from Listing 1
+Last but not least, the PUT operator, as shown in Listing 9, takes three values (105, 1, and shellcode) off the stack and stores the element specified in the first argument, (105) to the index specified in the second argument (1) to the array/string object (shellcode).
+From this analysis we can demonstrate a higher level representation of the PostScript decoding routine in Listing 1 in Python script, which consists of two rounds of XOR operation with one static key, 0x29, and a dynamic key, which is the index of the following string array:
+#!/bin/python
+shellcode_fn = "postcript_shellcode.bin"
+buff = open(shellcode_fn, "rb").read()
+buff_len = len(buff)
+shellcode_defn = "postscript_shellcode_de.bin"
+out = open(shellcode_defn, "wb")
+for i in range(1, buff_len):
+[3 spaces indentation]res = ord(buff[i]) ^ 0x29
+[3 spaces indentation]res = (res ^ i) & 0xff
+out.write(chr(res))
+out.close()
+We hope this introduction to PostScript as well as some of the more common PostScript operators that are useful in debugging PostScript has been helpful.
+Hopefully, this can give you some idea as to how to analyze PostScript shellcode if you should encounter it in the future.
+After all, it is not challenging to learn a foreign language if you start to explore and practice it.
+As a final note, because of what I learned about decoding PostScript I was able to help my friend by detecting the payloads downloaded from the shellcode.
+Signing off,
+FortiGuard Lion Team
+Payload URLs:
+[1] hxxps://tpddata.com/skins/skin-8.thm
+[2] https://tpddata.com/skins/skin-6.thm
+Payloads detections:
+skin-8.thm - 4838f85499e3c68415010d4f19e83e2c9e3f2302290138abe79c380754f97324 (W32/Manuscrypt.BA!tr)
+skin-6.thm - c10363059c57c52501c01f85e3bb43533ccc639f0ea57f43bae5736a8e7a9bc8 (W64/Manuscrypt.BA!tr)
+Want to hear more?
+Check out our latest Quarterly Threat Landscape Report for more details about recent threats.
+Sign up for our weekly FortiGuard Threat Brief or for our FortiGuard Threat Intelligence Service.

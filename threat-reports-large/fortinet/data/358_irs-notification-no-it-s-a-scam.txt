@@ -1,0 +1,162 @@
+In every country and region in the world, tax season is also a time when we see a spike in scams, phishing, and targeted malware.
+The tax return season in the US is coming to the end.
+Have you filed your tax return yet?
+Did you receive any notifications from the IRS (the Internal Revenue Service) in your email?
+We did, but not from the real IRS.
+(Remember, the IRS never communicates important information with taxpayers by email.)
+FortiGuard Labs recently collected a number of malware samples related to the current tax season in the US.
+In this blog I'm going to talk about one of them and show you how it works.
+The malware sample we will look at is a VBE file.
+Its original file name is "IRS_Notification_DOC.VBE", and it shows up as an email that claims to contain important information related to taxes in order to entice victims to open the attachment by double clicking it.
+The file extension .VBE is short for VBScript Encoded Script.
+In other words, it contains VBS code that can be executed on Windows by default using the program Wscript.exe or Cscript.exe.
+During my analysis, I used Wscript.exe to execute the VBE file.
+Figure 1.
+The property of the VBE file
+Based on the file name, this attachment looks like a notification from IRS about your tax return.
+Let’s take a look at its content in a hex editor.
+Figure 2.
+The content of the VBE file
+The real VBE content starts from “#@~^” and ends with “^#~@”.
+As you can see in Figure 2, the VBE code is embedded into a jpeg file to bypass antivirus detection.
+When this file is executed by the program Wscript.exe, the program looks for the VBE content in the file until it finds the start and end signs.
+Then the VBE content is decoded to VBS code and executed.
+Figure 3.
+Snippet of the decoded VBS code
+Figure 3 shows the final VBS code that is decoded from the VBE file.
+I will explain what it does step-by-step.
+First, it copies itself into the Startup folder in Windows Start Menu and renames it as “injector.vbs.vbs”.
+This ensure that the VBS file can be executed when Windows starts every time.
+Next, the VBS code extracts a .bin file from the base64-encoded variable “dcom_data” into “%temp%\injector.vbs.bin” and registers it by running the command “regsvr32.exe /i /s %temp%\injector.vbs.bin”.
+In fact, this .bin file is a DLL file whose original file name should be dynwrapx.dll.
+The dynwrapx.dll name is derived from DynamicWrapper, and can be used in JScript or VBScript code to easily call Windows APIs.
+Its class name is “DynamicWrapperX”.
+From the snippet of the VBS code in Figure 4, below, you can see how it loads and calls Windows APIs.
+Figure 4.
+Calling APIs using DynamicWrapperX object
+“dcom” is a DynamicWrapperX object.
+It loads the APIs CallWindowProcW and VirtualAlloc.
+Once loaded, the APIs can be called by their names directly.
+Later, a buffer named loader_ptr is allocated in Wscript.exe’s memory by calling dcom.VirtualAlloc.
+Calling its internal function dcom.NumPut copies the base64-decoded binary code into the new buffer (loader_ptr).
+In the same way, it copies five pieces of base64-decoded data (file_data(i)) into another new buffer named pe_ptr.
+Finally, it calls dcom.CallWindowProcW.
+The first parameter, “loader_ptr”, is a function with binary code which is called after CallWindowProcW is called.
+The second parameter, “pe_ptr” is a memory address that points to a buffer holding a PE32 .Net program.
+The third one ,“host_file”, is pointing to the path of a file located at “%windir%\MICROSOFT.NET\FRAMEWORK\V2.0.50727\MSBUILD.EXE", which is run by the binary code that loader_ptr points to.
+Figure 5.
+Calling CreateProcessW
+The binary code that the first parameter “loader_ptr” points to is called soon after CallWindowProcW is called.
+Its main function is to start a new process with a CREATE_SUSPENDED flag for the program, which is from the third parameter, i.e.
+“MSBUILD.EXE”.
+It then copies the data from “pe_str” into the new process, which is called when the new process resumes running from being suspended.
+As you probably know, “MSBUILD.EXE” is from the Microsoft .Net Framework installation folder.
+In other words, this malware needs the Microsoft .Net environment to operate.
+Based on my analysis, the data from “pe_str” is a Microsoft .Net compiled program, which is the main process spying on the victim’s machine and communicating with its C&C server.
+Through my analysis, this malware is a spyware that collects a victim’s system information, keeps a recording of the victim’s keyboard input, and sends the stolen information to its C&C server.
+When the malicious .Net code is executed within the process “MSBUILD.EXE” it connects to its C&C server.
+The server runs on port 3049 of googlemapsup.ddns.net.
+Once the connection is successfully established, it collects information from the victim’s machine, including machine name, user name, system type, system version, etc., and sends all of them to its server.
+Some of the information is base64 encoded during transmission.
+Unfortunately, its server was down when I was in middle of analyzing it.
+But the malware client keeps connecting to the C&C server, so once the server is back online I can continue to do more analysis.
+In the meantime, I wrote a python script to simulate the C&C server.set and loaded it to a local server to continue my analysis.
+Since it is a .Net program, I decompiled it in a tool named .Net Reflector and extracted the source code.
+From the screenshot below, we can see that the server’s URL and port have been initialized.
+Figure 6.
+Variables initialization
+To avoid multiple instances running on a single machine, the malware creates a Mutex with the name in RG variable.
+It then creates two working threads.
+The first is used to record the victim’s keyboard input and the program name where the user is inputting data, and the other is used to communicate with its C&C server.
+Figure 7 shows that the two threads have been started.
+Figure 7.
+Creating two threads
+In kq.WRK_Thread2() function, two functions - OK.GTV() and OK.STV() - are called to get or set information from or into the system registry.
+this.vn is initialized as public string vn = "[kl]"; and and contains the value’s name under the subkey “HKCU\Software\fb5f75fa1ea00db5e2279371aac534e8”.
+It keeps recording user keyboard input and saves the collected user input into the registry.
+You can see the screenshots below.
+Figure 8.
+Recording the user’s keyboard input
+Figure 9.
+Collected information is saved in the registry
+In the OK.RC_Thread1() function, it primarily calls the class’ function connect(), where we can see that it creates a tcp socket, connects to its C&C server, and then sends the collected system information by calling function inf()) to its server.
+Below is the code snippet of the function connect().
+Figure 10.
+Code snippet of the function connect()
+Next.
+Let’s look at the data it sends to the C&C server.
+Here is an example that I copied from Wireshark.
+160.ll|'|'|U1BBTVVTQUFBQUFBQUFBX0VDQjdDOTYz|'|'|***-PC|'|'|**p|'|'|09-06-10|'|'||'|'|Win 7 Ultimate SP0 x86|'|'|No|'|'|0.7d|'|'|..|'|'|UmVnaXN0cnkgRWRpdG9yAA==|'|'|
+“160” is the size of the rest data.
+“.” is the hex value “\x00”.
+“ll” is the command of this packet.
+“|'|'|” is kind of separator between information.
+“U1BBTVVTQUFBQUFBQUFBX0VDQjdDOTYz” is base64 encoded data.
+“***-PC” is the name of my test PC.
+“**p” is the user name of my test PC.
+“09-06-10” is kind of file last update date.
+“Win 7 Ultimate SP0 x86” is the system information of my test PC.
+“UmVnaXN0cnkgRWRpdG9yAA==“ is the base64 encoded “Registry Editor”, cause I was on registry when running this spyware.
+Going back to the OK.RC_Thread1() function, we can see that it has set up a thread function, which is called when receiving packets from the C&C server.
+Its calling routine is OK._LamBD_Falsea$__1()->Ind().
+The parameter of Ind() is the data received from the C&C server.
+Ind() is a large function where it finally handles and answers all of the server’s commands.
+The screenshot below shows the snippet of the function Ind().
+Figure 11.
+Code snippet of the function Ind()
+From the function Ind(), we can see what the attacker can do on the victim’s system.
+Here, I collected some of the commands.
+Command
+Comment
+ll
+Get victim’s system information
+kl
+Request sending collected information from registry
+prof
+Client side profile
+rn
+Send client a new file or ask client to download a file to run.
+Could update the malware itself.
+ret
+Unknown
+un
+Client process operation
+up
+Update the malware itself
+CAP
+Take screenshot of victim’s machine
+inf
+Inform server
+er
+Notice server when running into exception
+PLG
+Unknown
+inv
+Save data from registry to file
+In this section, I’m going to show you how the spyware server uses the “kl” command to get collected information from the victim’s machine.
+Figure 12.
+Spyware client side – the victim’s machine
+As you can see on the victim’s machine, I opened notepad.exe and created a new file with the name my_credential.txt and then input my username and password in it, as shown in Figure 12.
+After that, we can go to the registry file HKCU\Software\fb5f75fa1ea00db5e2279371aac534e8\[kl] and can see that the spyware has recorded the information that I input into notepad.
+Next, let’s go to the server side, where my python script was loaded, to see what has been received there.
+You can see the following output from the python shell window.
+Figure 13.
+Spyware server side
+When the connection was established it received the victim’s system information.
+Later, the server sent the command “kl” to the client, which replied with collected data from the victim’s registry.
+The replied data is base64 encoded.
+After decoding it with a base64 tool, we can see that the server received my credentials.
+Figure 14.
+Base64-decoded data
+The VBE sample is detected as VBS/Agent.F48C!tr.dldr by the FortiGuard Antivirus service.
+How do you remove this spyware from the victim’s system?
+The easiest way is to kill the running msbuild.exe process in Task Manager and remove “injector.VBS.VBS” from the Startup folder in the Start Menu.
+For more information about tax scams and how to avoid them, see another recent blog titled “It Is Tax (and Fraud) Time Again.
+Are You Ready?”.
+URL:
+googlemapsup.ddns.net
+Sample SHA256:
+B1F0B424FD42F57A745B450959FDFE4F0617281AD990D81AD91C5727769693EE
+DynamicWrapperX
+http://www.script-coding.com/dynwrapx_eng.html
+Sign up for weekly Fortinet FortiGuard Labs Threat Intelligence Briefs and stay on top of the newest emerging threats.

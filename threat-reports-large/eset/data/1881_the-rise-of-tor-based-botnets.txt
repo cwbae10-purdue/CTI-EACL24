@@ -1,0 +1,75 @@
+TOR-based botnets are not a new trend and were already being discussed a few years ago at Defcon 18 (“Resilient Botnet Command and Control with Tor”).
+But in the last year we’ve been able to confirm some interesting facts concerning the use of these ideas in real-world botnets.
+This topic was already discussed around the beginning
+TOR-based botnets are not a new trend and were already being discussed a few years ago at Defcon 18 (“Resilient Botnet Command and Control with Tor”).
+But in the last year we’ve been able to confirm some interesting facts concerning the use of these ideas in real-world botnets.
+This topic was already discussed around the beginning of 2013 in a Rapid7 blog post (“Skynet, a Tor-powered botnet straight from Reddit”).
+In early July Dancho Danchev also posted information about a TOR-based C&C for a ring-3 rootkit.
+We have been tracking the rise of TOR-based botnets this summer.
+In July two different malware families were detected that use the TOR hidden service protocol for stealth communication with C&C’s.
+The TOR hidden service protocol is well-suited to organizing stealth communication channel with a C&C but is slow for stealing high volumes of data from an infected machine.
+For cybercriminals the most useful way to use the hidden service protocol is for communicating with C&C, getting update for configuration information, or downloading additional malicious modules.
+In July ESET researchers detected two different types of TOR-based botnets based on the malware families Win32/Atrax and Win32/Agent.PTA.
+Both botnets have form-grabbing functionality for possible further fraud operations.
+The Atrax botnet looks more complex and interesting, so we begin this blog by analysing it.
+Win32/Atrax.A is an interesting TOR-based backdoor family which is installed by a simple downloader program we detect as Win32/TrojanDownloader.Tiny.NIR.
+The decompiled main routine of this downloader looks like this:
+More interesting information is that its hardcoded domain name is “kundenservice-paypal.com”, registered in the middle of June (12-Jun-2013) (so named to pass itself off as PayPal Customer Service).
+All trojan components and the downloader binary were compiled in July, according to information extracted from the PE header time stamp.
+After download and execution of the main dropper file, the decompress routine is started for three PE modules: TOR client, DLL module for x86 and DLL module for x64 platform.
+For decompression WinAPI function RtlDecompressBuffer() Is used.
+The code for the decompiled decompress routine looks like this:
+Before installation the dropper makes simple checks, so as to detect whether it’s on a virtual machine and any debugger activity.
+The bot ID is an MD5-calculated hash based on unique values from the system registry DigitalProductID and MachineGuid.
+Here’s the call graph for the routine that infects the machine (you’ll probably need to click it to view it as it’s an awkward size for the blog page.
+):
+This routine tries during the last stages of execution to search for the initialization of additional AES-encrypted plugins in the %APPDATA% directory.
+All plugins are named according to the following pattern: %APPDATA%\CC250462B0857727*.
+Plugins are decrypted on the fly during the bot initialization process but the encryption key depends on the infected machine.
+This approach to plugin encryption makes it difficult to extract information during the forensic process.
+The TOR client is embedded into the dropper executable and stored in the %APPDATA% directory as an AES-encrypted file.
+Initialization of the TOR connection takes place after checking for an active browser process and injection of TOR client code into the browser process by NtSetContextThread().
+Win32/Atrax.A supports code injection techniques for x86 and x64 processes.
+All communications between the C&C and the bot are made via a special HTTP request function call.
+The prototype of this function looks like this:
+If the second parameter request_via_tor setup is in the TRUE state all communications will be initialized by the TOR client.
+TOR communications have the following call graph:
+After execution a new thread with the Tor client software will be set up using the following parameters:
+AUTHENTICATE – password for authentication
+SIGNAL NEWNYM – change proxy-nodes chain
+When the first connection is made with the C&C, Atrax.A sends collected information about the infected system to an address inside the TOR network:
+It isn’t possible to ascertain the original C&C IP address or domain with a TOR enabled connection but it is possible to use the address generated in the TOR network for analysis.
+After we played a little bit with the internal address in the TOR network we found the following login panel for C&C:
+We recognize the name Atrax on the login screen.
+It’s the main reason why we chose the name Win32/Atrax.A for detection by ESET products.
+Win32/Atrax.A supports the execution of remote commands for setting up bot behavior on the infected machine.
+The main routine for recognizing and executing remote commands looks like this:
+The list of supported remote command types:
+dlexec – download and execute file
+dlrunmem – download file and inject it to browser
+dltorexec – download TOR executable file and execute
+dltorrunmem – download TOR executable file inject it to browser
+update – update itself
+install – download file, encrypt with AES and save to %APPDATA%
+installexec – download file, encrypt with AES and save to %APPDATA% and execute afterward
+kill – terminate all own threads
+After reconstruction of the structure of remote commands and the execution algorithm we tried playing with the C&C protocol.
+We tried to send a status to C&C confirming a successful plugin installation process and fortune smiled upon us: we got a path to the next plugin download:
+Two different type of plugins were downloaded: the first is a form grabber and the second is a password stealer.
+All downloaded modules were compiled in July according to the compilation time stamp:
+[Form Grabber]
+[Password stealer]
+Win32/Atrax.A is interesting example of a TOR-based botnet with AES encryption for additional plugins and a unique encryption key dependent on hardware parameters of the infected machine for its generation.
+We continue to track activity for this botnet.
+Another family tracked in July and using a TOR-based communication protocol is Win32/Agent.PTA.
+This is not a new malware family and has already been tracked by ESET since 2012.
+But the TOR-based protocol is new functionality detected during this summer.
+This trojan also uses TOR hidden service protocol for communicating with command control panel.
+Agent.PTA has embedded configuration information encrypted by RC4 cypher with C&C addresses inside the TOR network.
+Decrypted configuration information looks like this:
+Win32/Agent.PTA is a trojan with a simple form grabber and the ability to download additional plugins.
+This trojan also can activate a SOCKS5 proxy by receiving a special command from the C&C.
+This year we had already detected TOR-based botnets but during the summer we have observed a growth in the numbers of malware families starting to use TOR-based communications.
+The TOR-based botnets make it really hard to pursue investigation and C&C location tracking.
+But we have demonstrated with Win32/Atrax.A botnet that ways to analyze communication protocols have not changed and all the old tricks work with addresses in a TOR network too.
+Anton Cherepanov, Malware Researcher Aleksandr Matrosov, Security Intelligence Team Lead

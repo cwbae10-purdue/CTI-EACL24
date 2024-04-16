@@ -1,0 +1,83 @@
+A Threat Analysis Report from FortiGuard Labs
+FortiGuard Labs recently discovered a new campaign of StealthWorker malware, also called GoBrut, that was first reported by Malwarebytes just a few days ago.
+This malware is written in Golang.
+Although uncommonly seen being used by malware, it is the same programming language used to develop the module that controlled the bots of Mirai.
+StealthWorker is a brute-force malware that has been linked to a compromised e-commerce website with an embedded skimmer that steals personal information and payment details.
+Before hackers can embed a skimmer, however, the first requirement is for hackers to gain access to their target’s backend.
+Hacker’s commonly take advantage of vulnerabilities in the Content Management System (CMS) or its plugins to gain entry into the target’s system.
+Another, simpler option is to use brute force attacks.
+Though quite slow, this method is still effective against administrators using weak or commonly used passwords.
+In this report, we will take an in depth look at this latest updated version of StealthWorker, which not only has wider capabilities, but is also now multi-platform.
+Our research began with the C2 mentioned in the Malwarebytes report, which is 5.45.69.149.
+While looking for possible open directories, we found the /storage directory hosting 5 samples.
+The purpose of this malware, based on what we determined from the filenames, is to brute force PhPMyAdmin, an open source administrator tool.
+Previous versions of this malware only targeted the Windows platform.
+But a deeper investigation into the open directory of this version revealed that it now also serves payload binaries for the Linux platform.
+As we investigated further, and encountered more open directories related to the campaign, we were led to more interesting samples.
+For example, while analysing the sample PhpMyAdminBrut_Windows_x86.exe, in addition to its previous C2 we found another IP (185.205.209.131) in its binary.
+Accessing the second IP led to the same web panel login and open directory, but this link hosts a bunch of new samples.
+Analysing the new samples found in 185.205.209.131, we found another previously unknown IP, 5.101.0.13.
+As seen in the open directories below, the filenames are changed to 1.8_Stub_<architecture>, which means that they are also targeting IoT devices with ARM and Mips architectures.
+This greatly increases the scope of infection of this malware as well.
+With the help of VT-graph, we can see the direct relationship between the last two IP addresses; they hosts similar and even identical samples.
+This implies that they are being used in the same campaign.
+The malware begins by creating a scheduled execution to make sure that the malware persists in the system even after reboot.
+Depending on the architecture, it will drop the following:
+When analysing Golang malware, it is best to use the IDA python script IDAGolangHelper, which helps rename functions for easier readability and analysis.
+After the script is executed, we can now identify the functions and analyse main_*.
+Inside the main_init function, we can see the malicious functions names called StealthWorker.
+We can then filter and focus our analysis on these functions.
+After taking a look at only those files with StealthWorker in the function names, even with the many functions listed, we were able to basically categorize them into two main functions.
+*_check_* – functions used to identify and verify the service that the target is running on *_brut_* – functions used to do the brute force attack on the target
+Once the malware has been executed in the system, it connects to its C2 (5.101.0.13:7000) to inform it that it is ready to function as a worker and accept tasks.
+The operating system (OS) and the malware version, v1.8, is included in the request sent.
+To make sure it has the latest version of the malware, it also sends a bots/chkVersion?
+to the C2.
+A response of “no“ means it’s already running the latest version and there is no need to download an update.
+The infected machine then sends a request to retrieve active projects, and if there are any, the C2 then assigns the infected machine to be a specific worker.
+As seen below, it has assigned the computer to perform ssh_b (secure shell brute force) and backup functions.
+Based on our analysis of the code, these are other possible responses that can be received from the C2: *we only received ssh_b and backup during our analysis
+As mentioned previously, the two main functions of the malware are check and brute force of different services.
+Others include:
+Backup – find specific files in a target host’s open directory kill – functions to remove auto run and exit the malware block – execute sleep
+worker=ssh_b
+After being assigned as a worker, the next thing to do is retrieve the tasks to be performed from the C2.
+A list of hosts and credentials is received from the C2, and the worker’s task is to login to the targeted host.
+We can see that every time a request is made to the URL it receives a new set of hosts and credentials.
+If a login is successful, the worker will report the used host and credentials to the C2 as “saveGood”.
+worker=backup
+Aside from it role as worker=ssh_b, our test machine was also assigned as worker=backup.
+As shown below, when connecting to the C2 with the parameter worker=backup, the response was empty—unlike ssh_b, where we got a list of host and credentials.
+This could either mean that the attacker doesn’t have any targets yet for backup workers, or other backup workers (i.e.
+infected machines) have already finished the task provided by the C2.
+Based on a close look at the code, the backup worker’s job can also be to search for a specific subfolder, filename, file size, and for the following file types.
+zip, zipx, tar, bz2, gz, lz, lzma, lzo, rz, sfark, sz, 7z, s7z, b6z, bak, sql, sfx, tar.gz, tgz, tar.Z, tar.bz2, tbz2, tar.lzma, tlz, tar.xz, txz, rar
+We tried to alter the GET /gw?worker=<name_worker> request to retrieve other possible tasks from the C2 for each worker, but we just got empty responses.
+However, based only on static analysis, we can see other possible fields that the C2 can utilize from the response:
+*for worker=ssh_b, the C2 only sends the Host, Login, Password, and Worker
+A brute force attack is very resource intensive, but using the collective processing power of a bot army, like the one used by this campaign, the task can be efficiently distributed for a much higher rate of success.
+As we have seen in this new StealthWorker campaign, the malware developers have also taken further steps to increase their rate of success by also being able to infect a wider range of platforms.
+Additionally, a distributed brute force attack coming from different source IP addresses can effectively bypass anti-brute force solutions, which are usually based on a threshold (e.g., if x failed requests coming from the source, then block the connection for xx minutes).
+The attackers behind this campaign not only target e-commerce websites, but they also attempt to collect all possible vulnerable systems that use weak credentials.
+Once a vulnerable target host has been confirmed accessible, depending on the system, it can then become another target for embedded skimmers or general data breaches.
+Fortinet detects the samples as Linux/StealthWorker.GO!tr and W32/StealthWorker.GO!tr.
+Related malicious C2 and download servers are blocked by FortiGuard Web Filtering Service.
+-= FortiGuard Lion Team =-
+IOCs
+d488a660e43cd1630e322dfa4f07557b9687b12cb11648a10509a3cdd903a2c4
+f6aee9551c4bf5d02dee8350fd61a4f1be5ec01de77a457dd3f6d2a5ada70108
+fec7930ecd6e84971d5d66ffb16bd353f28a2ba02d2fb213eecacce7c271bbff
+06ac28e2a1a82135b6d33d9b4ee2a62e340b2ee0a254b08927c7f94e1cf184d8
+268de438bdbe7d2d7b38ab150032b41de1c91cb781ff3f6f723bf4422453b9b5
+C2
+hxxp://5.45.69.149:7000
+hxxp://5.101.0.13:7000
+hxxp://185.205.209.131:7000
+Learn more about FortiGuard Labs and the FortiGuard Security Services portfolio.
+Sign up for our weekly FortiGuard Threat Brief.
+Know your vulnerabilities – get the facts about your network security.
+A Fortinet Cyber Threat Assessment can help you better understand: Security and Threat Prevention, User Productivity, and Network Utilization and Performance.
+Read about the FortiGuard Security Rating Service, which provides security audits and best practices.
+NOTE: The FortiGuard Labs team has shared our findings, in this report with our fellow Cyber Threat Alliance members.
+CTA members use this intelligence to rapidly deploy protections to their customers and to systematically disrupt malicious cyber actors.
+For more information on the Cyber Threat Alliance, visit cyberthreatalliance.org.

@@ -1,0 +1,67 @@
+During the last couple of months, we’ve observed several RTF exploits that target Indian organizations.
+The first RTF exploit was found by McAfee researchers on August 21.
+Subsequently, we saw multiple variants of the same exploit through October.
+The contents of the decoy documents are politically themed, targeted at several local and overseas Indian establishments.
+Recent political reforms undertaken by the new Indian government, the prime minister’s visits to Japan and the United States, the Chinese president’s visit to India, as well as a series of other political events have generated quite a response from developers of advanced persistent threats.
+All of these related RTF exploits exploit the already patched Microsoft Word ActiveX control vulnerability CVE-2012-0158.
+In spite of the patch, the vulnerability has been used in several targeted campaigns in the past and continues to be popular in ongoing targeted attacks.
+Exploit-laden doc files have been found in the wild with the following filenames:
+[Redacted]olicy agenda.rtf
+[Redacted]ent On Investment.doc
+[Redacted]sion Reform Note FINAL.doc
+[Redacted]ailways.doc
+[Redacted]ensive Brief 2014.doc
+Bilateral.doc
+We believe the attack arrives as an attachment to spear phishing emails targeting Indian organizations.
+At launch, the exploit drops dw20.exe in the %temp% directory, opens the attacker’s specially crafted decoy documents, and drops gupdate.exe in the same location.
+The last file connects to multiple control servers in a staged fashion.
+Here’s a high-level picture of the attack:
+Exploit analysis
+All of the RTF exploits in this campaign use staged shellcode.
+However, finding the shellcode in the exploit is fairly straightforward.
+It uses the known technique of resolving the API names from its hashes.
+Once the APIs are resolved, the exploit tries to locate itself in memory by enumerating the file handles and reads the first-stage shellcode in the allocated virtual memory, which then decrypts the second-stage shellcode.
+Next we see the routine from the first-stage shellcode that decrypts to the second stage and then jumps to it.
+The second-stage shellcode decrypts the embedded binary and decoy document using the same decryption algorithm, eventually dropping them in the %temp% directory and executing dw20.exe.
+Here are some of the decoy documents in the ongoing campaign:
+Malware family: Win32/Syndicasec
+The first executable dropped by the exploit, dw20.exe, is part of the malware family Win32/Syndicasec.
+This malware was identified in May 2013, when it was used in cyber espionage attacks in multiple targeted campaigns.
+Previous versions of this threat were discovered in July 2010.
+You can read a complete technical analysis of this threat in this blog.
+We have confirmed that this threat is currently used in attacks against Indian government organizations.
+We can confirm the similarity of this threat based on its behavior.
+The attack looks for sysprep.exe in the system32 and sysnative directories, extracts the embedded executable, and drops it in the %temp% directory as gupdate.exe.
+Subsequently, the malware reads the cabinet file embedded in the resource section into memory, and extracts it into the /sysprep directory as cryptbase.dll, using the Windows Update Standalone Agent.
+The technique to load cryptbase.dll is what we call DLL load-order hijacking.
+Further, the attack exploits a vulnerability in the Microsoft User Access Control whitelist process, allowing it to run the arbitrary command with elevated privileges.
+The second-stage dropped file, gupdate.exe, connects to the control server.
+This communication is done in stages as well and uses the uncommon Windows Management Instrumentation system to register the JavaScript that connects to the first-stage URLs.
+The XOR routine for JavaScript follows:
+Looking at the previous versions of this threat, JavaScript versions have changed every time this malware was used.
+Control server communications
+The JavaScript is primarily responsible for connecting to the first- and second-stage URLs, which lead to the control server.
+Examining the multiple variants of the RTF exploits and the dropped binaries, we’ve found the following fake blogs with which variants of gupdate.exe communicate.
+All of the URLs point to the blogs’ RSS feeds, from which the encoded Stage 2 (control server) URL is fetched.
+Stage 1 URL pointing to the RSS feeds of the fake blogs:
+hxxp://kumar807.blogspot.com/feeds/posts/default
+hxxp://kumar807.wordpress.com/feed/
+hxxp://kumar807.livejournal.com/data/rss
+hxxp://blogs.rediff.com/kumar807/feed/
+hxxp://kumar807.thoughts.com/feed
+hxxp://kumar807.tumblr.com/rss
+hxxp://www.blogster.com/kapoorsunil09/profile/rss
+hxxp://kumarsingh1976.wordpress.com/feed/
+hxxp://musictelevision.blogspot.com/feeds/posts/default
+Next we see the format of the encoded Stage 2 URL found on the fake blog.
+Note that the URL is within the <title> tag with the “@” delimiter:
+Once the response is received, the </title> tag is parsed out of the response and the decoding function in the JavaScript is applied to expose the control servers.
+Next we see the Stage 2 control server URLs:
+www.as[redacted]ky.tk ku[redacted]gh.tk zz13[redacted]wb2.com hi[redacted]ie.tk www.pa[redacted]aju.org
+The parameters sent in the POST request are formed by executing the WMI queries from the JavaScript.
+This image shows the functions of this operation:
+While the malware executes, all of the control servers are live but with an empty command array.
+Examining the JavaScript, we see the command decoding is done with the eval() function, which leads us to believe there could be another JavaScript embedded:
+McAfee Advanced Threat Defense
+McAfee Advance Threat Defense provides coverage for all of the CVE-2012-0158 RTF exploits as well as for the dropped files involved in this attack.
+We employ unique static code analysis technology that can potentially detect any variant of the given malware family by determining the code changes against the original, without having to rely on runtime system behavior.

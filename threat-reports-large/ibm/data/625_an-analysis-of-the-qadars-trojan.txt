@@ -1,0 +1,118 @@
+I recently noticed a forum thread discussing the Qadars banking Trojan, and at the time, it had a very low detection rate (4/56) on the VT (virustotal.com) SHA1 : 563379a48d876f6c35317bb7551efeb55754123056109ab030d1e796ae1b9c2c.
+I decided it would be a decent candidate for a deeper technical look, and I divided my analysis into three logical parts:
+Stage 1: Obfuscates malicious program flow; protects and decrypts main module.
+Stage 2: Gathers per-system unique information, establishes persistence on the system and runs new process (Stage 3).
+Stage 3: Establishes communication with the command-and-control (C&C) center.
+This stage consist of two distinct parts.
+Both are used to protect the main malware module from detection.
+The malware performs the following steps to achieve this:
+Obfuscates malware’s flow by creating “garbage” code;
+Changes the control flow of a program by creating a structured exception handling (SEH) exception and passing control to it;
+Decrypts a blob of data that becomes new code section and jumps to it from an exception;
+Performs an “egg hunt” to find an additional blob of data.
+This data is then decrypted and decompressed and becomes a new Portable Executable (PE) image.
+This is the main malware module.
+Additional details about the first part of Stage 1 (exception handler):
+Resolves address of kernel32.
+Resolves address of HeapCreate and allocates buffer of size 0x2729.
+Stack before the call to HeapCreate:
+Stack before the call to HeapCreate:
+Takes the blob of data at offset 0040C9E8 in the original file, then copies and arranges it.
+This blob of data is treated as an array.
+The array after transformation becomes the new code section and control is passed to it.
+The steps taken by the malware to transform array into the valid code are simple bit swaps based on the key generated offset calculations.
+The algorithm is shown below:
+The blob of data is copied to a buffer allocated on the heap.
+The buffer is treated as an array.
+Calculates an offset for the first character to be swapped:
+Stores the result locally:
+Calculates an offset for the second character to be swapped and stores it locally.
+This character is taken from the end of an array minus number of characters already processed:
+Swaps the first and second characters:
+For example, the first two characters to be swapped.
+Memory before swap:
+Memory after swap:
+Calculates the key used in the calculations for the next first character to be swapped:
+Jumps to the newly created code section:
+Additional details about part two of Stage 1 (in the newly created code section):
+Resolves API addresses at runtime and immediately calls those APIs; no Import Table is created.
+Locates an XOR-encrypted blob of data.
+Decrypts the blob of data and decompresses it.
+The decrypted and decompressed blob is the main malware module.
+To find a blob of data, the malware uses a technique similar to the “egg hunt” technique used in the shellcode.
+First, it calculated the following data:
+The content of the main malware module is copied into a buffer allocated on the heap.
+The first 8 bytes are the marker that the malware is searching for in the executable.
+This is the so-called “egg,” and it is found at offset 0xE511 in the executable on the disk.
+The scanning is performed from the end to the beginning of the file.
+Once the marker is found, the malware calculates the size of the encrypted blob of data.
+In order to do this, it takes 4 bytes immediately following the “egg” and XORs it with the data at offset +0x08 in the blob of data shown above.
+Next, 8 bytes in the file and in the blob of data above (offset +0x0C) are used to calculate the initial XOR key that is used to decrypt the blob of data.
+The encrypted data in the file starts at offset 0xE525; the size of the blob of data is 0xC76A.
+The following function is used to decrypt the blob of data:
+Next, the decrypted blob of data is decompressed.
+The stack before the call to RtlDecompressBuffer:
+Collects data about the system;
+Copies itself into a randomly named file located in the “%AppData%\[random_path]\[random_file_name].exe”;
+Schedules a task that would run on the current user’s next login;
+Creates registry keys and stores AES encrypted data (collected in Step 1) in the registry;
+Runs the next stage executable from the “%AppData%\[random_path]\[random_file_name].exe”.
+An additional detail is that the malware collects data about the machine and creates an interesting structure.
+For example, on the test machine, the malware creates the following structure:
+An MD5 hash for the above structure is calculated and stored locally.
+ASCII and UNICODE strings representing formatted MD5 hashes are created.
+For example, on the test machine:
+Both MD5 hashes are concatenated with the computer name (‘#’ is used as a separator).
+An MD5 hash of this data is calculated.
+This data becomes the unique GUID that is used by the malware.
+The malware uses the same algorithm, as it always produces the same result, but the result would be unique per infected system.
+Next, the malware creates a randomly named path within “%AppData%” and copies itself into the randomly named executable file located in that directory.
+For example, on the test system, the malware created a copy of itself located at:
+“%AppData%\MfzxAHCb\HQHKWbsv\PMqLMKtj\oPQVNiRgs.exe”
+An MD5 hash of the newly created copy of the malware is calculated and stored along with the word BOTNET2:
+The malware creates a scheduled task that would run on the current user’s next login.
+This is achieved by performing the following sequence of calls:
+Creates the registry keys “HKCU\\Software\\Classes\\CLSID\\{[unique_per_system_guid]}”.
+Populates subkeys “@” , “0” and “1”.
+The data in the registry is encrypted using AES.
+The registry is used to pass data to the next stage.
+The AES key is derived from the hard-coded data:
+The derived key is:
+The algorithm for key derivation is:
+Next, the malware runs a copy of itself located in the “%AppData%” directory:
+This stage creates a payload for the initial C&C request and sends it.
+Details of the payload creation and malware logic for Stage 3 follow.
+The malware calculates computer-specific data (as described in Stage 2) and compares the result to the data stored in “KEY_CURRENT_USER\Software\Classes\CLSID\{[computer_unique_guid]}”.
+If equal, the malware proceeds to the next stage.
+Data stored in the registry “HKEY_CURRENT_USER\Software\Classes\CLSID\{[computer_unique_guid]}\0” is enumerated.
+For example, on the test machine, the size of the data is 0x170, and the encrypted data stored in the registry is:
+The decrypted data is:
+Next, the data is tokenized:
+The same operation is performed on the data stored in “HKEY_CURRENT_USER\Software\Classes\CLSID\{[computer_unique_guid]}\1”.
+An interesting structure containing pointers to the domain names and common request page are stored in the local array-like structure:
+Next, the following interesting function is called:
+The first thing the malware does within this function is create a payload for the C&C request.
+For example, on the test machine, the first part of the plaintext payload (length 0x123) is:
+The data has the following format: “string” + data + 1-character separator.
+For example, “pszBotID” (string) + “x0I-C957A26036A04#972958A65880B55A0EBD5559078C1735” (data) + “k” (separator; changes for other entries).
+The malware generates a pseudorandom 9-byte character string and appends it to the data above:
+An additional, 9-byte-long, pseudorandom string is generated:
+An MD5 hash of the string is calculated:
+The above blob of data is encrypted using AES.
+The MD5 hash of the second pseudorandom string is used as the key:
+The following data is generated based on the hard-coded data used to generate the initial AES key for encrypting data in the registry:
+This data is concatenated with the AES encrypted buffer:
+This buffer is then base64-encoded:
+The base64-encoded buffer is checked for the presence of “+” and “=” characters.
+These characters are replaced with “%2B” and “%3D”, respectively.
+The malware creates an additional 7-byte-long pseudorandom string:
+This string is then prepended to the base64-encoded buffer:
+This data becomes the content of the request sent to the C&C by the malware.
+Shown below is the sequence of WinINet APIs used by the malware in order to establish communication with the C&C:
+The malware creates a structure containing all request-related information:
+Sample request:
+The first stage was successful in hiding the main malware module from the antivirus engines at the time it first appeared in the wild.
+But Stage 1 fails to hide the main module at present as antivirus signatures.
+Encrypted communication creates difficulties for the dynamic analysis since it makes it hard to understand the payload creation.
+Persistence mechanisms employed by the malware (scheduling a task at the next login) is uncommon.
+Igor Aronov is a member of the IBM X-Force Advanced Research Team.

@@ -1,0 +1,60 @@
+Over the past few years, I have been giving workshops on Android reverse engineering - my next one will be an advanced session at Virus Bulletin in October.
+As most other researchers on Android, I typically start off with a slide explaining that an Android Package (APK) is just a ZIP.
+Since Android 7.0, however, this is no longer true.
+Everything started when I analyzed a sample of Android/HiddenMiner.A!tr.
+This malware poses as a Play Store update app, when it actually mines Monero in the background on your smartphone.
+After some static analysis, I wanted to check a few things and take a few screenshots running the sample in an Android emulator.
+And I got this error message:
+This led me to read more on APK Signature Scheme v2.
+Version 2 introduces a new APK signing mechanism, starting in Android 7.0 (Nougat).
+Since that version, the Android application package's format has changed, and now differs slightly from a normal ZIP file.
+The modification consists in adding a special block in the ZIP file, called the APK Signing Block.
+This block is not specified in the ZIP format.
+Consequently, an APK is, strictly speaking, no longer a ZIP file.
+Interestingly, this causes issues to the 010Editor.
+The format of a standard ZIP file is illustrated as follows.
+Normally, you start parsing the file from the end.
+You locate a block named the End of Central Directory (EOCD), based on its magic "PK0506".
+This block gives you the offset to the first Central Directory header.
+You have one of these per file in the ZIP file.
+Each of these Central Directory headers contains information, such as the compressed and uncompressed size of the file, its name etc.
+They also provide an offset to a Local File Header, which contains the actual (compressed) file data.
+I am simplifying a bit, because the ZIP format is actually quite complex, but this is the general idea.
+With the APK Signature Scheme v2, a new block squeezes between the last Local File Header and the first Central Directory header.
+This block is called the "APK Signing Block", and it is meant to improve the authenticity of the APK.
+As Google describes it, this block is meant to be accessed from the first Central Directory header.
+Just before that header, we should find a magic "APK Sig Block 42", which is there to help identify the APK Signing Block.
+Then, just before this, we find the size of the block, and before that the block information, and before that, again the size of the block.
+The method used to parse the block is awkward (in my opinion).
+I wonder why Google did not simply create a tag for the APK Signing Block using a magic block like "PK0708".
+Consequently, parsers (like 010editor's ZIP template), which read the file top down, fail to correctly understand its structure and bump into an unknown block.
+If we edit the ZIP template to print the location where it fails, it shows offset 3279124.
+We will see later on that this is exactly the offset of the APK Signing Block.
+The good thing with Google's modification to the ZIP, however, is that it occurs once all files have been uncompressed.
+So, tools like zip continue to work - and 010Editor only fails at the end of its parsing.
+I wanted to exactly see what is in the APK Signing Block.
+So, I wrote a parser for it.
+The usage is extremely simple: provide as the argument the name of the APK.
+The parser parses the APK the way Google expects it to be done, and displays the various structures: End of Central Directory, Central Directory header, Local File header, and of course, the APK Signing Block.
+The offset of the APK Signing Block is 3279124.
+The format of an APK Signing Block is specified here.
+In the case of the Android/HiddenMiner malware, we recover a correct block.
+In particular, we spot:
+A digest of the local file headers, file data, central directory headers and EOCD.
+The digest uses SHA-256 and is 26a718dd28c7aa7a957f11f9ae9059af5558aabfb815bf37df3274019349dd27
+A certificate.
+The malware author(s) used an Android Debug certificate.
+A signature signing the important parts of the APK Signing Block itself.
+The signature algorithm is RSASSA-PKCS1-v1_5.
+Remember the error message at APK installation was "INSTALL_PARSE_FAILED_NO_CERTIFICATES: Failed to collect certificates from /data/app/vmdl1273641092.tmp/base.apk using APK Signature Scheme v2: SHA-256 digest of contents did not verify".
+As we can recover the signing certificate without any problem, and it is a self-signed certificate (see below), there is no issue with collecting certificates as the message says.
+Rather, the important problem is at the end of the message: "SHA-256 digest of contents did not verify".
+This means that the integrity of local file headers, file data, central directory headers, and EOCD are compromised.
+This is why the APK fails to install.
+The malware author(s) got something wrong at this point, and fortunately, end-users with Android 7.0 and above will be protected.
+The malware installs on older versions of Android though - this is a side-effect of backward compatibility of the APK format.
+Fortunately, Fortinet customers are protected by the anti-virus signature we issued ;)
+Finally, if you look closely at the APKs, you'll notice a comment in the EOCD.
+This is a base64 encoded string which decodes to {"site_id":"1014","tracker_id":"1af52uqtwiklpecd"}.
+It is clearly a marker added by the malware author(s) to track malicious samples they distribute.
+-- the Crypto Girl

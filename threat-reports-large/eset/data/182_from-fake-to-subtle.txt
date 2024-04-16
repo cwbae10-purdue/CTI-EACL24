@@ -1,0 +1,106 @@
+After seeing so many fake antivirus programs lately, it is interesting to take a look at other types of threats.
+Yesterday, we received an example of malware that tries to be very subtle about its installation process.
+The malware spreads through email.
+After infecting a computer, it will monitor the mailbox of its victim and
+After seeing so many fake antivirus programs lately, it is interesting to take a look at other types of threats.
+Yesterday, we received an example of malware that tries to be very subtle about its installation process.
+The malware spreads through email.
+After infecting a computer, it will monitor the mailbox of its victim and send an automatic response to incoming mails, sending a copy of itself.
+This propagation scheme is slower than the common practice of sending a copy of the malware to every entry in an address book.
+On the other hand, it is more effective in terms of social engineering since new victims are expecting an answer from their counter parts.
+W32 Navidad did something rather similar at the beginning of this decade: it mailed itself out in response to messages that included a single attachment, presumably on the grounds that victims would not be surprised to receive an attachment back.
+The second characteristic of this malware that makes it hard to identify for a user is that it comes with a RTF document that will be written to disk and viewed in the default reader when the victim double clicks on the malware.
+The effect of this strategy is that a user thinks he just opened a document and doesn’t notice that a malware has installed itself on the system at the same time.
+Lets take a close look at the infection process.
+The following code was found in the first stage dropper that extract the RTF document from its own image by using calls to FindResourceA and LoadResourceA.
+PUSH 0F3 PUSH Hinweis.004002A8 ; ASCII “112” PUSH 0 CALL DWORD PTR DS:[400298] ; kernel32.FindResourceA MOV DWORD PTR SS:[EBP-4],EAX MOV EAX,DWORD PTR SS:[EBP-4] PUSH EAX ; Loads the RTF file from the executable PUSH 0 ; That is loaded in memory CALL DWORD PTR DS:[400294] ; kernel32.LoadResource Once the content of the RTF file is loaded, it is written to disk and opened with the default reader by using the command “open” from a standard shell command: CALL Hinweis.WriteRTFToDisk ADD ESP,0C PUSH 1 PUSH 0 PUSH 0 LEA EDX,DWORD PTR SS:[EBP-104] ; Path to dropped RTF File PUSH EDX ; Parameter to the open command PUSH Hinweis.004002AC ; ASCII “open” PUSH 0 CALL DWORD PTR DS:[4002A0] ; SHELL32.ShellExecuteA The content of the RTF file is a text in German explaining that “Due to several complaints, your email has been blocked for the next 24 hours.” This is very convincing to an unsuspecting user!
+The second file that is dropped to disk while the RTF is displayed to the user is named win.exe and is written to the %system32% folder.
+This file is the real payload and is detected as Win32/AutoRun.FakeAlert.AI by ESET NOD32 Antivirus.
+It communicates with a host located in Russia using the HTTP protocol for command and control.
+One last interesting note about this malware is its packer.
+It is a good example of a decoding routine that also has anti emulation: PUSH EAX PUSH ECX ; Useless call to CALL DWORD PTR DS:[<&user32.GetFocus>] ; [GetFocus MOV EDX,EAX POP ECX ; Restore register value POP EAX ; Restore register value XOR BYTE PTR DS:[EDI],AL ; First decoding of one byte SUB AL,4 PUSH EDX PUSH EAX PUSH ECX ; Useless call to CALL DWORD PTR DS:[<&user32.GetFocus>] ; [GetFocus POP ECX ; Restore register value POP EAX ; Restore register value POP EDX ADD BYTE PTR DS:[EDI],DL ; Second decoding operation DEC EDI ; on the same byte LOOPD SHORT win.00402080 ; Jump to the beginning of the loop The purpose of the anti emulation trick is to take as much time as possible to force an emulator to exit before the malware completely reveals itself in memory.
+In this case, the decoding routine calls the user32.GetFocus function twice for every byte that is decoded.
+These operations are performed more than 23000 times, something that is acceptable for a program on a normal system but way too long for an emulator that needs to keep the analysis time to a minimum.
+More information on this wave of malware can be found at the following page (in German): http://www.heise.de/newsticker/Trojaner-Mails-drohen-mit-E-Mail-Sperrung-Update–/meldung/119713 Pierre-Marc Bureau Researcher Pierre-Marc Bureau 3 Dec 2008 - 01:05PM Newsletter Newsletter Submit Similar Articles General Smoke damage and hard drives General The Occasional Orator Part 3 General The Occasional Orator Part 2 General The Occasional Orator Part 1 Discussion
+PUSH 0F3
+PUSH Hinweis.004002A8 ; ASCII “112”
+PUSH 0
+CALL DWORD PTR DS:[400298] ; kernel32.FindResourceA
+MOV DWORD PTR SS:[EBP-4],EAX
+MOV EAX,DWORD PTR SS:[EBP-4]
+PUSH EAX ; Loads the RTF file from the executable
+PUSH 0 ; That is loaded in memory
+CALL DWORD PTR DS:[400294] ; kernel32.LoadResource
+Once the content of the RTF file is loaded, it is written to disk and opened with the default reader by using the command “open” from a standard shell command: CALL Hinweis.WriteRTFToDisk ADD ESP,0C PUSH 1 PUSH 0 PUSH 0 LEA EDX,DWORD PTR SS:[EBP-104] ; Path to dropped RTF File PUSH EDX ; Parameter to the open command PUSH Hinweis.004002AC ; ASCII “open” PUSH 0 CALL DWORD PTR DS:[4002A0] ; SHELL32.ShellExecuteA The content of the RTF file is a text in German explaining that “Due to several complaints, your email has been blocked for the next 24 hours.” This is very convincing to an unsuspecting user!
+The second file that is dropped to disk while the RTF is displayed to the user is named win.exe and is written to the %system32% folder.
+This file is the real payload and is detected as Win32/AutoRun.FakeAlert.AI by ESET NOD32 Antivirus.
+It communicates with a host located in Russia using the HTTP protocol for command and control.
+One last interesting note about this malware is its packer.
+It is a good example of a decoding routine that also has anti emulation: PUSH EAX PUSH ECX ; Useless call to CALL DWORD PTR DS:[<&user32.GetFocus>] ; [GetFocus MOV EDX,EAX POP ECX ; Restore register value POP EAX ; Restore register value XOR BYTE PTR DS:[EDI],AL ; First decoding of one byte SUB AL,4 PUSH EDX PUSH EAX PUSH ECX ; Useless call to CALL DWORD PTR DS:[<&user32.GetFocus>] ; [GetFocus POP ECX ; Restore register value POP EAX ; Restore register value POP EDX ADD BYTE PTR DS:[EDI],DL ; Second decoding operation DEC EDI ; on the same byte LOOPD SHORT win.00402080 ; Jump to the beginning of the loop The purpose of the anti emulation trick is to take as much time as possible to force an emulator to exit before the malware completely reveals itself in memory.
+In this case, the decoding routine calls the user32.GetFocus function twice for every byte that is decoded.
+These operations are performed more than 23000 times, something that is acceptable for a program on a normal system but way too long for an emulator that needs to keep the analysis time to a minimum.
+More information on this wave of malware can be found at the following page (in German): http://www.heise.de/newsticker/Trojaner-Mails-drohen-mit-E-Mail-Sperrung-Update–/meldung/119713 Pierre-Marc Bureau Researcher Pierre-Marc Bureau 3 Dec 2008 - 01:05PM Newsletter Newsletter Submit Similar Articles General Smoke damage and hard drives General The Occasional Orator Part 3 General The Occasional Orator Part 2 General The Occasional Orator Part 1 Discussion
+Once the content of the RTF file is loaded, it is written to disk and opened with the default reader by using the command “open” from a standard shell command:
+CALL Hinweis.WriteRTFToDisk ADD ESP,0C PUSH 1 PUSH 0 PUSH 0 LEA EDX,DWORD PTR SS:[EBP-104] ; Path to dropped RTF File PUSH EDX ; Parameter to the open command PUSH Hinweis.004002AC ; ASCII “open” PUSH 0 CALL DWORD PTR DS:[4002A0] ; SHELL32.ShellExecuteA The content of the RTF file is a text in German explaining that “Due to several complaints, your email has been blocked for the next 24 hours.” This is very convincing to an unsuspecting user!
+The second file that is dropped to disk while the RTF is displayed to the user is named win.exe and is written to the %system32% folder.
+This file is the real payload and is detected as Win32/AutoRun.FakeAlert.AI by ESET NOD32 Antivirus.
+It communicates with a host located in Russia using the HTTP protocol for command and control.
+One last interesting note about this malware is its packer.
+It is a good example of a decoding routine that also has anti emulation: PUSH EAX PUSH ECX ; Useless call to CALL DWORD PTR DS:[<&user32.GetFocus>] ; [GetFocus MOV EDX,EAX POP ECX ; Restore register value POP EAX ; Restore register value XOR BYTE PTR DS:[EDI],AL ; First decoding of one byte SUB AL,4 PUSH EDX PUSH EAX PUSH ECX ; Useless call to CALL DWORD PTR DS:[<&user32.GetFocus>] ; [GetFocus POP ECX ; Restore register value POP EAX ; Restore register value POP EDX ADD BYTE PTR DS:[EDI],DL ; Second decoding operation DEC EDI ; on the same byte LOOPD SHORT win.00402080 ; Jump to the beginning of the loop The purpose of the anti emulation trick is to take as much time as possible to force an emulator to exit before the malware completely reveals itself in memory.
+In this case, the decoding routine calls the user32.GetFocus function twice for every byte that is decoded.
+These operations are performed more than 23000 times, something that is acceptable for a program on a normal system but way too long for an emulator that needs to keep the analysis time to a minimum.
+More information on this wave of malware can be found at the following page (in German): http://www.heise.de/newsticker/Trojaner-Mails-drohen-mit-E-Mail-Sperrung-Update–/meldung/119713 Pierre-Marc Bureau Researcher Pierre-Marc Bureau 3 Dec 2008 - 01:05PM Newsletter Newsletter Submit Similar Articles General Smoke damage and hard drives General The Occasional Orator Part 3 General The Occasional Orator Part 2 General The Occasional Orator Part 1 Discussion
+CALL Hinweis.WriteRTFToDisk
+ADD ESP,0C
+PUSH 1
+PUSH 0
+PUSH 0
+LEA EDX,DWORD PTR SS:[EBP-104] ; Path to dropped RTF File
+PUSH EDX ; Parameter to the open command
+PUSH Hinweis.004002AC ; ASCII “open”
+PUSH 0
+CALL DWORD PTR DS:[4002A0] ; SHELL32.ShellExecuteA
+The content of the RTF file is a text in German explaining that “Due to several complaints, your email has been blocked for the next 24 hours.” This is very convincing to an unsuspecting user!
+The second file that is dropped to disk while the RTF is displayed to the user is named win.exe and is written to the %system32% folder.
+This file is the real payload and is detected as Win32/AutoRun.FakeAlert.AI by ESET NOD32 Antivirus.
+It communicates with a host located in Russia using the HTTP protocol for command and control.
+One last interesting note about this malware is its packer.
+It is a good example of a decoding routine that also has anti emulation: PUSH EAX PUSH ECX ; Useless call to CALL DWORD PTR DS:[<&user32.GetFocus>] ; [GetFocus MOV EDX,EAX POP ECX ; Restore register value POP EAX ; Restore register value XOR BYTE PTR DS:[EDI],AL ; First decoding of one byte SUB AL,4 PUSH EDX PUSH EAX PUSH ECX ; Useless call to CALL DWORD PTR DS:[<&user32.GetFocus>] ; [GetFocus POP ECX ; Restore register value POP EAX ; Restore register value POP EDX ADD BYTE PTR DS:[EDI],DL ; Second decoding operation DEC EDI ; on the same byte LOOPD SHORT win.00402080 ; Jump to the beginning of the loop The purpose of the anti emulation trick is to take as much time as possible to force an emulator to exit before the malware completely reveals itself in memory.
+In this case, the decoding routine calls the user32.GetFocus function twice for every byte that is decoded.
+These operations are performed more than 23000 times, something that is acceptable for a program on a normal system but way too long for an emulator that needs to keep the analysis time to a minimum.
+More information on this wave of malware can be found at the following page (in German): http://www.heise.de/newsticker/Trojaner-Mails-drohen-mit-E-Mail-Sperrung-Update–/meldung/119713 Pierre-Marc Bureau Researcher Pierre-Marc Bureau 3 Dec 2008 - 01:05PM Newsletter Newsletter Submit Similar Articles General Smoke damage and hard drives General The Occasional Orator Part 3 General The Occasional Orator Part 2 General The Occasional Orator Part 1 Discussion
+The content of the RTF file is a text in German explaining that “Due to several complaints, your email has been blocked for the next 24 hours.” This is very convincing to an unsuspecting user!
+The second file that is dropped to disk while the RTF is displayed to the user is named win.exe and is written to the %system32% folder.
+This file is the real payload and is detected as Win32/AutoRun.FakeAlert.AI by ESET NOD32 Antivirus.
+It communicates with a host located in Russia using the HTTP protocol for command and control.
+One last interesting note about this malware is its packer.
+It is a good example of a decoding routine that also has anti emulation:
+PUSH EAX PUSH ECX ; Useless call to CALL DWORD PTR DS:[<&user32.GetFocus>] ; [GetFocus MOV EDX,EAX POP ECX ; Restore register value POP EAX ; Restore register value XOR BYTE PTR DS:[EDI],AL ; First decoding of one byte SUB AL,4 PUSH EDX PUSH EAX PUSH ECX ; Useless call to CALL DWORD PTR DS:[<&user32.GetFocus>] ; [GetFocus POP ECX ; Restore register value POP EAX ; Restore register value POP EDX ADD BYTE PTR DS:[EDI],DL ; Second decoding operation DEC EDI ; on the same byte LOOPD SHORT win.00402080 ; Jump to the beginning of the loop The purpose of the anti emulation trick is to take as much time as possible to force an emulator to exit before the malware completely reveals itself in memory.
+In this case, the decoding routine calls the user32.GetFocus function twice for every byte that is decoded.
+These operations are performed more than 23000 times, something that is acceptable for a program on a normal system but way too long for an emulator that needs to keep the analysis time to a minimum.
+More information on this wave of malware can be found at the following page (in German): http://www.heise.de/newsticker/Trojaner-Mails-drohen-mit-E-Mail-Sperrung-Update–/meldung/119713 Pierre-Marc Bureau Researcher Pierre-Marc Bureau 3 Dec 2008 - 01:05PM Newsletter Newsletter Submit Similar Articles General Smoke damage and hard drives General The Occasional Orator Part 3 General The Occasional Orator Part 2 General The Occasional Orator Part 1 Discussion
+PUSH EAX
+PUSH ECX ; Useless call to
+CALL DWORD PTR DS:[<&user32.GetFocus>] ; [GetFocus
+MOV EDX,EAX
+POP ECX ; Restore register value
+POP EAX ; Restore register value
+XOR BYTE PTR DS:[EDI],AL ; First decoding of one byte
+SUB AL,4
+PUSH EDX
+PUSH EAX
+PUSH ECX ; Useless call to
+CALL DWORD PTR DS:[<&user32.GetFocus>] ; [GetFocus
+POP ECX ; Restore register value
+POP EAX ; Restore register value
+POP EDX
+ADD BYTE PTR DS:[EDI],DL ; Second decoding operation
+DEC EDI ; on the same byte
+LOOPD SHORT win.00402080 ; Jump to the beginning of the loop
+The purpose of the anti emulation trick is to take as much time as possible to force an emulator to exit before the malware completely reveals itself in memory.
+In this case, the decoding routine calls the user32.GetFocus function twice for every byte that is decoded.
+These operations are performed more than 23000 times, something that is acceptable for a program on a normal system but way too long for an emulator that needs to keep the analysis time to a minimum.
+More information on this wave of malware can be found at the following page (in German): http://www.heise.de/newsticker/Trojaner-Mails-drohen-mit-E-Mail-Sperrung-Update–/meldung/119713 Pierre-Marc Bureau Researcher Pierre-Marc Bureau 3 Dec 2008 - 01:05PM Newsletter Newsletter Submit Similar Articles General Smoke damage and hard drives General The Occasional Orator Part 3 General The Occasional Orator Part 2 General The Occasional Orator Part 1 Discussion
+The purpose of the anti emulation trick is to take as much time as possible to force an emulator to exit before the malware completely reveals itself in memory.
+In this case, the decoding routine calls the user32.GetFocus function twice for every byte that is decoded.
+These operations are performed more than 23000 times, something that is acceptable for a program on a normal system but way too long for an emulator that needs to keep the analysis time to a minimum.

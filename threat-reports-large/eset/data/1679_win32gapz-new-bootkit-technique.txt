@@ -1,0 +1,81 @@
+Win32/Gapz’s new bootkit technique modifies just 4 bytes of the original VBR, has an enhanced dropper and complex kernel mode functionality, and evades ELAM.
+In the last couple of years a number of new bootkits have appeared in the wild targeting the Microsoft Windows platform.
+Among the most prominent examples are TDL4, Olmasco and Rovnix.
+These each employ different ways of infecting the system by means of modifying either the MBR (Master Boot Record) or the VBR/IPL (Volume Boot Record/Initial Program Loader).
+This is shown in the figure below.
+In this blog I’m going to describe a relatively new bootkit technique which allows the malware to execute its code before the OS loader receives control, using only a few modifications to the VBR (highlighted as “BIOS Parameter Block modification” in the figure above).
+This brand new technology was seen for the first time in the latest modification of the Win32/Gapz bootkit.
+(You can read about its sophisticated dropper in a recently published blog by Aleksander Matrosov).
+So far we have only been able to find two distinct modifications of the Win32/Gapz bootkit, employing different techniques for infecting the victim’s system.
+The earliest modification of the malware appeared at the beginning of summer 2012, and came with an MBR infector.
+The latest modification of Win32/Gapz infects the VBR and was spotted at the end of autumn of 2012.
+Win32/Gapz is capable of infecting the following versions of the Microsoft Windows operating system:
+x86: Windows XP SP2 and higher (except Windows Vista and Vista SP1)
+x64: Windows Vista SP2 and higher
+The bootkit installed onto the system by the earliest modification of the malware consists of two parts:
+malicious MBR
+kernel-mode code and payload injected into user-mode processes.
+In this case the kernel-mode code and payload was written either ahead of the very first partition or after the last partition on the hard drive.
+This approach is pretty similar to one used in the Rovnix bootkit except that Rovnix infects the VBR.
+The bootkit functionality of Win32/Gapz is quite conventional: once the code in the malicious MBR has been executed it restores the original code into memory and reads sectors from the hard drive containing the next stage bootkit code, to which it passes control.
+The bootkit code hooks the int 13h handler so as to monitor the loading of the following system modules to setup hooks:
+ntldr
+bootmgr
+winload.exe
+The malware identifies them using special byte sequences.
+Here is the table listing of routines hooked in these modules:
+Once the malware detects that a particular module from those listed above is being read from the hard drive, it patches the module so as to regain control after the processor is switched into protected-mode.
+First, the bootkit sets up hooks either in ntldr or bootmgr (depending on the operating system version).
+If the hook is set up in bootmgr (in the case of Microsoft Vista and later operating system versions) then the bootkit additionally hooks OslArchTransferToKernel routine in winload.exe:
+These hooks trigger the malware when the kernel image is loaded.
+The next step is to set up a hook on IoInitSystem which is called during operating system kernel initialization.
+It is hooked from either ntldr or winload.exe, depending on the version of the operating system.
+Then, when the hook of IoInitSystem has been executed the malware restores the patched bytes in the kernel image and transfers control to the original IoInitSystem routine.
+Before passing control to the original code the bootkit overwrites the return address.
+This is stored in stacks with an address for the malicious routine to be executed after IoInitSystem completes.
+This way malware gains control after the kernel is initialized.
+At this point the bootkit may use services provided by the kernel to access the hard drive, allocate memory, create threads and so on.
+In the screenshot below the decompiled code of the IoInitSystem hook is presented.
+Next, the malware reads the rest of the bootkit code from the hard drive, creates a system thread which executes read instructions and, finally, returns control to the kernel.
+At this point the bootkit finishes its job since the malicious kernel-mode code is executed in kernel-mode address space.
+Here is the diagram depicting the workflow of the bootkit code:
+The kernel-mode code implements rootkit functionality, injecting the payload into processes and communicating with the C&C server.
+This part of the malware will be briefly described in the section “Win32/Gapz kernel-mode code”.
+The latest modification of the Win32/Gapz bootkit infects the VBR of the active partition.
+What is remarkable about this technique is that only a few bytes of the original VBR are affected.
+This makes the threat stealthier.
+The essence of this approach is that Win32/Gapz modifies the “Hidden Sectors” field of the VBR while all the other data and code of the VBR and IPL remain untouched.
+Let’s look at the layout of VBR for the active partition in the figure below.
+Here is a simplified description of the blocks of which it consists:
+VBR code responsible for loading and IPL (initial program loader)
+BIOS Parameter Block – data structure storing NTFS volume parameters
+Text Strings – strings to be displayed to a user in case an error was encountered.
+0xAA55 – 2-byte signature of the VBR
+In the case of Win32/Gapz the most interesting block for analysis is the BPB (BIOS Parameter Block) and, specifically, its “Hidden Sectors” field.
+The value contained within this field specifies the number of sectors preceding IPL stored on the NTFS volume, as shown below.
+Thus, normally, at boot-up the VBR code reads 15 sectors starting from this value and transfers control to it.
+And this is the procedure misused by the bootkit: it overwrites this field with the value specifying the offset in sectors to the malicious bootkit code stored on the hard drive.
+This is how the hard drive looks after the system has been infected by Win32/Gapz:
+The next time the VBR code is executed it loads and executes bootkit code instead of the legitimate IPL.
+The bootkit image is written either before the very first partition or after the last partition of the hard drive.
+Other than that the bootkit code is essentially the same as in the MBR-based infection described above.
+The main purpose of the bootkit described above is to inject malicious code into kernel-mode address space.
+This code implements rootkit functionality so as to conceal its presence in the system, C&C communication mechanisms, payload injection into user-mode address space of the processes and so on.
+Unlike TDL4, Rovnix and other widely spread bootkits Win32/Gapz kernel-mode code isn’t structured as a PE image, but is positioned according to code which is located in kernel-mode address space in the memory buffer.
+The code consists of 12 integrated blocks starting with the structure describing the block: this has the following layout:
+Each of the blocks implements specific functionality: injecting payload, implementing network transport protocol, communicating with C&C, self-defense and so on.
+The kernel-mode code functionality is rather complex and should be considered separately (but that’s beyond the scope of this blog post).
+In the rest of this blog post I’d like to say a few words on the effectiveness of ELAM (Early Launch Anti-Malware Module) against bootkit threats, based on example of Win32/Gapz.
+ELAM is a new feature introduced in Microsoft Windows 8 operating systems.
+It allows antivirus software to load its own dedicated module: this provides assurance that it will be started before any other 3rd party kernel-mode drivers.
+This gives security software an advantage against fighting rootkit threats but the interesting question is whether it helps in fighting bootkits?
+The answer to the question above is negative.
+This isn’t what ELAM wasn’t designed for.
+Although ELAM gives us the advantage as regards the order in which kernel-mode drivers are loaded, the bootkit’s malicious code is run before the OS kernel is initialized and, therefore, before any kernel-mode driver is loaded, including ELAM.
+In addition, most bootkits load kernel-mode drivers using undocumented OS features while ELAM is only able to monitor legitimately loaded drivers.
+Thus, the malware is able to bypass security enforcement and inject its code into kernel-mode address space.
+This makes ELAM useless in counteracting bootkit threats: not only Win32/Gapz but TDL4, Olamsco, Rovnix and others.
+To clarify this, consider the figure presented below.
+In the case of Gapz, its kernel-mode code is loaded right after executing the IoInitSystem routine at which time ELAM hasn’t even started, and therefore, execution of the malcode cannot be prevented by means of ELAM.
+In this blog post a new bootkit technique is considered.
+What’s most interesting about this is that it involves modification of only 4 bytes of the original VBR while the MBR, VBR code and IPL remain untouched.

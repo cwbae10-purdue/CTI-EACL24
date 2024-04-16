@@ -1,0 +1,63 @@
+On October 21, we warned the public that a new exploitation method could bypass Microsoft’s official patch (MS14-060, KB3000869) for the infamous Sandworm zero-day vulnerability.
+As Microsoft has finally fixed the problem today via Security Bulletin MS14-064, it’s time to uncover our findings and address some confusion.
+This is the first of two posts on this issue.
+(Read part 2 here.)
+McAfee has already delivered various protections against this threat to our customers.
+Sandworm background
+This zero-day attack was disclosed at almost the same time that the patch was available on the last “Patch Tuesday” (October 14).
+We found that this is a very serious zero-day attack not only because the attack targeted many sensitive organizations (such as NATO), but also from the technical properties of the vulnerability and exploitation.
+This vulnerability is a logic fault.
+It’s not related to memory corruption (such as a heap-based overflow or use-after-free) so proven-effective exploitation mitigations such as ASLR and DEP on Windows 7 or later will fail to block the exploit.
+Nor can Microsoft’s enhanced security tool Enhanced Mitigation Experience Toolkit (EMET) block the attack by default.
+Though the in-the-wild samples are organized as PowerPoint Show (.ppsx) files, this is due to a vulnerability in the Windows Packager COM object (packager.dll).
+Considering that COM objects are OS-wide function providers, any applications installed on the system can invoke them, which means that other formats can be attacks paths as well.
+This indicates that all Windows users, not only Office users, are at risk.
+The attack has been going on for quite a long time.
+For example, an exploit generator found on VirusTotal suggests that the vulnerability was discovered in June 2013.
+Microsoft’s patch and two bypasses
+On October 17, three days after its release, we found that Microsoft’s patch could be bypassed with some tricks.
+We reported our findings to Microsoft on the same day, which lead to an emergency Security Advisory 3010060, released October 21, with a temporary “Fix It.”
+We created a proof of concept (PoC) demonstrating the bypass.
+We later learned that some other parties, including the Google Security Team, have detected in-the-wild samples that are said to bypass the patch.
+We analyzed some samples in the wild, and found that they will trigger a user account control (UAC) warning when one logs in with a standard nonadministrator account.
+However, users on an administrator account or who have disabled the UAC will not see the warning, and the malicious code will execute automatically.
+Our PoC takes another path and does not trigger the UAC at all.
+Thus our PoC is a full bypass while the in-the-wild samples are a partial bypass.
+At the root
+The vulnerability exists in the Packager object.
+In fact, there are two issues rather than one.
+The first issue allows an attacker to drop an arbitrary file into the temp folder.
+(We warned the public about this security issue in a July post.
+Anyone who followed our advice at that time, preventing Office from invoking the Packager object, is immune to the Sandworm attack.)
+The second issue is the core of the matter.
+While the former allows only the writing of a file into the temp folder, the latter allows an attacker to “execute” the file from the temp folder.
+Let’s take a closer look at how it works.
+Looking at the slide definition XML file inside the .ppsx sample, we find something interesting at the following lines:
+The “verb” definition in slide1.xml.
+The Packager is an OLE object that supports embedding one file into another container application.
+As described on this MSDN page, OLE objects that provide embedding functions must expose the interface IOleObject.
+For the preceding XML definition, this calls the DoVerb() method of this IOleObject.
+Another MSDN page provides the prototype of this method:
+Prototype of the IOleObject::DoVerb() function.
+And the following shows the location of the IOleObject and the DoVerb() function in the packager.dll:
+The IOleObject interface and the DoVerb() function in packager.dll.
+The string “cmd=3” in the slide1.xml suggests that the value of the first parameter (iVerb) is 3.
+Depending on different values of iVerb, we see a switch to different code in IOleObject::DoVerb().
+Following we have the REed code (source code generated through reverse engineering) when iVerb equals 3.
+The REed code for handling iVerb=3 in the IOleObject::DoVerb() function.
+With further research and testing, we realized that this code performs the same action as clicking the second item on the following menu after right-clicking the filename, as shown here.
+(The print in red is our addition.)
+The “right-click” menu for .inf file.
+Reading the whole code of IOleObject::DoVerb(), we see that depending on different values of iVerb, the code will switch to different code paths.
+We split them into two situations.
+For iVerb values greater than or equal to 3, the code will perform the same action as clicking on the pop-up menu.
+As we see in the REed code, it subtracts the fixed value 2 from the iVerb value 3, with the result 1, which represents the second item on the right-click menu.
+We can also invoke any command below “Install” on the menu by supplying a larger iVerb value.
+For example, if we want to click the third item on the preceding menu, we can set iVerb=4 (“cmd=4”) in the slide definition file.
+For an iVerb value less than 3, the program will follow other code that we have not shown.
+These actions, such as performing the default action (iVerb=2) or renaming the display name of the Packager object (iVerb=1), are handled well from a security point of view.
+We are focusing on the first situation: When the iVerb value is greater than or equal to 3, it will effectively click “Install” or a lower choice from the pop-up menu for the specific file.
+For a .inf file, the right-click menu will appear exactly as in our image for a default Windows setup.
+Thus, in this example “InfDefaultInstall.exe” will execute and various bad thing will happen.
+In this post, we have introduced the case and explained the essence of the vulnerability.
+In a second part, we discuss the MS14-060 patch, how to bypass it, and more.

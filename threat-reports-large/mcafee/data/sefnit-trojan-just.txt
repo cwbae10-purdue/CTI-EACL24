@@ -1,0 +1,85 @@
+Most malware is created for economic purposes.
+To name just a few of our reports and blogs on this topic, we have written about Cybercrime Exposed, stolen data, and the Target point-of-sale malware.
+But sometimes it’s not clear to our customers how much time and skill malware authors invest in their tools.
+A recent case at McAfee Labs got us scratching our heads to understand what was going on.
+The malware in question was already detected by our products as Sefnit-FAT, but the true content of the malware couldn’t be replicated in our environment no matter what we did.
+Sefnit is a malicious family used in ad-click fraud.
+The infected computers will start to silently access various advertisement links to increase the ad hits and give money to the ad owner.
+This is usually done by installing a malicious DLL in the system that monitors active browsing sessions and injects code into any request made by the user.
+It may also involve the use of malicious browser add-ons, which perform the same function.
+Back to our case: We had to describe the features in the malware sample submitted by one of our customers, but the sample wouldn’t replicate in our environment.
+The sample was a DLL, packed with Themida, a known packer and code protector that is pretty hard to reverse-engineer.
+Accompanying the sample was a file with same name as the DLL but the extension .idx.
+It contained encrypted data.
+After removing the Themida packer layer, we found the code to read and decrypt the .idx file.
+The DLL file was simply decrypting the content of .idx and loading it in memory.
+But one thing caught our attention and explained why we were not able to replicate the sample: The “key” to decrypt the file was formed by hashing information from the machine on which it ran.
+The malware collected information such as machine GUID, the folder where it was started, computer name, and other data to generate a hash, which was then used as the key.
+If the sample was not run from a specific folder, on a specific machine, it would not decrypt the payload.
+How was that encrypted file generated?
+How did the malware author know what information was present on the target machine to create a file that was unique to it?
+Connecting the Dots
+We knew that this detection was pretty prevalent, with thousands of detections per day, and that got us thinking how the malware could be so widespread and at same time unique to each machine, which is a characteristic of a targeted attack.
+Sefnit detection data.
+(Source: McAfee GTI)
+Looking at our Global Threat Intelligence (GTI) data, we noticed that Sefnit-FAT overlapped samples detected by another detection: Trojan-FDNK.
+Our GTI data allow us to relate samples based on several factors, and one that helped us is replication data.
+We were able to find an executable (MD5: 129FFF31E13180F6E42C1991FB20EA12) that during replication dropped another sample detected by Trojan-FDNK.
+That was possibly a dropper for the DLL we were trying to analyze.
+The file was a small executable (less than 50KB) with a PDF icon.
+These files are usually dropped on user systems by exploit kits such as Blackhole, Redkit, or Cool.
+We detect these as Dropper-FJS, Sefnit-FDNJ, and Trojan-FDLW, among others.
+This executable turned out to be another layer of obfuscation.
+Once executed, it looks for setup.dat in the same folder where it is located, and decrypts this content in memory, generating a DLL.
+Let’s call this the Dropper DLL.
+This DLL is never written to disk, but instead is loaded in memory and executes from its entry point.
+When analyzing what this DLL did, we noticed that it was Sefnit.
+Sefnit at Work
+So we were able to find a dropper for the Sefnit DLL, but it was not clear yet how it was locked to run only on one specific machine.
+We took a closer look at the Dropper DLL, and what we found was pretty interesting.
+Once the DLL executes, it collects the following information:
+Machine GUID
+System Driver: Name
+Process: Name, Executable Path
+Network Adapter Configuration: Caption, Description, MAC Address
+Computer System Product
+Operating System
+Processor
+Onboard Device
+CDROM Drive
+Sound Device
+Logical Disk
+Disk Drive
+Physical Media
+Computer System
+Base Board
+System Enclosure
+Display Configuration
+Video Controller
+BIOS
+System
+System Board: Product, OEM string array, Model, Caption, Serial number, Version, Manufacturer
+The first hint that this had something to do with our DLL was the collection of the machine GUID, which was used by the Loader DLL to decrypt its payload.
+Analyzing the function that captured this information in both the Dropper DLL Sefnit sample and the Loader DLL we got from our customer, we confirmed that they have exactly the same code:
+The code to collect machine GUID matches exactly on Dropper DLL and Loader DLL.
+This information is encrypted and sent to the malicious control server for this malware.
+The server then sends another DLL, which is specifically tailored for the infected machine.
+And that DLL is exactly what we had from our customer.
+This custom DLL was configured to look for a file in the same folder where it was dropped and with the same name as itself, but using one of four extensions: .idx, .lck, .txt, or .dat.
+It decrypts this file using the same information collected by Dropper DLL, and starts this decrypted content the same way that the Dropper DLL was started.
+We now had almost the full picture, but one piece was still missing: What was the content of the .idx file we received?
+Exposing the Plot
+Continuing our analysis of Dropper DLL, we noticed that after receiving Loader DLL from the web server, it creates a registry key to start it after reboot:
+HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run = regsvr32 /s %appdata%\loader.dll
+(The preceding DLL name is just an example.
+The actual DLL might have random names on different systems.)
+At this point, we solved the mystery: Dropper DLL, which was created in memory by the executable, encrypted itself using the same information collected earlier, and wrote the encrypted data to a file named after the Loader DLL sent from server, and using one of the four extensions we named.
+We analyzed the rest of the code and found how the machine lock observed in the initial DLL is generated.
+The following graphic illustrates the process:
+Flowchart of a Sefnit infection.
+As we can see, the mysterious .idx is the same thing as the Dropper DLL generated in memory by the executable, which in turn was dropped on the system by the exploit kit.
+We have found several other files with same name (setup.dat) on our database, and all of them can be decrypted by the same executable, and generate the same malware.
+Conclusion
+The group behind this malware uses a complex method to ensure that their samples will run only on specific machines, in an attempt to divert malware analysts and automated malware analyzer systems from learning what the malware does, and to avoid exposing code to anyone trying to see what is happening.
+This may seem like too much work just to hide ad-click fraud, but if you have read our other reports you will know that these miscreants earn millions of dollars each year.
+But with the power of our GTI infrastructure and a little ingenuity, we were able to uncover this malicious scheme and protect our customers.

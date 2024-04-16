@@ -1,0 +1,54 @@
+As cloud computing evolves, containers continue to become more and more popular.
+New solutions and ideas to the way we implement containers are being introduced.
+One of these new ideas is rootless containers.
+Rootless containers is a new concept of containers that don’t require root privileges in order to formulate.
+Many solutions have been proposed to overcome the technological challenges of creating a container with an unprivileged user, some of them are still under development and some are production-ready.
+While rootless containers present some advantages, mainly from a security perspective, they are still in their early stages.
+In this post, Unit 42 researcher Aviv Sasson reviews the internals of rootless containers.
+Aviv also presents a vulnerability he found in one of the major rootless networking components called Slirp.
+Palo Alto Networks customers running Prisma Cloud are protected from this vulnerability with the host and container vulnerability scanner, which alerts on software components running with this vulnerability.
+As the name implies, rootless containers are the same as conventional containers but differentiate in the fact that they don’t need root privileges in order to be formed.
+Nowadays, rootless containers are still in early adoption stages, but are already supported by the major players in the field.
+There are several reasons why rootless containers have emerged.
+Adding a new security layer.
+In case the container engine, runtime or orchestrator is compromised, the attacker won’t gain root privileges on the host.
+Allowing multiple unprivileged users to run containers on the same machine (e.g.
+HPC).
+Allowing isolation inside nested containers.
+Adding a new security layer.
+In case the container engine, runtime or orchestrator is compromised, the attacker won’t gain root privileges on the host.
+Allowing multiple unprivileged users to run containers on the same machine (e.g.
+HPC).
+Allowing isolation inside nested containers.
+This solution was made possible by a new development in the Linux kernel that allows unprivileged users to create new user namespaces.
+When a user creates and enters a new user namespace, he becomes root in the context of that namespace and gains most of the privileges required to spawn a functioning container.
+I won’t dig into user namespace technicalities, but namespace root isn’t as privileged as real root in areas that affect the entire system (for example, a namespace root cannot load or delete kernel modules).
+This led to some challenges that were solved differently by each container engine.
+In order to allow proper networking inside a container, usually, a Virtual Ethernet device (VETH) is created and in charge of the networking.
+This poses a problem for rootless containers, as only real root has the privileges to create such devices.
+A number of solutions were proposed to solve the problem — the main ones being Slirp and LXC-user-nic.
+Slirp was originally designed to be an internet dial-up for unprivileged users.
+In time, it found a new purpose as a networking stack for virtual machines and emulators, including the well-known QEMU (aka Quick Emulator).
+After some modifications, it was adjusted to enable networking in rootless containers.
+It works by forking into the container’s user and network namespaces and creating a tap device that becomes the default route.
+It then passes the device’s file descriptor to the parent who runs in the default network namespace, which is now able to communicate both with the container and the internet.
+Another way to set up networking is by running a setuid binary that creates a VETH device.
+Although it does enable networking inside the container, it misses the point of rootless containers because it requires the container binary to run with root privileges.
+One of the complex elements in implementing containers is storage management.
+By default, container engines use a special driver called Overlay2 (or Overlay) to create a layered filesystem that is efficient in both space and performance.
+This cannot be done with rootless containers, as most Linux distributions don’t allow mounting overlay filesystems in user namespaces (Ubuntu is an exception).
+This problem drove rootless containers to work with other drivers and filesystems.
+The obvious solution was to use another driver, like the VFS storage driver.
+While it works, it is significantly less efficient.
+The better solution was to create a new storage driver to suit the needs of rootless containers.
+One such driver is the FUSE-OverlayFS.
+It’s a user-space implementation of Overlay, which is more efficient then VFS and can run inside user namespaces.
+The Linux control group (cgroups) feature, another key element of implementing containers, allows processes and containers to be organized into hierarchical groups whose usage of various types of resources can then be limited and monitored.
+Since the kernel’s cgroups interface is provided through a pseudo-filesystem that usually resides in “/sys” (a root owned directory), a non-root user cannot access and utilize it.
+To tackle this problem, two approaches were proposed:
+A new kernel implementation of cgroups that supports delegating permissions to unprivileged users.
+The downside is that V2 doesn’t support all the controllers that were implemented for cgroups V1 (e.g.
+devices, net_cls, net_prio,etc.
+).
+Another solution to the problem, by LXC, is to install pam_cgfs.so, which is a Pluggable Authentication Module (PAM module) that will allow unprivileged users to authenticate and manage cgroups.
+The following container engines support rootless containers with the following components:

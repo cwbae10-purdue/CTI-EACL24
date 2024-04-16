@@ -1,0 +1,78 @@
+In February 2020, we observed a Trojan injected into the system process memory on a particular host.
+The target turned out to be a diplomatic entity.
+What initially attracted our attention was the enterprise-grade API-like (application programming interface) programming style.
+Such an approach is not that common in the malware world and is mostly used by top-notch actors.
+Due to control server reuse (Choopa VPS service), target profiling techniques and code similarities, we attribute this campaign with high confidence to the SixLittleMonkeys (aka Microcin) threat actor.
+Having said that, we should note that they haven’t previously applied the aforementioned coding style and software architecture.
+During our analysis we didn’t observe any similar open source tools, and we consider this to be the actor’s own custom code.
+To deliver a new network module with a coding style that we consider enterprise-grade, Microcin used steganography inside photos, including this one of a sock (payload removed here)
+SixLittleMonkeys’ sphere of interest remains the same – espionage against diplomatic entities.
+The actor is still also using steganography to deliver configuration data and additional modules, this time from the legitimate public image hosting service cloudinary.com.
+The images include one related to the notorious GitLab hiring ban on Russian and Chinese citizens.
+In programming terms, the API-like architecture and asynchronous work with sockets is a step forward for the actor.
+By “enterprise-grade API-like programming style” we mean, firstly, asynchronous work with sockets.
+In terms of Windows user-space entities, it was I/O completion ports.
+In the OS kernel space, this mechanism is actually a queue for asynchronous procedure calls (APC).
+We believe there’s a reason for using it in backend applications on the high-loaded server-side.
+Obviously, however, neither client-side software nor Trojans of this kind need this server-side programming approach.
+So, it looks to us like the developers have applied some habits from server-side programming.
+Secondly, the exported function parameters in the injected library look more like an API: the arguments are two callback functions – encryptor/decryptor and logger.
+So, if the authors decide to change encryption or logging algorithms, they could do so easily without even touching the network module.
+Once again, even targeted malicious samples rarely take such architectural issues into consideration.
+Another injected library’s exported function parameter is the host name.
+If the caller doesn’t pass the infected host name as this parameter, the following commands will not be executed.
+It filters out all messages to other hosts.
+Infection timeline
+The backdoor is started by GoogleCrashHandler.exe, due to .dll search order hijacking (version.dll).
+Bitmap files with a steganography downloader and decryptor (spoolsv.dll), injected into the spoolsv.exe API-like network module, are injected into the same system process.
+Let’s cover the modules one at a time.
+Our telemetry shows that another Microcin backdoor was already on the host before this new network module.
+It’s most probably a reinfection with newer malware.
+This UPX packed .dll was executed with the legitimate GoogleCrashHandler.exe (very common library search order hijacking) just before the New Year.
+The compilation timestamp is obviously spoofed.
+In this case we don’t know how the backdoor, along with the legitimate application, was delivered.
+We won’t concentrate on this backdoor in this report, because it’s fairly typical for Microcin.
+We just want to emphasize that the timeline above shows it existed on the host before the analyzed module.
+The campaign in question starts with the 64-bit spoolsv.dll downloader/decryptor module that has to be loaded by spoolsv.exe into its address space.
+So far, we have registered three samples of this module.
+The file tails contains the following encrypted configuration data.
+We have published the source code of our decryptor for Microcin’s configuration and steganography at https://github.com/dlegezo/common.
+The bitmap URL serves to download the image (like the one with the sock shown above) with the next stage network module.
+The module build, target ID and random ASCII chars are for the next network module, which includes them in the control server communications.
+To get the bitmap, the downloader sends an HTTP GET request to cloudinary.com.
+The steganography is inside the color palette part of the .bmp file.
+A typical decryption algorithm includes four stages:
+Combine neighboring half bytes into one byte
+Decrypt data length with custom XOR-based algorithm
+Decrypt six-byte XOR key for main data
+Decrypt data itself using decrypted length and key
+Besides the configuration data and steganography, the same algorithm is used for the C2 traffic.
+As we mentioned, due to the malware architecture, the latter can easily be changed.
+Encryption is XOR-based, but the key scheduling is quite specific and tricky.
+In the corresponding appendix we provide the part of the decryptor containing the algorithm.
+Besides the sock image, the campaign operators use more social-oriented photos (payload removed here).
+The background here is the GitLab hiring ban on Russian and Chinese citizens
+So far, we have registered four different images.
+The encrypted content in all cases are PE files with the following network module and C2 domain for the files.
+This is the only parameter that comes from bitmap; all others are provided by the downloader.
+The downloader decrypts the configuration data and C2 domain from the bitmap and then everything is ready to start the last stage inside the same spoolsv.exe virtual address space.
+We consider the architectural approach in this module to be the most interesting part of the chain.
+The network module’s entry point is the exported function SystemFunction000() with multiple arguments.
+As a beacon, the Trojan prepares an HTTP POST request with the target’s fingerprinting data.
+And a lot of the parameters become part of the request.
+The last two arguments illustrate why we call the network module API-like: any encryption and logging routine could be used without even touching the module code.
+We consider this programming approach as scalable and useful for large systems.
+Let’s take a look at these two callback arguments.
+The module uses the Windows API function WSAIoctl() – something rarely seen in malware – to get the ConnectEx() address and sends a prepared request.
+Another Windows API function, GetQueuedCompletionStatus(), is in charge of asynchronous work with I/O.
+In other words, the malware uses I/O completion ports for Windows user-space entities, which is effectively an APC queue in the OS kernel.
+The same data structure is used for both sides of the communication: from host to C2 and back.
+Let’s describe its main fields here.
+So far, we have described the infection chain, module architecture, custom encryption and HTTP POST-based C2 communication protocol.
+Last, but not least, is the command set shown in the table below.
+This time the Microcin campaign has made an interesting step forward, not in terms of a fancy initial infection vector, but as programmers.
+The API-like network module is much easier to support and update.
+This improvement is not only about anti-detection or anti-analysis; it’s about software architecture and a step towards a normal non-monolithic framework implementation.
+Downloader ef9c82c481203ada31867c43825baff4 1169abdf350b138f8243498db8d3451e c7e11bec874a088a088b677aaa1175a1
+Network module f464b275ba90b3ba9d0a20b8e27879f5 9320180ef6ee8fa718e1ede01f348689 06fd6b47b1413e37b0c0baf55f885525 625a052ddc80efaab99efef70ba8c84f
+Domains and IPs 95.179.136.10 apps.uzdarakchi.com forum.uzdarakchi.com forum.mediaok.info owa.obokay.com

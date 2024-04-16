@@ -1,0 +1,280 @@
+On 17 July, we published a blog about Madi and the ongoing campaign used to infiltrate computer systems throughout the Middle East that has targeted users in Iran, Israel, Afghanistan and other individuals scattered across the globe.
+Here is the follow up with a detailed analysis of the infostealer used in the campaign.
+The infostealer is installed by one of the various downloaders used in the attacks, which can be separated into two categories:
+Downloaders using the social engineering techniques described in our first blog post (displaying pictures, movies, documents etc.)
+to trick the user Downloaders that simply download and install the infostealer
+Downloaders that simply download and install the infostealer
+Both types of downloaders copy themselves as “UpdateOffice.exe” into the “Printhood” directory, e.g.
+: “C:Documents and Settings%USER%PrintHoodUpdateOffice.exe” where they start executing.
+Both the infostealer and downloaders create fake files with random names in their respective folders.
+The downloaders also drop some files which assist the malware (see our first blog for details).
+Only one file will be used by the infostealer: nam.dll.
+This file is created by the downloader in the “Templates” directory (e.g.
+: “C:Documents and Settings%USER%Templatesnam.dll”) and contains a BOT prefix/build that will be used by the infostealer when connecting to the command and control server (C&C).
+In order to download and install the infostealer, the downloaders connect to the C&C server to request an HTM page.
+Older variants use http://[C&C address]/ASLK/khaki/Abi/UUUU.htm, whereas more recent ones use “http://[C&C address]/ASLK/asgari/mah/UeUeUeUe.htm”.
+The HTM page is a copy of Google index, with a double BASE64 encoded executable embedded in the page:
+The keyword “tamamshodfile” at the bottom will be explained in the ‘Infostealer analysis’ section below.
+The downloaders simply parse the HTM file, and decode the Base64 payload twice and save the resulting PE file as “iexplore.exe” in the “Templates” directory.
+Once downloaded, the infostealer is executed.
+All the versions of the infostealer have an Internet Explorer icon, and were written in Delphi.
+The version used in this article, which appears to have been compiled on 10 June 2012, is packed using UPX 3.08.
+The file is rather big: 415 KB packed, and 1.14 MB once unpacked.
+One peculiarity of the infostealer used in the Madi campaign is the heavy use of Delphi Timers.
+There are 52 of them as you can see on the screenshot below:
+.
+Numerous bugs were discovered during the analysis of the infostealer.
+Some of them won’t be discussed here as we don’t want to help the authors improve their malware.
+Upon execution, the first activity of interest performed by the infostealer happens inside TForm4.FormCreate.
+It starts with the setup of a keylogger.
+In order to do so, Madi infostealer uses the Windows function “SetWindowsHookEx” with the “WH_KEYBOARD_LL” Id_Hook.
+Once the keylogger has been installed, the infostealer reads the “nam.dll” file (dropped by the downloader) to get the BOT prefix and concatenates it with the computer name.
+Hereafter this will be referred to as “BOTID_TMP”.
+The final BOTID contains some numbers derived from the “C:” Volume Serial Number, as we will see later on.
+The following timers are then disabled in this specific order:
+Timer1, Timer16, Timer18, Timer17, Timer20, Timer19, Timer24, Timer8, Timer30, Timer31, Timer33, Timer34, Timer36, Timer37, Timer38, Timer39, Timer40, Timer41, Timer44, Timer45, Timer46, Timer48, Timer49, Timer50.
+The malware uses a lot of external files to receive commands, which is another indicator of poor programming skills.
+Those files are used to inform the malware about the infection status.
+In order to avoid confusion, hereafter, when referring to a file, it is in the malware directory (“Templates” directory), unless stated otherwise.
+The infostealer looks for the following files:
+“fsdiskget.dll”: If found, it enables Timer 23 – otherwise, disables it.
+“nrbindek.dll” : If found, it enables Timer 28 – otherwise, disables it.
+“specialfile.dll”: If found, it deletes it.
+“filesend.xls”: Doesn’t actually look for it; just tries to delete it.
+“begirnagir.htp” : If NOT found, it disables Timer3
+“filebind.xls”: If found, it enables Timer29 – otherwise, disables it.
+Next, Timer14 and Timer13 are both disabled.
+The Trojan looks for “First.dll”, which is created the first time the malware is executed.
+If already present, the code returns from TForm4.FormCreate.
+Otherwise, the following happens.
+It creates first.dll with a hardcoded stream of bytes (not a real .dll, like the .dll mentioned above, as we will see later on when we analyze the timers more closely).
+Like the downloaders, the infostealer also generates fake files with random names.
+Before returning from TForm4.FormCreate, 6 loops will be executed:
+XLS: 51 fake XLS files with random names (7 characters) are generated using a hardcoded stream of bytes.
+EXE: 51 fake EXE files with random names (6 characters) are generated using a hardcoded stream of bytes.
+DLL: 201 fake DLL files with random names (9 characters) are generated using a hardcoded stream of bytes.
+TXT: 51 fake TXT files with random names (4 characters) are generated using a hardcoded stream of bytes.
+XML: 51 fake XML files with random names (8 characters) are generated using a hardcoded stream of bytes.
+HTM: 51 fake HTM files with random names (8 characters) are generated using a hardcoded stream of bytes.
+As mentioned before, the keylogger setup is done in the TForm4.FormCreate.
+It uses “SetWindowsHookEx” with the “WH_KEYBOARD_LL” Id_hook to intercept keystrokes.
+The hook function is rather rudimentary.
+For instance, it uses the GetAsyncKeyState, with the “VK_BACK” to find out if the victim used backspace.
+For each typed key, there is a handler to save which key was typed in the keylogger buffer “poki65_pik_log”:
+It comes as no real surprise that the keylogger is very basic and makes no use of any advanced technologies.
+The malware uses 52 timers.
+Therefore, we will group them by actions, in order to make the overall analysis easier to follow.
+We are now going to cover all the timers responsible for contacting the C&C server and receiving commands to execute on the infected machine, and all the various handlers used to execute actions according to those orders.
+Note: In many routines, Madi creates “.bat” files in order to ping the C&C server to see if it is up or not and saves the result in a special file.
+Each file has a different name.
+If these files are referenced, we will provide the timer number responsible for its creation.
+The server manager looks like this:
+The GUI was probably rushed, but it serves its purpose.
+It can be used to create specific tasks for victims.
+See Timer 12 to see how each command is handled by the infostealer.
+Interval: 25 seconds
+Before receiving commands, the infostealer connects to the C&C to a special page.
+I call it the check-in routine.
+Here is the description:
+Timer 1 gets the ApplicationName and concatenates it with “.pkklm” (See Timer 15 description for details on how this file is created).
+It tries to open that file, looking for the “Reply From” string (when the IP responds to a ping).
+If it’s not found, it disables Timer 1 and returns.
+If present, the last part of the BOTID is generated using the “C:” Volume Serial Number.
+Basically, the API function GetVolumeInformationW is called to get the Volume Serial Number, which is then concatenated to the BOTID_TMP generated in the TForm4.FormCreate.
+Now that the final BOTID has been generated, the final URL that is visited is generated as follows:
+BOTID|COMPUTERNAME|VolumeSerialNumber/dastor/file.htm e.g.
+: abaanu5|MYCOMPUTER-8712422C|6D8704FE/dastor/file.htm
+The final URL is visited using Internet Explorer (IE) instrumentation.
+(e.g.
+: http://C&C/abaanu5MYCOMPUTER-8712422C6C7704EF/dastor/file.htm)
+Once visited, it enables Timer 18, disables Timer 1 and returns.
+This is the checking-in process, which can tell the attackers when a victim computer is ready to receive commands.
+Once the attackers have decided to send commands to the infected computer, a “das.htm” will be available in the “/dastor/” folder.
+Interval: 25 seconds
+Timer 1 gets the ApplicationName and concatenates it with “.pkxm” (ping results from Timer 11).
+It tries to open that file, looking for the “Reply From” string (when the IP responds to a ping).
+If it’s not found, it disables Timer 16 and returns.
+The Final BOTID is computed (see Timer 1 description) to build the URL that is visited in order to receive commands.
+Before visiting that URL, the “dast.xls” file is deleted (see Timer 17 below).
+The URL is visited using IE instrumentation.
+Timer 17 is enabled, and Timer 16 disabled.
+Interval: 20 seconds
+Note: During the execution of the Madi infostealer, many instances of IE are running.
+Timer 17 will go through all the different instances of instrumented IE, looking for pages with “dastor” in their title.
+Once found, the content of the page (without the title) is saved as “dast.xls”.
+If nothing is found, it will go to next IE instance, and repeat the checks until no instances are left.
+If nothing is found, a clean-up routine is launched.
+At the end of the Timer 17, it looks for ” – dastor – Windows Internet Explorer” and different variants (Internet Explorer) and sends a “WM_Close” Message using the “PostMessageW” function in order to close the page.
+Among all those captions, it also looks for ” – 404 – File or directory not found” and variants of 404 pages, if the page wasn’t found.
+Once the clean-up is completed, Timer 17 disables itself and returns.
+At this point, we have a local file with the commands to execute on the infected machine.
+This timer is responsible for parsing the command file.
+In order to make the description a little easier to follow, here is a sample command file:
+When executed, Timer 12 is disabled.
+The infostealer Trojan then checks if the file “dast.xls” is present (created by Timer 17, see above).
+If it’s not present, Timer 12 is re-enabled and returns.
+The next stage of the process opens “dast.xls” which searches for commands to execute (see the command file above).
+Lots of commands can be sent simultaneously, meaning Timer 12 will not stop parsing when one command is found.
+Here is the full logic of the parsing:
+PIK: If the command file contains the word “pik”, it checks if the status of Timer 3 is enabled.
+(Timer 3 is a webmail, social network and IM screen capture routine.)
+If not enabled, Timer 3 is enabled, and screen monitoring begins.
+Command parsing continues.
+If the “pik” command is not found, Timer3 is disabled.
+DESK: If the command file contains the word “desk”, it checks if the status of Timer 13 is enabled.
+(Timer 13 is a screen capture routine.)
+If not enabled, Timer 13 is enabled, and screen monitoring begins.
+Command parsing continues.
+If the “desk” command is not found, Timer13 is disabled.
+SOUND: If the command file contains the word “sound”, it checks if the status of Timer 14 is enabled.
+(Timer 14 is a sound recording routine.)
+If not enabled, Timer 14 is enabled, and sound recording begins.
+Command parsing continues.
+If the “sound” command is not found, Timer14 is disabled.
+If the command file contains the word “newfi”, nothing happens.
+This is probably a leftover from older code.
+UPDATE:
+If the command file contains the word “update”, it checks to see if it also contains a version number, which must be different from current version (“1.1.6” in the analyzed sample).
+If neither of those two conditions are valid, it goes to the next command parsing.
+The checking routine is very simplistic and assumes that the version number will be higher, not lower.
+It is therefore possible to downgrade the Trojan.
+If the required update criteria are met, it will create “Update.dll”.
+(Update.dll is made from a hardcoded stream of bytes and isn’t a valid DLL.)
+The Trojan now locates the “STARTUP” folder where a copy of the “UpdateOffice.exe” (Trojan downloader) is found, and executes it using ShellExecute.
+(In the first part of the article, we explained how the downloader downloads and installs the infostealer.)
+The Trojan downloader is necessary in order for updates to occur.
+If the downloader has been deleted for some reason, the update won’t be performed.
+Once executed, Timer 12 terminates its execution, as the infostealer executable (iexplore.exe) will be overwritten by the Trojan downloader with a newer version and executed.
+DELETE:
+If the command file contains the word “delete”, it will create “delete.dll”, using exactly the same stream of bytes that is used in “update.dll”.
+The Trojan now locates the “STARTUP” folder where a copy of the “UpdateOffice.exe” downloader is located, and deletes it.
+Once deleted, it then proceeds to terminate itself.
+At this point, upon the next reboot, the infection isn’t restarted.
+Note: The infostealer doesn’t restart by itself, allowing an automatic update every time the computer reboots.
+On the other hand all the other downloader files (non-malicious) are still present in the /printhood/ folder.
+The full folder of the infostealer is still present, as is the malware.
+BIND: If neither “update” nor “delete” are found, Timer 12 checks if the command file contains the word “bind” and creates “nrbindek.dll” using exactly the same stream of bytes that is used in “update.dll”.
+Nothing else happens at this point.
+However, as we have seen in the Form creation, upon execution, the malware checks whether “nrbindek.dll” is present.
+If it is present, Timer 12 will enable Timer 28.
+If “bind” isn’t found, the parsing continues with the next command.
+DISKGO: If the command file contains the word “diskgo”, it will create “lbdiskgo.dll”, using exactly the same stream of bytes that is used in “update.dll”.
+Parsing continues with next command.
+Note: “lbdiskgo.dll” is checked by Timer 42 and Timer 43.
+DISKGET: If the command file contains the word “diskget”, it will create “fskdiskget.dll”, using exactly the same stream of bytes that is used in “update.dll” and enable Timer 23.
+Timer 12 then checks whether “specialfile.dll” is present.
+If NOT, it will look for the file extensions included in the command that was received.
+The attackers select from a list of 27 extensions that are provided by the C&C server, and which can be selected using a Remote Control Tool (see at the beginning of the Timer 12 description to view the extensions listed in the sample command file).
+Each file extension is separated by a special marker “$.$”.
+Timer 12 searches for the “$.$” marker.
+If it’s not present, the parsing stops there.
+If the marker is present, it saves those extensions to the “specialfile.dll” and enables Timer 26.
+Note: Specialfile.dll is therefore used to tell the malware what file extensions to look for and Timer 26 will handle diskget.
+Afterwards, or if specialfile.dll was already present, it will check whether the “logfi.dll” is present, and stop parsing commands if it is not.
+If the file is present, it looks in the command buffer for the word “file” and exits the commands parsing if not found.
+If logfil.dll is present, it will search files on fixed hard drives and remote drives.
+The authors’ poor programming skills are quite noticeable in this part of the code.
+It is also interesting to note that it will search for “MHTML” files, even if that option isn’t available in the Server Control tool, and that they made a duplicate entry in the hardcode list of files that need to be to located (htm is present twice).
+File types searched:
+*.*txt/*.*jpg/*.*doc/*.*pdf/*.*bmp/*.*docx/*.*mdb/*.*xls/*.*csv/*.*html/*.
+*avi/ *.*mp3/*.*wave/*.*htm/*.*rar/*.*zip/*.
+*htm (again?!)/*.*gif/*.*7z/*.*jar/*.*JPEG/*.*mp4/*.
+*3gp/ *.*dat/*.*MPEG/*.*SWF/*.*WMV/*.*xml/*.
+*MHTML/
+Total of 29 extensions, with one duplicate.
+27 extensions are present in the Server Control tool and one that is not (MHTML).
+It saves the log file as “logfi.dll” for each hard drive and creates a backup as “logfi.dll.BMH”.
+It will overwrite the logs for each iteration of the loop.
+It only search files on remote and fixed drives, not on USB/external drives; that’s for the logging part.
+Once the Parsing is complete, Timer 12 re-enables itself and exits.
+Interval: 60 seconds.
+Timer 3 creates a “begirnagir.htp” file.
+It then checks whether the user has been surfing or using the following applications and takes a screen capture if found:
+gmail, hotmail, yahoo!
+mail, google+, msn messenger, blogger, massenger (?
+), profile,icq, paltalk, yahoo!
+messenger for the web, skype, facebook.
+The screen captures are saved as a JPG using the following name convention: mm-dd-yyyy-hhnnss.
+The “Now” and “FormateDateTime” functions are used.
+Interval: 3 minutes
+Note: The GUI used to control the bot says 2 minutes, but the code doesn’t lie.
+Timer 13 takes screen captures every 3 minutes.
+They are saved using the following name convention: mm-dd-yyyy-hhnnss.
+The “Now” and “FormateDateTime” functions are used.
+The files are in JPG format.
+This timer is responsible for starting the audio recording using the mci* functions from winmm.dll.
+The following commands are used: “OPEN NEW TYPE WAVEAUDIO ALIAS mysound”, “SET mysound TIME FORMAT MS BITSPERSAMPLE 8 CHANNELS 1 SAMPLESPERSEC 8000 BYTESPERSEC 8000” and finally “RECORD mysound”.
+Once the commands are sent, Timer 30 is enabled, and Timer 14 returns.
+Interval: 60 seconds
+This timer does anything apart from start Timer 31 when it is time to save the recoded audio.
+When sufficient time has passed since the start of audio recording, Timer 31 disables Timer 30, stops the recording by sending the following command: “STOP mysound”.
+To save audio files, it sends the “SAVE mysound” command.
+The files are saved using the following name convention: mm-dd-yyyy-hhnnss.
+The “Now” and “FormateDateTime” functions are used.
+The final file is saved as .wav.BMH.
+Timer 31 is then disabled, and Timer 14 (Sound handler) is re-nabled for the next audio recording.
+Interval: 60 seconds
+Even though the keylogger setup is performed when the application starts, in the FormCreate routine Timer 32 sets up the keylogger every 60 seconds.
+The details of the keylogger have already been described earlier in this document.
+Interval: 10 seconds
+Timer 2 starts by getting the current user name (GetUserName API Function), and then checks if the “poki65.pik” file is present.
+This file is the current ongoing keylogging file.
+If it’s not present, it looks for “solt.html”, which indicates whether the keylogger has created its first log yet.
+If none of those files are present, it means it is the first time the keylogger has started logging.
+The first log file is different from subsequent log files, as it contains more information.
+The Madi keylogger files use HTML tags and colors to make them easier to read.
+For the first log, it executes “cmd.exe /c ipconfig /allcompartments > ipconfig.txt”
+It waits 5 seconds and appends the content of “ipconfig.txt” to the HTML content that is created.
+The computer name as well as the current user name is appended to the log, followed by the list of available drives: Floppy Drive, Fixed Drive, Network Drive, CD-Rom Drive and RAM Disk.
+Finally, a full list of installed software, including security patches, is appended to the log file, as can be seen on the screenshot below:
+Once this part is completed, it creates a file called “solt.htm” containing the word “wertik”.
+It will continue formatting the poki65 log file.
+At the very beginning you can see the “Content-Language” set to “fa”, which is Persian.
+This is how the keylogger logs are generated.
+Interval: 1 millisecond
+Timer 4 is responsible for inserting IMG tags inside the keylogger log.
+It is also responsible for adding the time stamp taken from the C&C server (see Miscellaneous section, Timer 7 and 8).
+Timer 6 searches for the poki65.pik file – the current log session.
+If not found, it returns.
+It then looks for the size of the log file.
+If it is lower than 15 KB, it will return.
+Only log files bigger than 15 KB are exfiltrated.
+If the size criteria is met, they are copied using the following name convention: mm-dd-yyyy-hhnnss.HTM.
+Timer 6 then deletes “poki65.pik” and returns.
+Note: A new log will be created by Timer 2 (solt.html tells the keylogger not to list drives, installed software etc.
+again).
+Data stealing is handled by several timers.
+Each type of stolen data is stored in a special folder in the server.
+Files exfiltrated to the C&C servers are Base64 encoded.
+BIND:
+Note: When the infostealer starts, Timer 28 is enabled if the file “nrbindek.dll” is present (created by the BIND command).
+Timer 28 searches for “*.
+*exe” files on all fixed hard drives.
+For each *EXE* file found that doesn’t belong to the “Windows”, “Program Files” or “Program Files (x86)” folders, an entry (full path to *EXE* file) is added to the file filebind.xls.
+Once the hard drives have been scanned, Timer28 returns.
+Filebind.xls therefore contains all the executables on the fixed hard drives, except from those in Windows and Program Files.
+Note: The code of this timer is some of the worst that is used in the infostealer.
+The programming, obfuscated with Delphi, is very bad.
+Timer 28 generates a list of *EXE* files that don’t belong to the “Windows”, “Program Files” or “Program Files (x86)” folders.
+For each entry of that file, Timer 29 will make a backup of the executables.
+The *.bind* extension is appended to their original name.
+Many files are used to monitor the exfiltration status of the executables.
+However, Timer 29 doesn’t actually seem to exfiltrate anything, probably because of bugs.
+Interval: 5 seconds
+Timer 9 is disabled.
+If either Timer 19 or Timer 20 is enabled, it means there is already an active exfiltrating task.
+Timer 9 is enabled and it returns.
+Otherwise, Timer 9 searches for files *.
+*KILOP as well as *.htm.BMH* files in the malware directory.
+KILOP files are Base64 encoded versions of files to exfiltrate.
+If no file is found, Timer 9 is enabled and returned.
+If files are present, they are ready to be exfiltrated, and Timer 19 is enabled.
+Before returning, Timer 9 is enabled.
+Interval: 25 seconds
+Timer 19 searches for a specific page title:
+If the page title “new title hastam – Microsoft Internet Explorer” is found, Timer 19 returns.
+“OKshodiha – Windows Internet Explorer” means a file is ready to be uploaded – Timer 20 is enabled and returns.
+If none of those captions are found, Timer 19 starts IE_Instrumentation and visits the Sendfilejj.html page, enables Timer 20, then returns.
+Timer 20 searches for *.
+*KILOP files, computes the BOTID (see Timer 1 for details), and fills the POST parameters.
+The “S0”, “S1” and “S2” forms present in the Sendfilejj.html are “filled” and the file is uploaded using IE Instrumentation.

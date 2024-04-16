@@ -1,0 +1,38 @@
+Hi Everyone, Mark Yason here from IBM X-Force.
+Last month, we saw the first in-the-wild exploit [1] capable of escaping the Adobe Reader sandbox, a security feature added in Adobe Reader in 2010 to limit the impact of successful exploitation of Reader vulnerabilities.
+In this post, I’ll describe the sandbox vulnerability that was leveraged by the exploit and the same vulnerability I found in the sandbox feature of the Adobe Flash Player for Firefox.
+The Reader sandbox configuration is composed of two processes – the sandbox process (also called the renderer process) and the broker process.
+The sandbox process is responsible for parsing and rendering the PDF content while the broker process, among other things, is responsible for executing privileged operations.
+The broker process exposes several services which are callable from the sandbox process.
+These services are used for executing privileged operations on behalf of the sandbox process (provided that the operation is allowed by the sandbox policies) and for requesting the broker process to perform a particular action.
+These services are invoked thru an IPC connection between the sandbox process and the broker process:
+The Reader sandbox vulnerability that was exploited last month is in one of the services exposed by the broker process.
+Specifically, it is the service that handles the execution of the GetClipboardFormatNameW() API [2] in the context of the broker.
+The vulnerable code (in equivalent C version) looks similar to this:
+GetClipboardFormatNameW(format, name->buffer, name->size);
+Where name->buffer is a pointer to an output buffer that will receive the clipboard format name and name->size is the size of the output buffer in bytes.
+At first glance, there seem to be no problem with the API call; however, carefully reading the entry of the API in MSDN [2] shows what the problem is.
+The issue is that the third argument should be the size of the output buffer in characters – not the size of the output buffer in bytes!
+In the case of the vulnerable code, the call is for a wide character version of the API, which means that a character is treated as two bytes, this in turn results to the output buffer being treated larger (double) than its actual size.
+Because of the vulnerability, the exploit was able to write past the boundary of the output buffer.
+By carefully crafting the broker’s heap layout so that a memory block adjacent to the output buffer contains an object, the exploit was able to overwrite and control the object’s virtual function table pointer.
+Full control of the broker process then happened when the controlled virtual function table pointer is dereferenced for a virtual function call.
+While looking at the Reader sandbox vulnerability, I realized the possibility of the bug also existing in the sandbox code of the Adobe Flash Player for Firefox (Firefox Flash), and the reason is that the Firefox Flash sandbox code is based on the Reader sandbox code [3].
+I also remembered that there are dispatcher classes (classes that group exposed broker services according to function) which are found in both the Reader and Firefox Flash sandbox.
+Interestingly, the vulnerable service in the Reader sandbox is part of the SandboxClipboardDispatcher, a dispatcher class which is also found in the Firefox Flash sandbox!
+[4, 3]
+So I quickly and anxiously looked at the Firefox Flash code, examined the single function that references the GetClipboardFormatNameW() API, and my heart suddenly skipped a beat when I found the same of vulnerable code (in equivalent C version):
+GetClipboardFormatNameW(format, name->buffer, name->size);
+After verification of the bug, I hastily wrote a proof-of-concept code (PoC) to demonstrate that a Firefox Flash sandbox escape is possible and then quickly documented my findings afterwards.
+We then immediately submitted our PoC and findings to Adobe; Adobe on the other hand within a matter of few days released a patch [5] that includes a fix for the sandbox escape bug we reported to them – a very quick turnaround!
+The buffer overflow vulnerability that resulted to the two sandbox escapes was due to an incorrect buffer size argument passed to a wide character version of an API.
+The mishap can happen to anyone as there are APIs that receive a buffer size in bytes and there are APIs that receive a buffer size in characters and that may sometimes lead to confusion.
+Similar bugs can be weeded out from a codebase by looking for calls to APIs that have a corresponding ANSI and wide character versions and that receive a buffer size as an argument.
+Once suspect API calls are found, the passed buffer size argument can then be evaluated if they correspond to what the API expects.
+Finally, if you are interested in the inner workings of the Adobe Reader and the Adobe Flash Player sandbox, please refer to the papers my colleague Paul Sabanal and I wrote and presented at Black Hat [4, 3].
+[1] “APSB13-07 – Security updates available for Adobe Reader and Acrobat,” [Online].
+Available: http://www.adobe.com/support/security/bulletins/apsb13-07.html[2] “MSDN – GetClipboardFormatName function,” [Online].
+Available: http://msdn.microsoft.com/en-us/library/windows/desktop/ms649040(v=vs.85).aspx[3] “Black Hat USA 2012 – Digging Deep Into The Flash Sandboxes,” [Online].
+Available: http://media.blackhat.com/bh-us-12/Briefings/Sabanal/BH_US_12_Sabanal_Digging_Deep_WP.pdf [4] “Black Hat USA 2011 – Playing In The Reader X Sandbox,” [Online].
+Available: http://media.blackhat.com/bh-us-11/Sabanal/BH_US_11_SabanalYason_Readerx_WP.pdf[5] “APSB13-08 – Security updates available for Adobe Flash Player,” [Online].
+Available: http://www.adobe.com/support/security/bulletins/apsb13-08.html

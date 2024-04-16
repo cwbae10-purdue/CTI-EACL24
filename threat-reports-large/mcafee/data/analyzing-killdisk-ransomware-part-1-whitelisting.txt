@@ -1,0 +1,71 @@
+This blog post was written by Sudhanshu Dubey.
+At McAfee Labs we recently analyzed the ransomware KillDisk.
+We will share our analysis in two parts: the first, this article, contains general information about the malware and its whitelisting technique; the second part will appear soon with an analysis of its variants and techniques, including how to unlock the locked screen in an infected system (with a demo video).
+KillDisk demands a pretty high ransom: 222 Bitcoins (around US$170,000).
+The KillDisk ransom note.
+KillDisk is data-wiping malware, and is generally used by other malware to hide their artifacts from an infected system.
+BlackEnergy is one brand of malware that uses KillDisk.
+Recently, the author of KillDisk enhanced the malware by adding the ransomware capability.
+This ransomware targets both Windows and Linux systems.
+It encrypts files, blocks the screen, and demands an unusually high ransom.
+We analyzed the Windows variant and found some interesting things.
+Analysis
+During our analysis of KillDisk, we saw little file system activity.
+To remove its(or its component’s) execution traces from the infected system, KillDisk uses the Windows event utility (wevtutil).
+One statement from Microsoft about wevtutil:
+“Wevtutil enables you to retrieve information about event logs and publishers.
+You can also use this command to install and uninstall event manifests, to run queries, and to export, archive, and clear logs.”
+KillDisk executes these commands before starting its encryption process:
+wevtutil clear-log application
+wevtutil clear-log security
+wevtutil clear-log setup
+wevtutil clear-log system
+This malware has a complex routine that decrypts the DLL names, API names, file extensions, process names, and other strings including the preceding commands.
+This screenshot illustrates:
+Decryption routine.
+KillDisk targets the following files:
+.pdb .vbm .vbk .dat .crt .key .kdbx .bak .back .dr .bkf .cfg .fdb .mdb .accdb .gdb .wdb .csv .sdf .myd .dbf .sql .edb .mdf .ib .db3 .db4 .accdc .mdbx .sl3 .sqlite3 .nsn .dbc .dbx .sdb .ibz .sqlite .ova .vmdk .vhd .vmem .vdi .vhdx .vmx .ovf .vmc .vmfx .vmxf .hdd .vbox .vcb .vmsd .vfd .pvi .hdd .bin .avhd .vsv .iso .nrg .disk .hdd .pmf .vmdk .xvd .dev .pem .jrs .cer .pvk .pfx .pd .pio .csr .crl .p7c .piz .p7b .spc .p7r .io .pyc .dwg .max .dxf .3ds .ai .conf .my .ost .pst .mkv .mp3 .wav .oda .sh .py .ps .ps1 .php .aspx .asp .rb .js .git .mdf .pdf .djvu .doc .docx .xls .xlsx .jar .ppt .pptx .rtf .vsd .vsdx .jpeg .jpg .png .
+tiff .msi .zip .rar .7z .tar .gz .eml .mail .ml
+After encryption, the files have the same extensions but the data is encrypted, with the addition of 0x98 bytes at the end of each file.
+The first 0x80 bytes are related to the key and the next 0x18 bytes are the ransomware message, shown below
+DoN0t0uch7h!$CrYpteDfilE
+KillDisk also uses these 0x18 bytes as an infection marker, to avoid multiple encryptions of already locked files.
+The following screenshot shows the appended data in an encrypted file:
+The appended data/signature in an encrypted file.
+Whitelisting to avoid analysis
+We have observed some malware use blacklisting methods to kill analysis tools: If they find antimalware or related applications, they will terminate that process.
+But this malware uses the opposite technique of whitelisting: It maintains a list of benign processes, checks the system for them, and stores their process IDs (PIDs) along with its PID.
+After generating the PID list, the malware again enumerates the running processes and terminates those that are not on its generated PID list.
+The following chart illustrates both blacklist and whitelist techniques:
+Blacklist flowchart.
+Whitelist flowchart.
+The whitelist technique works pretty well under automation environments such as the Cuckoo sandbox, etc.
+Debugger evasion via whitelist
+The malware retrieves its PID using the GetCurrentProcessId function so that while debugging the process in any debugger—OLLY, IDA, etc.—the function will return the malware’s PID and not the debugger’s.
+Thus, the PID whitelist created by the malware will not contain the debugger’s PID.
+When the malware executes its termination routine using TerminateProcess API, the debugger’s process will be killed.
+The following screenshot shows disassembly of the code that terminates calc.exe because the process name is not on malware’s whitelist.
+Terminating calc.exe.
+However, we see not only the termination of the debugger process, but also of the child-sample process.
+We did not expect this behavior because the malware is using the TerminateProcess() API, which kills only the specified process not child processes.
+Why are the child processes also terminated?
+It’s because of how the debugger creates its child processes.
+The debugger creates its child processes using specific creation flags related to debugging.
+The debugger uses the DEBUG_ONLY_THIS_PROCESS/DEBUG_PROCESS flag while calling the CreateProcess() API.
+Due to this flag, when the parent process gets terminated, the child processes die as well.
+KillDisk’s whitelist consists of Windows and antimalware process names, including McAfee products.
+Why are antimalware process names part of the malware’s whitelist?
+It may be because AV products generally use protection techniques so that other processes can’t kill their processes, and they may check on any process that wants to kill their processes.
+We think the malware author does not want to give the AV processes any indication of the malware’s existence.
+The whitelisted process names:
+smss.exe, csrss.exe, wininit.exe, services.exe, lsass.exe, lsm.exe, svchost.exe, winlogon.exe, explorer.exe, dwm.exe, wuauclt.exe,spoolss.exe, spoolsv.exe, taskhost.exe, conhost.exe, shutdown.exe, avp.exe, avpui.exe, ekrn.exe, egui.exe, mfemmc.exe, mfefire.exe, mfevtps.exe, pefservice.exe, mcsvhost.exe, msascui.exe, msmpeng.exe, mpcmdrun.exe
+There is a typo in this list related to one McAfee process name.
+Our mfemms.exe is part of the McAfee Management service, but the malware looks for the process name mfemmc.exe.
+Conclusion
+KillDisk is new to the world of ransomware.
+It has implemented a whitelisting technique to protect itself, although it looks unstable because it kills all the other processes in the system.
+This malware has some coding bugs but can still badly harm its victims by encrypting files and demanding a huge ransom.
+This might be a beta version of this malware; we could see an updated version in the near future.
+The second part of this post will contain our analysis of the malware’s other variants, along with some techniques including how to unlock the locked screen on an infected system (with a demo video).
+McAfee products detect all known variants of this malware.
+Thanks to Vikas Taneja for his valuable input.

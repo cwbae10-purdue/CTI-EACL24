@@ -1,0 +1,196 @@
+We have been following the development of the Win32/Gataka banking Trojan for several months and can now share some details of its operation which includes facilitating fraudulent bank transfers.
+This first post will highlight some of its key features, while the second will detail several interesting, more technical aspects of this malware.
+This banking Trojan
+We have been following the development of the Win32/Gataka banking Trojan for several months and can now share some details of its operation which includes facilitating fraudulent bank transfers.
+This first post will highlight some of its key features, while the second will detail several interesting, more technical aspects of this malware.
+This banking Trojan was first publicly discussed in 2011 by S21Sec (http://securityblog.s21sec.com/2011/02/tatanga-new-banking-trojan-with-mitb.html) but has received surprisingly little attention since then.
+Win32/Gataka has a similar architecture to SpyEye in that several plugins can be downloaded to add more functionality.
+It is developed in C++ and is overly verbose in both the debug strings in its binaries and the amount of logging information that is sent back to the C&C.
+When the malware is run, it first injects itself into Explorer.exe and then proceeds to its installation.
+It injects all running processes and hooks the following APIs to monitor process spawning:
+CreateProcess
+CreateProcessAsUser
+Before deleting the original dropper, it will first copy it to a file in the Application Data folder following a predefined random behavior.
+For persistence, it adds a value to the [HKEY_CURRENT_USERSoftwareMicrosoftWindowsCurrentVersionRun] registry key, pointing to the executable that was placed in the Application Data folder.
+The malware then proceeds to encrypt the original executable using a XOR key and stores it in the Application Data folder.
+The path to this encrypted file is kept in the following registry key: [HKEY_CURRENT_USERSoftwareMicrosoftWindowsCurrentVersionExplorerStartPageReserveProgram].
+This registry key value is also XOR encrypted.
+Once the installation is completed, it will try to contact its command-and-control (C&C) server.
+This is done by launching iexplore.exe, injecting it with malicious code and then sending encrypted POST requests.
+Win32/Gataka’s functionality can be greatly increased through the use of plugins.
+In fact, when only the main component is present, there is not much functionality available to the bot-master.
+All plugins are downloaded from the C&C server and have a unique ID and a version number.
+When communicating with the C&C, the client provides a list containing all its installed plugins and their versions.
+The server can then send updated or new plugins to the Trojan.
+In one of Win32/Gataka’s campaigns that we followed, we observed updates to the main component every 2-3 days while the plugins did not evolve significantly.
+These updates seemed to be mostly for evading detection by anti-malware software.
+We followed four distinct Win32/Gataka campaigns and collected all of their plugins.
+The table below highlights some of the information captured on these plugins.
+It is interesting to note that most campaigns we studied contained all of the plugins listed below.
+The plugin names listed in the table were found in their respective DLL export tables.
+Plugin Name
+ID
+Version
+Compilation Date
+Brief Description of some of the functionalities
+HermesCore
+0x1
+0x501
+Wed Feb 29 10:51:11 2012(1)
+Main plugin and the only one present in the dropped executable.
+It is responsible for communicating with the C&C and loading all other plugins.
+The C&C URLs are encoded using base64.
+It can also launch arbitrary executable files coming from the C&C server.
+0x801
+Wed Apr 18 12:22:31 2012(1)
+0x901
+Wed May 23 11:32:30 2012(1)
+0xA01
+Fri May 25 09:43:43 2012(1)
+Interceptor
+0x2
+0xf01
+Thu Mar 1 04:37:52 2012
+Intercepts network traffic by hooking selected browsers socket API.
+The following functions are hooked:
+connect
+getpeername
+closesocket
+This plugin creates a proxy server on the local machine so that all outbound and inbound network traffic can be examined.
+In the case of https traffic, fake certificates, encrypted in the plugin resources, are used between the client and the proxy server.
+The browser certificate checking functions are also patched in an attempt to hide to the user that fake certificates are used.
+0x1201
+Tue Mar 20 02:26:09 2012
+NextGenFixer
+0x4
+0x103
+Wed Feb 8 02:55:16 2012
+Adds filter for specific URLs along with callback when these sites are visited.
+It uses the Interceptor plugin to be able to peek at and alter client/server communications.
+0x403
+Sat May 19 02:37:50 2012
+WebInject
+0x6
+0x803
+Wed Mar 7 06:12:04 2012
+Ability to inject JavaScript in visited webpages.
+These scripts are sent from the server as web inject configuration file and are kept in the malware database.
+This plugin is also able to record video when the user access specific sites.
+It uses the NextGenFixer plugin to add filter for specific URLs in order to inject content into the web pages.
+0xc03
+Mon Apr 16 03:25:29 2012
+HttpTrafficLogger
+0x7
+0x103
+Sat Feb 18 08:29:57 2012
+Logs HTTP network traffic when particular sites are visited.
+It uses the NextGenFixer plugin to add filter to specific URLs in order to peek at HTTP traffic.
+0x603
+Sat Apr 21 05:55:52 2012
+SocksTunnel
+0x9
+0x103
+Mon Feb 6 02:37:07 2012
+Creates Socks server for anonymous browsing.
+0x303
+Tue Mar 13 08:31:54
+TrafficGrabber
+0xf
+0x404
+Mon Apr 16 09:05:43 2012
+Enable promiscuous mode and sniff all traffic on the infected system.
+CoreDb
+0x19
+0x103
+Tue Feb 14 10:55:21 2012
+Keeps internal configuration encrypted using 3DES.
+The database file is kept in the Application Data folder
+(1) Since C&C URLs are hardcoded in HermesCore, the compilation date might not indicate when the plugin version was actually updated.
+On the other hand, it does give an upper bound.
+The following figure best describes our understanding of the different plugins' interactions.
+Once downloaded, the plugins are kept XOR-encrypted and compressed in the temporary folder, as depicted in the next figure.
+Four different campaigns were tracked in an effort to study the different ways in which Win32/Gataka is used to steal information from unsuspecting victims.
+All of these campaigns share the same network protocol.
+They make POST requests to a hacked webpage which likely acts as a proxy and redirects the requests to the true C&C.
+The four campaigns use distinct hacked servers.
+The list for each campaign varies between three and ten URLs each and is periodically updated.
+While investigating these proxy sites for one campaign, we found statistics on the number of visitors for one of the C&C proxies.
+The interesting part is that this site has a very low number of visitors, so it makes it possible to actually make an educated guess on this botnet infected population size.
+The change happened on April 19 and it is obvious from the figure below that the main contribution to the number of visits come from infected hosts.
+Visits per Day (April 2012)
+Using the statistics gathered on this site, we can estimate that this particular botnet’s size is relatively small.
+The total number of visits to this URL between April 19 and 22 is 33,197.
+Taking into consideration that one visit does not necessarily mean unique user, but that at this point there were four different active C&C URLs, we can infer that the size of this botnet is somewhere between 20,000 and 40,000 infected hosts.
+It is also interesting to look at the origin of the requests.
+The following chart provides a strong indication that most of the infected users for this campaign live in Germany.
+April 2012 – Country Usage
+We witnessed three types of download from the server: main component, plugins and HTTP injection configuration.
+The latter is quite interesting as it provides information on the targets of each campaign.
+Three out of four campaigns we followed had these configuration files.
+The first campaign targeted users of a German bank and was trying to convince them to enter a transaction authorization number (TAN) to perform a fraudulent transfer by stating that it was a test transfer.
+This behavior has been reported on previously by Trusteer (http://www.trusteer.com/blog/tatanga-trojan-bypasses-mobile-security-steal-money-online-banking-users-germany ).
+The following figures present an excerpt of the HTML text (including original typos) found in the injection configuration file, along with a translation.
+Geehrter Kunde,
+Wir sind immer bemüht, unseren Service und den von unserer Bank gebotenen Sicherheitsgrad zu verbessern
+Wie Sie vielleicht wissen, haben wir kürzlich zusätzlich Sicherheitswerkzeug eingeführt, um Ihnen für Ihre Banküberweisungen eine beispiellose Sicherheit zu gewährleisten.
+Unglücklicherweise hatte viele Nutzer Probleme, die neuen Regeln anzuwenden, was dazu führte, dass Ihre online Zugang zu ihren Konto automatisch gesperrt wurde.
+Um solche Situationen zu vermeiden und um Sie durch die neuen Sicherheitstechnologien zu leiten, bieten wir Ihnen an, einen Schnelltest zu absolvieren.
+Während des Tests wird das System eine TESTÜBERWEISUNG durchführen.
+Wir versichern Ihnen, dass die Testüberweisung Ihren Konto NICHT belastet wird.
+Wir hoffen, dass Sie den hohen Sicherheitsgrad und die Verwendbarkeit unserer Bankdienstleistungen schätzen.
+Angaben für die Testüberweisung
+Name: Hans Müller Kontonummer: [:checknum:] Bankleitzahl: 00000000 Betrag: [:tsum:] EU
+Dear Customer,
+We are always striving to improve our service and the level of security offered by our bank
+As you may know, we have recently introduced an additional security tool for you to provide your bank transfers with an unprecedented security.
+Unfortunately, many users encountered problems in applying the new rules, which meant that their online access to their account was automatically blocked.
+To avoid such situations and to guide you through the new security technologies, we offer you the opportunity to complete a quick test.
+During the test the system will perform a TEST TRANSFER.
+We assure you that during this testing transfer your account will NOT be charged.
+We hope you will appreciate the high level of security and usability of our banking services.
+Data for the test deposit
+Name: John Smith
+Account number: [: checknum:]
+Bank code: 00000000
+Amount: [: tsum:] EU
+First step – Tricking the user into believing that a real transfer is a fake one
+1.
+Schieben Sie Ihre Chipkarte in Ihren TAN-Generator und dücken auf TAN.
+2.
+Geben Sie den Anfangscode ([:stcode:]) ein und drücken OK
+3.
+Prüfen Sie, ob der Testbetrag richtig ist: [:tsum:] und bestatigen Sie diesen mit der Taste OK.
+1.
+Insert your smart card into your TAN generator and press TAN.
+2.
+Enter the first code ([: stcode:]) and press OK
+3.
+Verify that the testing amount is correct: [: tsum:] and confirm this by pressing OK.
+Step-by-step instruction on how to authorize the fraudulent transfer
+Another configuration file contains JavaScript that attempts to hide fraudulent transfer by modifying the account balance seen by the user when checked from an infected computer.
+The second campaign targeted Dutch banks.
+The scheme was somewhat similar to the one targeting German users, except that in this case, the user is tricked into inputting a TAN by stating that it is a necessary calibration procedure.
+The following figures exhibits HTML text from the configuration file as well as a screen shot, along with a translation.
+Op dit moment verzamelt het beveiligingsysteem de noodzakelijke gegevens voor identificatie van Uw computer.
+De gegevens zijn nodig voor het opmaken van de unieke digitale handtekening (UDH).
+Met het oog op beveiliging van uw account, zullen de toekomstige aanmeldingen bij de on-line banking met UDH ondertekend worden.
+Wacht tot het proces voltooid is, a.u.b.
+At this time the security system is gathering the necessary data for identification of your computer.
+The data is required for the creation of the unique digital signature (UDS).
+To ensure account security, future transactions with on-line banking will be signed with the UDS.
+Please wait until the process has completed.
+Making the user wait while the fraudulent transfer is attempted
+Final step: convincing the user to enter a TAN code
+While the user waits, the malware attempts to make a fraudulent transfer.
+The third campaign, which is configured to use HTTP injection, is trying to obtain accounts on a major US newspaper’s web site by performing brute-force guesses of usernames and their passwords.
+If this process is successful, the account information could possibly then be used to harvest private information or access paid content.
+The bot is directed to the newspaper account page and username/password pairs are entered randomly.
+Below is a screen capture of the simple JavaScript code used for this purpose.
+function genStr(length, special) { var iteration = 0; var password = ""; var randomNumber; if(special === undefined){ special = false; } while(iteration < length){ randomNumber = (Math.floor((Math.random() * 100)) % 94) + 33; if(!special){ if ((randomNumber >=33) && (randomNumber <=47)) {continue;} if ((randomNumber >=58) && (randomNumber <=64)) {continue;} if ((randomNumber >=91) && (randomNumber <=96)) {continue;} if ((randomNumber >=123) && (randomNumber <=126)) {continue;} } iteration++; password += String.fromCharCode(randomNumber); } return password; } if(window.name!=1){ window.name=1; document.getElementById('userid').value=genStr(10); document.getElementById('password').value=genStr(10); document.forms[0].submit(); }
+This is a rather weird usage of the HTTP injection capabilities and one that might produce low return on investment, but it certainly highlights the capabilities of the malware and the creativity of its bot master or of anyone who might be renting the botnet from the bot master.
+Win32/Gataka might not be as widely deployed by bot masters as SpyEye or Zeus, but it can achieve similar goals.
+Will its modular and stable architecture attract more cyber thieves in the future?
+It would not be surprising, but only time will tell.
+Stay tuned for the next blog post containing more information on this very interesting malware.
+Dropper SHA1 sums
+Campaign A: 0fd7995294e8d01b1820b40eac27e453c735ee3d Campaign B: 4e7b72e7cb9757337a66466f889451d31cdc3322 Campaign C: edea171d4f36b71f870dfb61c1d24d119e7fffef Campaign D: c51444d55f574c47021118b5102d81a1c0a5438d

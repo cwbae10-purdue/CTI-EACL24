@@ -1,0 +1,133 @@
+FortiGuard Labs recently encountered malicious traffic traveling to a C2 server located in China.
+The connection was established by a domain using a name that closely resembled one of Japan’s most famous express post delivery services.
+Our analysis showed that the website making this connection is fake, and moreover, it is spreading an Android malware.
+At the first glance, the Android file looks like FakeSpy, a malware discovered by Trend Micro researchers in June of 2018.
+But our analytics platform revealed that while the code base of the sample is based on FakeSpy, this new variant contains new features, and its the malicious campaign is growing.
+In our initial sample analysis, we found the domain name “hxxp://sagawa-ba.com”.
+As some readers may recognize, this fake site is posing as the website of one of Japan’s express delivery service companies.
+However, closer inspection reveals that it has no SSL certificate and the page layout is broken.
+When analyzing the page source, the first thing we encountered is a Mark of the Web (MOTW) comment.
+This is a security feature first introduced in Windows XP SP2 and now used in every browser to improve the safety of users when downloading web-pages and scripts to their local drive.
+This comment indicates that this page was first downloaded and then uploaded to add some new “features” to the pages.
+The main addition is a script containing a function called “kk”.
+We also observed that there is a commented pop-up message that may indicate that the campaign is still under development.
+The function is quite simple.
+It opens the “pp.html” page of the website.
+As we can see, the function is called once the end user clicks (or taps) on the website.
+Following the redirect, we then see the following interesting error message, stating that for security reasons we have to authenticate using a phone number.
+By examining the script handling the input field, we were able to determine that any data entered is directly sent to the malicious server, using the cookie field to send the entered mobile phone number.
+After that, it proceeds to the next page, called “pp2.html”.
+Again, there are commented parts of code here that may indicate that development is still in progress.
+Once we proceed to the next page, the malicious website then begins asking for a confirmation code:
+When we again checked the source for the input field, it again contained commented code, but this time it was very similar to parts of the previous pp.html JavaScript code.
+This is likely due to the author copy-pasting code and then forgetting to remove the comments before it was put into production, or they may have been left there for testing purposes.
+If we take a look at the script itself, we see that once the function “validate()” is called, it checks that the provided code contains 4 digits.
+If yes, it sends the code to the server and redirects to the page called “loding1.html”.
+Unfortunately, we had no reply from the server.
+But this element might be used to subscribe people for paid services or to verify that the user is using a real phone number and is “served” only once.
+Besides the sending script, the page contains one more custom script for the timer.
+The interesting point here is that it contains comments written in Chinese.
+Next, if we check the source of “loding1.html” we find another script that is supposed to handle the server reply once the confirmation code is checked.
+Once again, we found comments in Chinese, as well as another comment written in Korean.
+This might indicate code re-use, a missing Chinese translation, or collaboration between Chinese and Korean actors.
+In searching for the code patterns we found interesting similarities that, unfortunately, aren’t sufficient to be used as proof of the phishing website author.
+The line “setInterval('newArticleCheck()', 2000);” from the phishing page matches the style, function name, and syntax of code pasted on the Q&A PHP forum by a Korean user “쥬리앙” (Juriang) in 2015.
+However, it is impossible to determine if this new code was written by the same author, or if the code posted to the PHP forum was simply used by someone else.
+After analyzing the main logic of the website, we decided to analyze the page source for any other functionality.
+That is where we found interesting the offer to install the “sagawa.apk” Android application:
+Unfortunately, the link to the file was not available.
+Instead, it led to a 404 page written in Chinese.
+After we finished our initial website analysis, we check WHOIS for domain information.
+The server is located in Taiwan, and the domain was registered on 16.07.2018.
+Surprisingly, we found that this was not the only domain related to this malicious activity.
+We were able to find 347 additional domains with only the last or first parts of the real website of the Japanese express post service that had been tampered with.
+These domains are registered on three e-mail addresses:
+mantianxing0111[at]yahoo.co.jp (104 domains)
+2509677308[at]qq.com (55 domains)
+21449497[at]qq.com (188 domains)
+We decided to check the other domains from the list.
+Most of the websites are registered but not used.
+Some of them are already connected to hosting servers, mostly located in Taiwan, but have no web-page connected to them.
+However, a few websites have the same phishing pages on them.
+We checked the domains with “-iso.com” and “-wow.com” ending in the name.
+When examining these sites we observed another script that looks very similar to the one used on the “-ba.com” website, but instead of leading the user to a phone number prompt, it drops the “sagawa.apk” application once the user clicks or taps on the webpage.
+The domain with the “-wow.com” ending does not collect mobile phone numbers, nor does it contain the “pp.html”, “pp2.html”, or “loding1.html” as in the “-ba.com” domain.
+Moreover, the domain uses English text on its 404 page.
+During this round of discovery we were finally able to obtain the file, so we decided to do further analysis of its functionality.
+The APK of reference is 92cd2e43bf85703f92a493668be3d777c3d3cfab3f674b62bd334ddc082ac50d
+First, we analyzes the contents of the APK:
+The following image is part of the report generated by our internal analysis tools.
+The application, whose package name is fang.tang.sha, in addition to the classes.dex file present in every APK, contains a library compiled for different architectures (libxxn.so), and one asset file (nini.dll).
+This is already a red flag: it is very unlikely for an android app to need MS Windows libraries to function.
+After a quick check, it is clear that nini.dll is actually an encrypted file of some sort.
+Intrigued, we started analyzing the apk file.
+First, we took a look at the AndroidManifest.xml file, where most information about the app, like permissions, activities and services, are listed.
+The fact that first catches the eye is the sheer amount of suspicious permissions asked for by the application.
+However, another very important detail was the fact that the AndroidManifest of classes and functions did not exist in the classes.dex file.
+All activities and services used by the app need to be declared ahead of time in the Manifest.
+There is no point in declaring non-existing classes.
+The logical conclusion is that some other code is dynamically loaded at some point during execution.
+When executed, the app launches a webview of what looks like the main web page of the delivery service it is trying to impersonate.
+It asks to become the default app to handle SMS and to run in the background, disregarding battery optimization.
+At the same time, the app icon disappears and starts running in the background.
+Since not much happens in terms of user interaction, we took a look at the code.
+The execution flow of the app is pretty simple: it loads library libxxn.so and executes the function run(), which can be found under the name Java_taii_YANGG_run in the shared object.
+This function decrypts the nini.dll file and loads the decrypted file, which on my device is located in the “/data/user/0/fang.tang.sha/app_cache” folder.
+The file is then loaded dynamically, as you can see from the output of the “adb logcat” command.
+The file is then deleted immediately after being loaded, making it harder to retrieve.
+Luckily, by using FRIDA, a very handy and flexible open-source instrumentation suite, we were able to stop the execution flow before the deletion and recover the file.
+FRIDA is a fantastic tool for Android reversing (and it is not limited to that), and it can work for multiple architectures.
+It can be used both on rooted and un-rooted devices (even though it requires a little bit more tinkering).
+The scripts I used can be found on the following github page, and you can find the main page of the project documentation here.
+The mycode.jar file that is dropped contains a classes.dex file that is loaded through the DexClassLoader function in the libxxn.so library.
+The payload looks like a variant of FakeSpy, a malware that surfaced in June 2018.
+It maintains most of the functionalities of its previous iteration, but also offers new options.
+The malware asks to become the default SMS application, so it is not surprising that the app is capable of intercepting incoming SMS messages.
+Whenever a message is received, the app logs all the information regarding the message and sends them to the CC.
+In addition, the malware is also capable of creating and sending SMS to other devices.
+In fact, this is how the malware spreads.
+Once infected, the mobile device starts communicating with the CC, which sends lists of telephone numbers to try to infect using SMS that carry links to domains controlled by the attacker.
+Screenshot number 21 was generated by instrumenting the android class SMSmanager with FRIDA and then modifying the corresponding sendTextMessage() to only log instead of sending the actual malicious message.
+The malware is also capable of obtaining a complete list of all the applications installed on the device, as well as other information such as IMEI and phone number, which are then sent to the CC in the form of a JSON file.
+In this way, the attacker is able to assemble a full picture of the device state.
+Finally, the malware is capable of sending full crash reports to the server.
+Some odd characteristics of this sample makes us think that it is still under active development:
+The CC is saved in the sharedPreferences under the name “URL”.
+This value is first set to 125.227.0.22, but can be modified during execution through the function ChangeIP(), which checks if one minute has expired and if so collects the new CC IP address from an encrypted string.
+The string points to a twitter account.
+The twitter username contains the new IP, which is decoded using simple string manipulation.
+However, even though the code is present in the dex file, from our analysis it seems that this code it is never actually used.
+Instead the app continues to contact the first CC the whole time.
+We tried to redirect the HTTP traffic to the modified CC address, but received no response.
+The malware also contains multiple references to a file named “/sdcard/new.apk”.
+It is able to download the file given the URL.
+It then checks if the device already contains an app under the name “ni.vb.bi”, and in case it does not it installs it.
+However, the function that downloads the file is never called during execution.
+One class contains main() and System.out.println() functions.
+Neither are required on android APKs but are very common in Java files, indicating that they might have been run as such for testing purposes, or copy-pasted from other sources
+The Malware also asks for Device Admin rights, and contains a DeviceAdminReceiver class, but it never requests the permissions to use it, making it completely pointless.
+Finally, during our analysis we were able to collect samples with updated certificates almost daily, showing that there is someone on the other end at least maintaining the infrastructure.
+To sum up, we can say that the actors involved in this malicious activity own a huge number of domains faking the original domain name of an express post delivery service in Japan.
+This means they are investing a lot of time and money into this campaign, but are probably still thinking of a way to make a good profit out of it.
+Most of the domains registered on the actors’ e-mails are inactive, but that doesn’t mean that they will never be used.
+The scripts, comments and unused lines located on the websites may indicate that the actors are still improving the campaign and trying different ways of achieving their goals.
+Unfortunately, we cannot be sure what the reason is behind collecting cell-phone numbers, but we can guess that this information might be used for another malicious campaign, or may simply be sold to another actor.
+This malware and the campaign seem to still be in the early days of development.
+The malware itself is based on an existing codebase, but it shows attempts at improvement by adding different functionalities, not all of which are currently being used, but we cannot say that will be the case for long.
+Fortinet clients are protected against these attacks:
+The dropper is detected as Android/Agent.CIJ!tr
+The payload is detected as Android/Fakespy.Z!tr
+Dropper:
+24072be590bec0e1002aa8d6ef7270a3114e8fe89996837a8bc8f6a185d9690e 92cd2e43bf85703f92a493668be3d777c3d3cfab3f674b62bd334ddc082ac50d 01caceb86d3e2a383eeab4af98c55a2ec7b82ae0972594866b13fc0c62c93d74
+Payload:
+b7f4850b243649cdba97fd3bb309aa76fe170af80fa9c6ee5edd623dac2ce4e2 00ce9ffe9cca59df86125747c3a2e548245bf1b0607bc8f080fd3c501d9fc3f0
+C2:
+sagawa-ba.com
+sagawa-wow.com
+sagawa-iso.com
+All the other 344 domains are filtered by our Web Filter service.
+-=FortiGuard Lion Team=-
+Download our latest Fortinet Global Threat Landscape Report to find out more detail about recent threat landscape trends.
+Sign up for our weekly FortiGuard Threat Brief.
+Know your vulnerabilities – get the facts about your network security.
+A Fortinet Cyber Threat Assessment can help you better understand: Security and Threat Prevention, User Productivity, and Network Utilization and Performance.

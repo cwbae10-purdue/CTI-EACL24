@@ -1,0 +1,69 @@
+Malefactors continue to expand the features of ransomware as they try to extract maximum benefit from the compromise of infected computers.
+We recently found an interesting example of such an “upgrade”: a new logic in the latest version of the Shade encryptor currently being spread widely within the territories of Russia and CIS.
+On the basis of this logic, the ransomware checks the computer for any involvement in accounting activities and, if the check is successful, installs remote control tools into the compromised system instead of encrypting the victim’s files.
+For the initial check, the updated Trojan (verdict Trojan-Ransom.Win32.Shade.yb) searches the list of installed applications and looks for strings associated with bank software.
+After that the ransomware looks for “BUH”, “BUGAL”, “БУХ”, “БУГАЛ” (accounting) in the names of the computer and its user.
+If a match is found, the Trojan skips the standard file search and encryption procedure and instead downloads and executes a file from the URL stored in the Trojan’s configuration, and then exits.
+Technically the new features look like this: there is a block of base64-encoded data in the body of the ransomware (which was not present in earlier versions of Shade):
+We can see the following configuration block when decoding is completed:
+Shade initiates the check of an infected system in accordance with this configuration block directly after it starts.
+The executable that Shade.yb Trojan downloads to the user’s computer turned out to be a bot known as Teamspy.
+This bot uses the TeamViewer 6 legal remote control utility for communication with its command-and-control (C&C) server and modifies it on-the-fly for the purpose of discreet execution.
+Plugins (in our case installvpn.pg, rdw.pg, scankey.pg) propagate along with the bot; they are stored in encrypted form and will be decrypted by the ransomware in the RAM only.
+A decrypted plugin is basically a DLL with an export named InitPg which is called by the main module of the bot.
+There are two plugins which, when executed provide malefactors with opportunities for remote access to an infected machine through the remote Desktop Protocol (RDP):
+installvpn.pg: covertly installs the TeamViewer VPN driver; and
+rdw.pg: covertly installs the “RDP Wrapper Library” application and changes system settings in order to enable the RDP connection.
+The bot does not connect automatically to the VPN, so it is quite possible that the malefactors keep this opportunity for some specific cases.
+The downloaded Teamspy executable file is basically an NSIS installer.
+It includes:
+NSIS-script script.bin (script that controls the unpacking process);
+Standard NSIS plugins – nsExec.dll, StdUtils.dll, System.dll;
+Legal utility NirCmd (file 6kzi6c94h2oeu4);
+Legal utility 7zip (file vuoup3teqcux6q);
+Image 2b6zfhf3ui7e03iv6.jpg; and
+Image 6nmxxselb250du8c.jpg with an embedded password-protected 7z archive.
+When the installer is started, it executes script.bin.
+The script calculates the BLAKE2-512 hash of the 2b6zfhf3ui7e03iv6.jpg content by means of StdUtils.dll and uses the resulting string as a password to the 7z-archive hidden inside 6nmxxselb250du8c.jpg.
+The following files from the password-protected 7z are extracted to the hidden folder “%APPDATA%\Div”:
+x64 subfolder containing install64.exe, teamviewervpn.cat, TeamViewerVPN.inf and teamviewervpn.sys files (legal components of TeamViewer);
+x86 subfolder containing install86.exe, teamviewervpn.cat, TeamViewerVPN.inf and teamviewervpn.sys files (legal components of TeamViewer);
+avicap32.dll (the bot body);
+cfmon.exe (legitimate executable file of TeamViewer);
+installvpn.pg, rdw.pg, scankey.pg (encrypted bot plugins);
+tv.cfg (encrypted bot config); and
+Legitimate components of TeamViewer: TeamViewer_Desktop.exe, TeamViewer_Resource_en.dll, tv_w32.dll, tv_w32.exe, tv_x64.dll, tv_x64.exe.
+The installer starts up cfmon.exe upon unpacking.
+When this process begins, the malicious library avicap32.dll (which is the body of the bot) is automatically loaded and executed.
+This technique of overriding a legitimate DLL with a malicious one is well-known under the name ‘DLL hijack’.
+The body of the bot contains several layers of encryption and is obfuscated in order to complicate analysis.
+During execution the malicious avicap32.dll modifies the functionality of the TeamViewer process that is running, by intercepting some system calls as well as TeamViewer’s internal procedures.
+Hiding the software window and its icon in the notification area is one result of such modifications.
+The user of the infected computer cannot see the software’s graphic interface (GUI) and may not be suspicious of its presence unless they check a list of running processes.
+Fragment of the hook installation procedure pseudocode
+In addition to hiding the TeamViewer interface, avicap32.dll decrypts and uses the data of the tv.cfg configuration file.
+Decrypted content of tv.cfg
+The szadminhost field value is an address of the C&C server that communicates with the bot.
+Communication is based on the HTTP protocol.
+For an example of intercepted traffic please see the following screenshot.
+In the first request, the bot informs the C&C of its existence.
+The C&C responds with a command (in this case “lexec” means file downloading and execution, for information on other commands see below).
+In the third enquiry, the bot informs the server of the command execution results: “cmd=1” – success, “cmd=2” – error.
+The server’s commands are processed in a separate thread started from the procedure installed for the interception of API-function SetWindowTextW.
+General view of the execution graph of the function that processes and executes server commands
+Fragment of the execution graph of the function that processes and executes server commands
+List of strings including commands received by the bot
+We would like to underline the most interesting commands received by the bot:
+startaudio / stopaudio: start/stop of audio recording;
+startvideo / stopvideo: start/stop of video recording of the screen;
+lexec: download and execute a file from a URL provided by the C&C server; and
+cmd: provide malefactors with the remote control console.
+Other commands involve updating the configuration file and some of its fields, updating or deleting plugins, controlling PC power (shutdown, restart), restarting the bot’s own process, or self-deleting.
+The use of the bots offers malefactors a wide range of possibilities to enrich themselves, and even a single successful infection can bring in substantial cash flows.
+Essentially the Trojan encryptors pass the initiative to the user (and it’s up to the user to decide whether to pay for their files or not) and the owners take into consideration the average financial solvency of the victim in assigning the ransom sum.
+The option of remote access to an infected accounting system allows the malefactor to secretly keep an eye on the victim’s activities and collect detailed information on the victim’s solvency in order to use the most efficient way of getting cash.
+Kaspersky Lab products detect the bot’s body as Trojan-Spy.Win32.Teamspy.gl; and this malware is also known as TVSPY, TVRAT, SpY-Agent.
+Victims infected with Shade versions 1 and 2 have a chance to retrieve their data without paying cybercriminals.
+IT Security companies joined forces with law enforcement agencies to create a decryption tool, which is available on the NoMoreRansom webpage.
+Trojan-Ransom.Win32.Shade.yb 21f4bbcd65d0bff651fa45d442e33877
+Trojan-Spy.Win32.Teamspy.gl 4235f3730bbd303d9b3956f489ff240d

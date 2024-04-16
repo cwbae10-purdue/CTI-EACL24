@@ -1,0 +1,65 @@
+Because of the recent outbreak of the Locky ransomware, Dridex has become synonymous with the distribution of ransomware more generally.
+However, Dridex is still taking good care of its notorious original business– banking Trojans.
+While preparing the materials for my upcoming HITBAMS2016 talk on Kernel Exploit hunting and mitigation, I came across this new variant of Dridex (SHA1: 455817A04F9D0A7094038D006518C85BE3892C99), which is rather interesting.
+Based on some simple string checks, we assumed that Dridex tries to evade a couple of major security software vendors.
+It is important to note that we didn’t look into exactly how the evasion mechanism used by Dridex tried to mitigate all of these security software because they existed in older variants.
+However, we saw a new module string that targets yet another security vendor.
+Hence we decided to look into this particular module.
+While doing quick binary diffing between the latest and the older variant of Dridex, one of the new changes in the routine, dropper_routine1, quickly drew our attentions:
+Figure 1: Diffing latest and older Dridex variant
+We identified the new changes in dropper_routine1 attempt to download a module, called mod9 internally, in the event that affected security vendor's product is found installed on the infected machine.
+Without further ado, we downloaded the module and then we would pretty much confirm our hypothesis that Dridex is equipped with the ability to evade the security software products mentioned above.
+We have contacted our friends from the affected security vendor regarding this issue, but we haven’t got any reply from them at the time of this writing.
+Furthermore we aren’t sure how genuine this vulnerability is and how serious is the impact to their product is since it is trivial to exploit this vulnerability, so we decided not to disclose any detailed implementation of mod9 for now.
+Dridex (also recognized as Dyre by some vendors) was spotted on May 2015 as the first malware family exploiting patched Window kernel vulnerability in Microsoft Windows dubbed CVE-2015-0057.
+The patch was released by Microsoft as MS15-010 on February 2015 before Dridex leveraging this vulnerability.
+In a nutshell, exploitation of kernel vulnerability allows the malware to achieve elevation of privilege (EoP) in order to gain system privilege (NT AUTHORITY\SYSTEM) on the infected machine, which offers the malware full access to the system without any security limitation.
+However, we noticed that this EoP payload was removed from Dridex variants distributed after July 2015 onwards.
+In fact, in the recent investigation of Dridex, we realized that it is still leveraging the EoP payload for privilege escalation but the payload is not embedded directly in the dropper’s binary.
+However, the Dridex’s dropper will download this EoP payload, called mod5 internally, if the following conditions are met:
+Make sure the machine has not installed Microsoft update patches: KB3034344 and KB3013455
+Make sure the current user is not running as administrator
+On the other hand, if the current user is running as administrator, it will proceed to leverage User Access Control (UAC) bypass techniques to elevate its privilege.
+One of the UAC bypass techniques deployed by Dridex was abusing auto-elevation feature provided by shim (also known as Application Compatibility).
+However, it is worth to mention that this UAC bypass technique has been patched by Microsoft as well.
+Most of the Dridex’s functionalities are carried out by various modules downloadable from the remote server and most of the modules are well covered by different Dridex’s articles published online except mod5.
+We are tempted to download this module to verify if there is any new zero-day used by the latest variant of Dridex.
+Fortunately, this can be done by sending this XML loader configuration data to the remote server:
+" botnet="" system="64584" name="mod5" bit="64"/>
+In addition, this loader configuration data must be encrypted with RC4 using a hard-coded key 4FzyDVuTsVGUstulVjI3xL7E9NM48ytG5GwtTHbLXzC4pihROe before sending it over to remote server using HTTPS.
+Again, the data in response is encrypted using RC4 with the same key mentioned above; in other words, it can be decrypted using the same key we got above.
+The decrypted data is encapsulated in XML format as well while the data blob enclosed by tag is encoded using Base64.
+BASE64_ENCODED_BLOB
+However, the result of the decoded blob is quite disappointing because after analyzing it, we realized that it is still exploiting the same CVE-2015-0057 EoP vulnerability.
+But the good news is that we can keep track of the latest development of this module in future more easily after understanding how the underlying Dridex’s network infrastructure works.
+Another interesting finding in the recent analysis of Dridex is the discovery of command string to uninstall Microsoft updates.
+The good news is that we didn’t find any reference of this command being used anywhere in the code.
+We assumed that this feature could be implemented in the future version of Dridex.
+Figure 2: Partial decoded string that shows a command string to uninstall Microsoft patch
+To reiterate, the malware utilizes lots of exploits targeting patched vulnerabilities.
+We can’t emphasize enough the importance of installing the latest updates from Microsoft to break some of the functionalities of the malware.
+It, of course, cannot guarantee you from being infected from malware but it can raise the bar for malware to fully compromise your machine.
+The Dridex's sample is detected by AV engine as Malicious_Behavior.VEX.94 while the botnet's traffic is blocked by IPS engine.
+-= FortiGuard Lion Team =-
+Hash of the samples
+Dropper/Loader => 455817A04F9D0A7094038D006518C85BE3892C99
+Mod5_x86 => 7C36064F766BD13DB7EC2F444F4605566269F8E7
+Mod5_x64 => E608B456C816C07C60931FD6B20F74E46EBD7EF9
+C&C servers/P2P peers
+188.93.239.28:4843
+38.64.199.33:4843
+85.17.155.148:1234
+Decoded string starting at offset 0x415E90 from the Dropper/Loader
+DecodedStr = 00DF70E0 "LOCALAPPDATA"
+DecodedStr = 00BF0590 "Low\"
+DecodedStr = 00BF55A8 ".sdb"
+DecodedStr = 00BFA5C0 ".bat"
+DecodedStr = 00BFF5D8 "open"
+DecodedStr = 00C045F0 "sdbinst.exe"
+DecodedStr = 00C09608 "iscsicli.exe"
+DecodedStr = 00C0E620 "/q "%s""
+DecodedStr = 00C13638 "\System32\"
+DecodedStr = 00C18650 "\SysWOW64\"
+DecodedStr = 00C1D668 "wusa.exe /uninstall /kb:%d /quiet /%srestart"
+DecodedStr = 00C22680 "no"
+DecodedStr = 00C27698 "force"

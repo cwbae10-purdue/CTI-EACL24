@@ -1,0 +1,57 @@
+The driver is the first component of Duqu to be loaded in the system.
+As we discovered, the driver and other components of malware are installed with a dropper exploiting a 0-day vulnerability (CVE-2011-3402).
+The driver is registered in the HKLMSystemCurrentControlSetServices registry path.
+The exact name of the registry key varies in different versions of Duqu drivers.
+Once the driver is loaded, it decrypts a small block that contains its registry key and the name of the registry value to be read from that key.
+It also contains the name of the driver object to create.
+All versions of the driver available at the moment have the same registry value name, “FILTER”.
+The driver then registers the DriverReinitializationRoutine that queues the WorkerRoutine where actual driver initialization is performed.
+In the WorkerRoutine the driver reads the “FILTER” value from registry and decrypts it with a hard-coded encryption key.
+There are two known versions of decryption routine and two corresponding decryption keys.
+The driver also locates the NTOSKRNL.EXE or NTKRNLPA.EXE module and gets the addresses of API functions for further usage.
+The decrypted “FILTER” value from registry contains the list of records that contain the name of the process (“services.exe”), the path to corresponding PNF DLL file that will be injected in that process and the decryption key (0xAE240682) that is used to decrypt the PNF DLL file.
+After initialization the driver registers LoadImageNotifyRoutine that will be then called by Windows each time a new module is loaded.
+The routine checks if the name of image matches one of these specified in “FILTER” value and if it does, starts the injection: it decrypts and copies the PNF DLL file into an allocate memory region on that process.
+It also builds an copies a stub EXE file into that process that is then used as a loader for the PNF DLL.
+As soon as “KERNEL32.DLL” is loaded in the same process, it locates addresses of API functions required by the loader EXE and modifies the original entry point of the main process module so that it passes execution to the loader EXE code.
+The loader EXE module performs initial initialization of the PNF DLL module and then executes the export as specified in the configuration (“FILTER”).
+After that it restores the code of the original entry point and returns execution to the original process module.
+The loader also interacts with the driver module using a custom IOCTL code to change memory protection of the original entry point code.
+This module is stored on disk as an encrypted block of data.
+As soon as it is decrypted, it turns out to be a DLL packed with UPX.
+Known versions of PNF DLL modules export 8 or 6 different functions by ordinal numbers.
+Export 2 runs export 6 in a separate process.
+Export 4 runs export 5 in a separate process.
+Export 5 starts a thread in “services.exe” process that loaded the 302 resource (see below) and, if provided with correct information by the callee, installs a complete new set of Duqu components.
+Export 6 stops the driver and completely uninstalls all components of Duqu.
+Export 8 and 1 initialize the PNF DLL module and start main threads.
+It seems that ordinal 1 is intended to export primary functionality of the DLL.
+First, it loads the configuration information from another PNF file, the PNF Config file.
+If the file is not present, it is created from an encrypted hard-coded copy that is stored in the PNF DLL file.
+The name of the configuration file is different for every version of Duqu.
+The PNF Config contains the name and path to the driver component, to the PNF DLL and PNF Config itself.
+When the PNF Config is created, the date of creation is written into the file.
+The file also contains the TTL (“time to live”) value: a separate thread started by PNF DLL monitors if TTL days passed since the creation date, and after that runs the uninstallation routine.
+Some versions of the PNF DLL also start an RPC server similar to the one found in Stuxnet.
+The PNF DLL also provides API for manipulating the configuration file from external modules using globally available events.
+Depending on the flags in the PNF Config, the PNF DLL code looks for specific processes: the list of process names in the PNF Config, “explorer.exe”, “svchost.exe” and then injects code in them.
+The code to be injected is stored in binary resource 302 found in PNF DLL.
+Depending on the flag in the PNF configuration file, it is either a DLL loader module or a block of data (equivalent of decompressed “.zdata”, see below).
+Both configuration have been found in different Duqu versions.
+The PNF DLL checks a flag in PNF Config and determines whether to pass execution to the DLL loader or to locate the payload DLL and call it directly.
+The loader DLL module is similar to PNF DLL.
+The main purpose of the loader is to decompress its “.zdata” section and pass execution to the main payload that is contained in decompressed data.
+The .zdata block contains the header that starts with the magic number 0x48747193.
+It contains the offsets and sizes of the DLL loader, the payload configuration block and the payload DLL.
+The configuration block contains the name of the temporary file to use %TEMP%~DR0001.tmp, additional binary data controlling the behavior of the payload and information required to connect to the C&C servers.
+There are two lists of C&C servers, one can contain domain names, IP addresses or names of network shares, and the other contains IP addresses in binary format and is used to connect using Windows HTTP (winhttp) services.
+Although the configuration blocks we have found so far are similar and are set up to connect to its C&C using HTTP and HTTPS, the payload DLL is able to connect to a network share and even become a server.
+We are still analyzing the payload.
+It contains 256K of C++ code with extensive use of STL and its own complex class hierarchies, probably own framework.
+The payload is able to connect to C&C server using either winhttp library or connection to a network share IPC$ endpoint.
+It is able to connect using proxy server configuration of Internet Explorer.
+It also contains code for acting as a HTTP server and processing the same requests as served by the C&C.
+The payload is able to load an external DLL module provided by the C&C and interact with it using a pre-defined API.
+The most noticeable module discovered so far is the infostealer module.
+There are also modules for updating the TTL value in the PNF DLL configuration, for reading the network and disk storage configuration from the infected machine.
+It also can form a PNF DLL with a configuration block and the payload DLL ready for distribution to other machines.

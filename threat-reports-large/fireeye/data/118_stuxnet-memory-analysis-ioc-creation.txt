@@ -1,0 +1,38 @@
+The stuxnet malware has been making the press recently for two reasons.
+First it contains two drivers signed with a legitimate (at the time) cert.
+Second is it's targeting SCADA systems.
+The malware is cool for a host of other geeky reasons.
+Nick Harbour, Stephen Davis, and I started looking at the malware Sunday afternoon.
+We had hoped to write a blog post about the specifics of the malware before we left for Vegas on Friday.
+However, in the short term I thought this malware would provide a great opportunity to demonstrate how memory analysis can be leveraged to find malware easily, and how the MANDIANT's Indicator of Compromise editor (IOCe) tool can be used to describe the malware and what to look for.
+The goal of every good IOC is to leverage the intelligence we have about the malware to find it effectively, while allowing for changes/ variants, and weeding out false positives.
+We can describe most aspects of malware using the IOC language, for this exercise we will focus our energy on writing a good memory IOC.
+In memory, malware appears rather naked and this is a prime example of that.
+When loaded, stuxnet spawns lsass.exe in a suspended state.
+The malware then maps in its own executable section and fixes up the CONTEXT to point to the newly mapped in section.
+This is a common task performed by malware and allows the malware to execute under the pretense of a known and trusted process.
+The first indicator in memory is the path it uses to spawn lsass.exe:
+Notice that the path to lsass.exe has extra backslashes so when the backslashes are resolved by CreateProcessW the path is c:windows\system32\lsass.exe instead of c:windowssystem32lsass.exe.
+This is seen in the following screen shot taken from Audit Viewer:
+Notice the arguments in each process.
+The process with a score of 100 is the original lsass spawned by the system.
+The process with a score of negative 145 is the lsass spawned by the malware.
+The arguments are very distinctive and a great indication that something is wrong.
+This is a fine IOC for this specific variant but fixing this and rendering the IOC useless is a trivial task for this malware author.
+So let's keep building out the IOC.
+If we examine the lsass process further we see another indicator that something is wrong.
+Above is a complete DLL listing of the malicious lsass.
+Who can spot what is missing?
+If you noticed the lsass.exe itself is missing you are correct.
+The original lsass has about three times the number of DLL's and also includes lsass.exe in the listing:
+The listing continues but notice lsass.exe at the top.
+The lack of a binary and DLLs in the malicious lsass listing reconfirms what we already knew.
+That the malware used a process suspend and unmap technique.
+When the attacker unmaps the lsass.exe section, the lsass.exe is removed the VAD tree and subsequently doesn't show up when doing a DLL listing based on VADs.
+Spotting suspend and unmap via taskmgr or other live response tools would be very difficult.
+In this case the malware author took extra care and created the process with the correct privileges allowing the attacker to mimic the correct lsass.exe user.
+The next addition to the IOC is the digital signature itself.
+The drivers were signed and verified:
+The file is signed and the signature was verified.
+Realtek Semiconductor Corp
+VeriSign Class 3 Code Signing 2004 CA

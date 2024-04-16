@@ -1,0 +1,96 @@
+Following our research from Evil Twins and Windows Linux Subsystem, interoperability between different WSL versions was something that caught our attention.
+The protocol and mechanism to do file management from/to WSL is a must for Blue and Red Teams whose research will provide new ways to execute known techniques to achieve tactics such as Persistence, Defense Evasion and Execution, among others.
+It is important (even if not seen today in regular arsenals) to understand how to protect, detect and react to this attack surface which could be widely spread in the future where WSL could be a de-facto component in every Enterprise machine.
+Since Windows 10 version 1903, it is possible to access Linux files from Windows by using the \wsl$[DistroName] path syntax using 9P protocol.
+During our research, we found some design issues in WSLv1 that were propagated to WSLv2 — even though the core component differs.
+The main issue involves the lack of security control in the WSL communication object, leading to any user owning the instance to own the listening Planet 9 File System server.
+At first sight, this may look obvious, but once you control that communication, different ways of using the data being sent back and forth from Windows to the container begin to emerge.
+It is important to mention that when running inside an isolated environment like WSLV2, certain activities not crossing boundaries may remain hidden for security products, but once an attempt to execute a malicious app on the Windows side is detected, the scanning mechanism provided by MVISION Endpoint and ENS will trigger to protect.
+MVISION EDR will provide visibility and detection on some of these artifacts.
+At the end of this article, we present certain objects to monitor to detect such cases in your organization.
+Potential usages for Red Teams and Researchers:
+Persistence by hiding the real content, especially on WSLv2 where the root folder is a VHDX image.
+Protocol fuzzing for discovering vulnerabilities on the implementation.
+Security bypass by using \\wsl$ syntax in applications that have options to disable Network Folders scan and thus, do not consider this as a local path.
+(McAfee MVision Endpoint will consider this special path).
+File tampering (the user accesses a file expecting some content, but it is changed during the transfer).
+P9 Server Hijack Pre-Requisites:
+WSL Enabled
+Same user privileges as the WSL instance
+A P9 compatible server
+In the following section P9 (Planet 9 File System Protocol) and 9P (the protocol) are used interchangeably
+The communication is done using an AF_UNIX socket (local file) that is currently owned by the user executing the WSL instance.
+The socket is created by the custom init process.
+Processes from the Windows side use a p9driver to access that socket by using an implementation of the P9 FileSystem instead of accessing the files as “Windows local”.
+Note: Plan 9 has several implementations; currently the format supported by Windows is L / W.
+A simple string on init shows that:
+The first WSL instance will open the p9 server for that distribution.
+Init has an embed server that creates a Unix socket into the distro path.
+The Unix socket is used to communicate.
+Whenever \\wsl$\ is accessed, P9 driver starts the communication.
+A P9 client communicates with the server.
+Now, is that fsserver file protected?
+No!
+That means that we can hijack that socket and start our P9 server (in this case, I used DIOD as the main source) and from there… the options are endless from protocol fuzzers to trigger something unexpected, to protection bypass, to something very simple that just serves different content than expected.
+To find programmatically the fsserver root location using PowerShell:
+From there, the next step would be to start our p9 server from WSL (assuming the path was provided as the script argument as shown above):
+In this example, next time we access \\wsl$\Debian, it will serve the files from mynewroot.
+The below screenshot shows the full procedure using a modified P9 server:
+DIOD listening on the local socket.
+WSL directory listing before the hijack.
+WSL directory listing after the hijack.
+At the time we were working on this, WSLv2 was announced and available in the latest Win10 Update.
+The next question was obvious—can we still do the same, given that the instance is now hosting a real kernel due to its nature of being hosted as a Hyper-V internal instance?
+Now that there is a Linux Kernel the real “p9 Linux” module is activated.
+C: drive is mounted using P9 with several rdfd/wdfd arguments on top of drvfs.
+The host is at CID:2, and ports 50000/1/2 are used for InterOp Messages and instance control.
+Back to work — there are some steps to follow to determine whether we can achieve the same P9 Server Hijack or not.
+Scan open ports listening on WSLv2 instance (a starting point could be modifying sample client code to became a scanner).
+Find the instance UID (an option is to check the task manager and wslhost.exe command line).
+Scan the instance!
+3.
+Hey!
+Port 0x405(1029d) is open, let us Knock-Knock to find who is there.
+P9 server port found… let us go hijack!!!
+Listening to the same port as with WSLv1 is not possible , unless we find a way to bypass the restrictions (app/module not using reuseaddr/port, not possible to close from user-space, etc.).
+We cannot kill init nor unload the module serving the files, so our best bet would be to close the port from the kernel.
+At the end of the day, it is our instance and we login as root .
+Let us create a vsock module that will: List current vsock connected sockets.
+Close a socket listening on a certain port.
+Listening to the same port as with WSLv1 is not possible , unless we find a way to bypass the restrictions (app/module not using reuseaddr/port, not possible to close from user-space, etc.
+).
+We cannot kill init nor unload the module serving the files, so our best bet would be to close the port from the kernel.
+At the end of the day, it is our instance and we login as root .
+Let us create a vsock module that will: List current vsock connected sockets.
+Close a socket listening on a certain port.
+List current vsock connected sockets.
+Close a socket listening on a certain port.
+Compile the module using kernel source.
+Test it!
+(Note that same ports are not present and should be fixed, but for what we want the output is enough).
+3) Now, we are free to go, but still, we need to start our P9 DIODserver listening somehow on that port using a VSOCK socket.
+Since `socat` supports this type of socket it will be a piece of cake.
+Access \\wsl$\DistributionName and voila!
+In Addition to rules related to WSL presented in previous posts, McAfee products provide several ways to detect and protect against P9 hijacking:
+MVISION Endpoint will scan \\wsl$\ even if network scanning is disabled, so from the execution perspective on Windows side protection will still apply.
+By using Endpoint Security Expert Rules it’s possible to block execution from WSL paths.
+To configure Active Response (WSLv1) follow the below steps: Setup a trigger to be notified of this situation a file fsserver is deleted.
+File Trigger with condition: Files name equals fsserver” Files collector if enabled, looking for fsserver modifications.
+“Files where Files name equals fsserver”
+Setup a trigger to be notified of this situation a file fsserver is deleted.
+File Trigger with condition: Files name equals fsserver”
+File Trigger with condition: Files name equals fsserver”
+Files collector if enabled, looking for fsserver modifications.
+“Files where Files name equals fsserver”
+“Files where Files name equals fsserver”
+In MVISION EDR (WSLv1), the file collector should be enabled and looking for wsl.conf modifications (files where files name equals “fsserver”
+As a final note, we expect this post to provide new insights about the future exploration of these key areas, mostly considering that WSLv1 and WSLv2 can be converted online and both versions will be fairly used during the next years.
+References:
+http://doc.cat-v.org/plan_9/misc/ubiquitous_fileserver/
+http://9p.io/magic/man2html/5/intro
+https://github.com/chaos/diod/blob/master/protocol.md
+https://w4mhi.wordpress.com/complete-hyper-v-socket-client-code/
+https://docs.microsoft.com/en-us/virtualization/hyper-v-on-windows/user-guide/make-integration-service
+https://tyranidslair.blogspot.com/2019/07/digging-into-wsl-p9-file-system.html
+https://securingtomorrow.mcafee.com/other-blogs/mcafee-labs/using-expert-rules-in-ens-10-5-3-to-prevent-malicious-exploits/
+https://securingtomorrow.mcafee.com/other-blogs/mcafee-labs/the-twin-journey-part-1/

@@ -1,0 +1,143 @@
+Vpon is one of many mobile ad SDKs marketed towards mainland Chinese and Taiwanese developers and app users.
+Recently, FireEye mobile security researchers identified a branch of Vpon ad SDK on iOS containing code that allows a malicious actor (be it the app developer or the SDK creator) to remotely command the app to perform the following actions:
+Stealthily record audio
+Capture screenshots and videos
+Monitor and upload device location
+Read/delete/create/modify files within the app sandbox
+Exfiltrate data to remote servers
+Load URL schemes to identify and launch apps installed on the device
+Access and modify the address book
+In our investigation, we found that not all SDKs provided by Vpon enable the above capabilities – only the SDKs that are integrated with another ad platform aggregator, AdsMogo.
+AdsMogo not only functions as a standalone ad serving platform, but also provides the unification of a dynamic list of third party ad SDKs such as Inmobi, Youmi, Millenial Meida, Tapjoy, Vungle, etc.
+The implementation allows the participating ad SDKs to integrate behaviors that are not advertised in their standalone offerings.
+We found a total of 36 apps that have the risky version of Vpon SDK integrated with AdsMogo platform.
+These apps are still available in the App Store as of May 25, 2016.
+According to Vpon’s changelog for iOS, the latest version at the time of posting is 4.5.1.
+The delivery of the abovementioned malicious capabilities is through Apache Cordova (formerly known as PhoneGap) plugins.
+Cordova is an open source, community contributed framework that supports hybrid app development.
+With Cordova, a developer can program an app in pure JavaScript and other web technologies while having it be executed in multiple native environments such as iOS and Android.
+The plugin implementations allow a developer to invoke OS functionality (e.g.
+Camera, Media, Contacts) through JavaScript code.
+However, throughout the changelog, there is no mention of the use of Cordova plugins.
+Our investigation indicates that Cordova plugins have been used starting with version 4.2, when a major build took place.
+This has persisted through all subsequent releases.
+Vpon SDK leverages the popular open source cross-platform mobile app development framework Apache Cordova for remotely controlling the app behavior through JavaScript.
+In the community’s own words:
+Due to the underlying bridging implementation of Cordova, there are numerous limitations that constrain a hybrid app from being as capable as its full-fledged native counterpart when it comes to interacting with the native OS and device hardware.
+To fill in the gap and to expand the app’s capability to access native functionalities, the Cordova community provides a series of plugins.
+For instance, the cordova-plugin-camera allows a JavaScript call to access the camera on the device and to perform system functions.
+Furthermore, on iOS, one can implement their own custom plugin.
+Figure 1 is a diagram of the architecture of a typical Cordova based mobile app.
+Figure 1.
+A high-level view of the Cordova application architecture Source: Apache Cordova under Apache License
+Vpon implemented its own plugin that encapsulates all the existing open source plugins.
+This is not exposed to the developer in its standalone releases of the SDK, therefore, developers could not hook the functionality into their apps.
+However, AdsMogo provides a software adapter that allows Vpon SDK provider to conceal the plugin initialization and ad rendering.
+When an app developer integrates Vpon through AdsMogo provided interface, all the plugin capabilities are enabled within the app.
+The pivotal piece that bridges the communication within a hybrid app between its web contents and the native OS environment is an implementation of the HTML Rendering Engine, which is UIWebView in iOS.
+However, the OS determines that a large set of device and platform functionalities should not be available to web based applications through the single interface [UIWebView stringByEvaluatingJavaScriptFromString].
+Plugins, therefore, serve as a workaround of the constraint.
+According to the development guidelines, a plugin is a package of injected code that allows the Cordova webview within which the app renders to communicate with the native platform on which it runs.
+Plugins consist of a single JavaScript interface along with corresponding native code libraries for each supported platform.
+In essence, this hides the various native code implementations behind a common JavaScript interface.
+An iOS plugin is implemented as an Objective-C class that extends the CDVPlugin class.
+For Vpon SDK, this Objective-C class is VponCDVPlugin, which is further extended by the plugin implementation shown in Figure 2.
+Figure 2.
+A list of plugin implementations in Vpon’s Cordova Plugin
+Further examination shows that all the above plugin implementations are simply wrappers of the corresponding existing open source plugins in the Apache repository.
+Therefore, they export the same interfaces for JavaScript calls as those of the open source plugins.
+Cordova applications are ordinarily implemented as a browser-based WebView within the native mobile platform.
+However, as a third party ad library, one has little control over whether it is embedded in a hybrid app or a pure native one.
+Therefore, it is imperative to roll out a customized web view implementation within the ad library.
+According to the official documentation, the underpinning element is the CDVViewController from the Cordova library, which serves as the point of contact for the tailored communication between JavaScript and the native OS.
+For the Vpon SDK, the embodiment of this view controller class is VponCDVViewController.
+Special setup and configuration was performed when an instance is instantiated.
+Figure 3 shows a subset of methods it has, as well as a look into one of its functions [VponCDVViewController webView:shouldStartLoadWithRequest:navigationType:].
+Figure 3.
+Vpon Cordova plugin’s implementation of entry point view controller CDVViewController
+VponCDVViewController is never directly instantiated and added to the host app’s view controller hierarchy, but rather is dependent on the instantiation of many of its child implementations, VponPhoneGapViewController.
+Figure 4 shows the parent and child relationship of these two view controllers.
+Figure 4.
+VponCDVViewController is the parent of VponPhoneGapViewController
+Furthermore, VponPhoneGapViewController is the parent of the following view controllers, as shown in Figure 5.
+Figure 5.
+VponPhoneGapViewController is the parent of the list of UIViewController implementations
+To better illustrate the workflow of Vpon Cordova plugin, let’s focus on one of the UIViewController implementations.
+A VponAdViewController instance is created and set into operation in a series of method invocations started when the Vpon SDK is activated through AdsMoGoAdapterVpon, an adapter implementation of the Adapter interface provided by AdsMoGo platform.
+The sequence of invocations is depicted in Figure 6.
+Figure 6.
+Sequence of invocations that illustrates the integration of Vpon and AdsMoGo
+Figure 7 displays the content of [VpadnBanner sendRequestGetAd] with the highlighted area showing the initialization of the child view controller implementation of VponCDVViewController.
+Figure 7.
+The implementation of [VpadnBanner sendRequestGetAd] with the instantiation of VponCDVViewController
+When VponAdViewController is used to open a video Ad through [VponAdViewController openVideoAd:], it effectively creates an instance of the VponVideoWebViewController and renders the remotely retrieved video content.
+The capabilities that are beyond the realm of ad serving in Vpon are manifested by the plugin implementations.
+Each capability is supported by an implementation of an open source Cordova plugin.
+Figure 8 shows the full set of commands supported by vpadn-sdk-i-v4.2.16: the latest as of March 28, 2016, which is the required plugin mapping for a custom Cordova plugin.
+Figure 8.
+Vpon Cordova Plugin Mapping
+For those who are interested in knowing more about Cordova Plugin development, please refer to Apache’s plugin development guide.
+Figure 9 gives a look into the implementation of one of the plugins, VponCDVCapture.
+It is a plugin that supports stealth recording in response to the corresponding command from JavaScript.
+The implementation within Vpon SDK is merely a wrapping of the open source plugin cordova-plugin-media-capture with a different class name that is consistent with Vpon’s naming convention.
+Figure 9.
+Vpon’s implementation of the media capture plugin
+According to Cordova’s documentation on the media capture plugin shown in Figure 10, the utilization should always be accompanied by a UI control that allows the user to accept or deny.
+While the OS prompts the user for granting the access to the microphone the first time it is going to be used by the app, it is not sufficient in raising the user’s suspicion if the host app provides functionalities that require legitimate access to the microphone.
+Figure 10.
+Apache documentation on the media-capture plugin
+In addition to accessing microphone, Vpon Cordova plugin also provides interface to JavaScript for using the device camera and the address book.
+Figure 11 and Figure 12 provide a glimpse into the relevant code.
+Figure 11.
+Vpon’s cordova plugin supports JavaScript access to the device camera
+Figure 12.
+Vpon’s cordova plugin supports JavaScript access to the device address book
+JavaScript code is the linchpin for the framework that enables plugins to function as intended.
+As Apache Cordova has put it:
+The entry point for any plugin is JavaScript.
+The reason developers use Cordova is so they can use and write JavaScript, not Objective-C, not Java, not C#.
+The JavaScript interface for your plugin is the front-facing and arguably most important part of your Cordova plugin.
+You can structure your plugin's JavaScript however you like.
+There are two ways to serve JavaScript content to a Cordova enabled app.
+First, the app is compiled and packaged with local JavaScript files and the HTML pages that consume them.
+Second, the app retrieves remote JavaScript at runtime through web technologies.
+They are not mutually exclusive; rather, they are supplemental to each other for robust and flexible cross-platform apps.
+In the case of Vpon SDK, there is no local JavaScript content involved in the app’s lifecycle.
+Instead, it is delivered to the rendering view controllers during an ad request to the Vpon ad server.
+Figure 13 shows the hardcoded URL of loaded JavaScript for each and every ad request.
+Figure 13.
+The hardcoded URL of loaded JavaScript for each and every ad request
+The current content of the above JavaScript file on the server is shown in Listing 1.
+This piece further directs the rendering view to load JavaScript for an iOS device, which is a customized version of the Apache cordova.js file, the base of the Cordova JavaScript API.
+Listing 2 shows an excerpt of the current content of this JavaScript file, with highlights on the invocation of Vpon Cordova plugin VponSdk.
+Listing 1.
+Content of file http://m.vpadn.com/sdk/vpadn-sdk-a-core-v1.js
+Listing 2.
+Content excerpt of JavaScript file vpadn-sdk-i-core-v1.js served by the Vpon server
+Through our investigation and traffic monitoring within a limited time period, we did not observe active network communications that deliver malicious JavaScript from the remote server.
+However, this does not justify that it cannot be taken advantage of to behave maliciously.
+It is rather easy to replace the plugin name, the invocation method, and the relevant parameters specified to execute the functionalities of other plugins.
+For instance, to activate the microphone to record surroundings, one only needs to add the following JavaScript code (Listing 3) in the remote JS file.
+Listing 3.
+PoC exploit
+This is the functional equivalent to the following execution in cycript within a running app embedded with the malicious Vpon SDK, as shown in Figure 14.
+Figure 14.
+Activate device microphone for voice recording through Vpon’s undisclosed Cordova plugin in Cycript
+The subsequent execution of the above cmd resulted in a stealth recording saved to the Documents directory within the app sandbox.
+While we did not capture real network traffic during our investigation that proves a perceived wrongdoing, we see no justification for an ad platform provider, such as Vpon, to have the code ability to use the microphone for voice recording, use the camera for taking pictures and recording videos, access the address book, manipulate the app sandbox, and perform other behaviors.
+The current setup offers opportunity to two types of potential malicious actors who can profit from the developers and the app users.
+Profiter: Vpon SDK provider.
+To this point, it should not be surprising that it’s up to the Vpon SDK provider’s benevolence that apps embedded with this malicious SDK are not behaving improperly for their users.
+However, in the case where such benevolence runs out, the users will suffer undesirable loss of privacy and security.
+Profiter: A third party network hijacker.
+As we have illustrated, a portion of the contents provided to the user by the ad SDK provider are through the network communication on top of the HTTP protocol.
+The commands are delivered through the remote web pages, in the form of HTML and JavaScript.
+Therefore, a third party network attacker can take advantage of a man in the middle (MitM) setup to activate the seemingly dormant malicious behavior.
+In this blog post, we showed that a third party ad library provider, Vpon, is stowing aggressive and risky code ability into the apps that adopt it as an ad-serving platform.
+This is not the first time FireEye mobile security researchers have seen such attempts.
+In November 2015, we reported iBackdoor, a similar threat with a backdoored ad SDK leveraging remote JavaScript to manipulate the device and exfiltrate sensitive information without permission.
+Third party libraries – ad libraries in particular – are often unvetted by the community.
+It is common and expected that app developers will integrate third party libraries into their apps, so developers should exert caution.
+Following our responsible disclosure guidelines, we contacted Apple and Vpon respectively on May 10, 2016.
+Apple acknowledged the findings, but offered no further feedback.
+Vpon did not respond when we reached out.

@@ -1,0 +1,120 @@
+McAfee has recently seen a new kind of ransomware–Zcrypt—that can self-replicate.
+This “virus ransomware” arrives via email in a malicious attachment or by usurping an Adobe Flash Player installation.
+The malware copies itself onto removable drives to infect other machines.
+Zcrypt uses the Nullsoft Scriptable Install System, which works like a Zip file, decompressing and loading the content while running.
+Summary of original Zcrypt file.
+If we take a look at the resource, we can see some information related to the installer.
+The following window, extracted from the resource viewer, is related to the installer, but when the sample runs no window appears.
+Resource information for Zcrypt file.
+Using a simple unzip tool, we can see the content of the file.
+Extracted content of Zcrypt ransomware.
+The files contained in the original sample:
+$PLUGINSDIR contains the system.dll file related to the Nullsoft engine.
+cCS file read by the DLL before to run the final payload
+9 file read by the DLL before to run the final payload.
+dll is the malicious DLL that runs the final payload.
+DLL analysis
+SetCursor.dll is loaded by the installer.
+The following screenshot gives us some information about this DLL:
+Summary information for SetCursor.dll.
+We can also see that the compilation date is not correct and indicate a very old file (1970).
+The metadata of the file is related to the tool TortoisePlink and the icon of the sample is related to the software Putty.
+Metadata for SetCursor.dll.
+The sample uses obfuscation to hide its behavior and to avoid the analysis.
+The export table is completely obfuscated and cannot be read statically.
+Extract of obfuscated export table.
+Behavior
+The sample creates a registry run key and a LNK file in the startup folder for persistency.
+It calculates an MD5 sum of the string (computer name @ user name) and saves it in cid.ztxt.
+Then it drops both public and private keys and queries a remote IP to register the infected machine.
+Once the machine is registered, the malware starts to encrypt the files with the Zcrypt extension.
+Once the encryption is finished, it drops an HTML file on the desktop, downloads a PNG ransom message from 93.174.90.126, and the Bitcoin address to pay the ransom.
+Once the sample is running, it creates or queries the following registry keys:
+HKCU\Software\Microsoft\Windows\CurrentVersion\Run\zcrypt
+HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\ShellCompatibility\Applications\zcrypt.exe
+HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Compatibility32\zcrypt
+HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\zcrypt.exe
+HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Custom\zcrypt.exe
+HKCU\Software\Microsoft\Windows\CurrentVersion\App Paths\zcrypt.exe
+HKCU\Software\Classes\AppID\zcrypt.exe
+HKLM\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Custom\zcrypt.exe
+And creates these files:
+C:\Users\<username>\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\zcrypt.lnk
+C:\Users\<username>\AppData\Roaming\zcrypt.exe
+C:\Users\<username>\AppData\Roaming\cid.ztxt
+C:\Users\<username>\AppData\Local\Temp\nsr76A8.tmp
+C:\Users\<username>\AppData\Local\Temp\nsr76A9.tmp\System.dll
+C:\Users\<username>\AppData\Local\Temp\nsm3B6D.tmp
+C:\Users\<username>\AppData\Local\Temp\nsm3B6E.tmp
+C:\Users\<username>\AppData\Local\Temp\nsm3B6E.tmp\System.dll
+C:\Users\<username>\AppData\Roaming\Coalfish.cCS
+C:\Users\<username>\AppData\Roaming\Relay.9
+C:\Users\<username>\AppData\Roaming\SetCursor.dll
+C:\Users\<username>\Desktop\SetCursor.DLL
+C:\Windows\System32\SetCursor.DLL
+C:\Windows\system\SetCursor.DLL
+C:\Windows\SetCursor.DLL
+C:\Users\<username>\Desktop\zcrypt.exe.Local
+C:\Users\<username>\AppData\Roaming\public.key
+C:\Users\<username>\AppData\Roaming\private.key
+Network connection
+The sample makes the following requests to the site dedicate-hosting.ml (93.174.90.126):
+Public-key request: GET http://dedicate-hosting.ml/c8a40e36a897c6073b393e12c646894d/e72b2dacd696259ae4abb9952bc53f4d.php?computerid=&public=1 HTTP/1.1
+Private-key request: GET http://dedicate-hosting.ml/c8a40e36a897c6073b393e12c646894d/e72b2dacd696259ae4abb9952bc53f4d.php?computerid=&private=1 HTTP/1.1
+Bitcoin address request: GET http://dedicate-hosting.ml/c8a40e36a897c6073b393e12c646894d/e72b2dacd696259ae4abb9952bc53f4d.php?computerid=&btc=1 HTTP/1.1 Connection: Keep-Alive
+PNG ransom message request: GET http://dedicate-hosting.ml/4.png HTTP/1.1
+After a successful infection, victims see the ransom message:
+The Zcrypt HTML ransom message.
+The PNG ransom message.
+Digging deeper
+To further analyze Zcrypt, we changed the characteristic field on the sample to load it into OllyDbg as a normal executable.
+The DLL uses multiple WriteProcessMemory functions to write the payload into the memory space.
+(For more, see https://msdn.microsoft.com/en-us/library/windows/desktop/ms681674%28v=vs.85%29.aspx.)
+BOOL WINAPI WriteProcessMemory(
+_In_ HANDLE hProcess, _In_ LPVOID lpBaseAddress, _In_ LPCVOID lpBuffer, _In_ SIZE_T nSize, _Out_ SIZE_T *lpNumberOfBytesWritten
+);
+The WriteProcessMemory function.
+Once the final WriteProcessMemory step completes, we can extract the payload from the memory with the address of the buffer.
+Extracting the payload from memory.
+After extracting the payload, we can see the language used and the original compilation date, which is close to the infection date.
+Summary of the payload.
+A program database file shows us some information about the original name, MyEncrypter2:
+The sample also uses some tricks to avoid analysis:
+Zcrypt’s antidebugging tricks.
+To encrypt the files on the system, the sample uses OpenSSL.
+We can find some references in the code:
+References to OpenSSL.
+This code is related to evp_enc.c, which we can find on github.
+Further references to OpenSSL.
+All files can be found here.
+The list of targeted files:
+.zip, .mp4, .avi, .mkv, .wmv, .swf, .pdf, .sql, .txt, .jpeg, .jpg, .png, .bmp, .psd, .doc, .docx, .rtf, .xls, .xlsx, .odt, .ppt, .pptx, .xml, .cpp, .asm, .php, .aspx, .html, .conf, .sln, .mdb, .3fr, .accdb, .arw, .bay, .cdr, .cer, .cr2, .crt, .crw, .dbf, .dcr, .der, .dng, .dwg, .dxf, .dxg, .eps, .erf, .indd, .kdc, .mdf, .mef, .mrw, .nef, .nrw, .odb, .odp, .ods, .orf, .p12, .p7b, .p7c, .pdd, .pef, .pem, .pfx, .pst, .ptx, .r3d, .raf, .raw, .rw2, .rwl, .srf, .srw, .wb2, .wpd, .jnt, .pub, .trc, .tar, .jsp, .mpeg, .msg, .log, .vob, .max, .3ds, .3dm, .cgi, .jar, .class, .java, .bak, .pdb, .apk, .sav, .cbr, .pkg, .tar.gz, .fla, .vcxproj, .XCODEPROJ, .eml, .emlx, .mbx, .vcf
+Targeted extensions.
+The sample also tries to create autorun.inf in the connected drive or network drive using the function GetDriveType.
+With this capability the malware is able to self-replicate and infect more people without human action.
+(For more, see https://msdn.microsoft.com/en-gb/library/windows/desktop/aa364939%28v=vs.85%29.aspx.)
+UINT WINAPI GetDriveType( _In_opt_ LPCTSTR lpRootPathName);
+The GetDriveType function.
+GetDriveType in the sample.
+The AutoRun file.
+Creating an AutoRun file on a removable drive.
+To download a file from the server, the sample uses the function URLDownloadToFile and CreateFile to copy the files onto the infected machine.
+Downloading and creating the PNG file from the remote site.
+Finally the sample creates a batch file to delete some files, such as the private key.
+The malware runs the file with the function WinExec with the option CMDShow set to “0” to avoid to displaying command window.
+(For more, see https://msdn.microsoft.com/en-us/library/windows/desktop/ms633548%28v=vs.85%29.aspx)
+Creating and running the batch file.
+Conclusion
+This short analysis of Zcrypt shows us that ransomware continues to gain capabilities to infect more systems.
+It is interesting to note that CryptoLocker actors also used the Nullsoft installer last year.
+To protect yourself and your systems against this type of threat, read How to Protect Against Ransomware.
+Indicators of compromise:
+hxxp://dedicate-hosting.ml
+exe = 4e971d8a160579a5ef60b214aed0008a
+cCS = c0232ecc947fa7332187dca7f3ce3eb1
+9 = e7a1c862460e65f0fde91d9020b3f3f5
+dll = 843f7d05fa78119554496bbc042c6147
+mem = 5fde78da66d1d44d4993a0945e025311
+Related sample:
+d1e75b274211a78d9c5d38c8ff2e1778
+hxxp://qwertyuiop.gp

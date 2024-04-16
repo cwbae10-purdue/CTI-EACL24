@@ -1,0 +1,149 @@
+FireEye performed a large-scale analysis of the most popular free Android apps available on the Google Play store and found that a significant percentage of them do not encrypt potentially sensitive data using strong cryptography.
+We analyzed all free apps on the Google Play store that have over a million downloads as of Nov. 22, 2014.
+We found that 8261 of the 9339 such apps use some cryptographic functionality provided by the Android platform and 5147 (62%) of these 8261 apps have at least one of the categories of cryptographic vulnerabilities we studied and report in this blog.
+A good mobile app experience depends, among other factors, on the app storing user data locally on the device.
+For example, a finance management app can list balances and transactions without data connectivity, and a mobile banking app can store the username so that the user is not required to type it every time the app is used.
+When sensitive data is stored on the device, apps can ensure that they are stored securely using encryption.
+Apps also exchange sensitive information with remote servers.
+When data is sent to remote servers, apps can ensure that the data is encrypted using the Public Key Infrastructure (PKI).
+Encrypting data on the device before sending it using PKI adds an additional layer of protection.
+Data encryption requires the use of keys and algorithms that would require substantial computational power and effort from a malicious entity to decrypt.
+The Android platform provides a number of algorithms for encrypting sensitive information.
+Some of these algorithms provide stronger cryptographic guarantees in protecting data than others.
+The onus is on app developers to ensure that they use these platform capabilities in a manner that prevents decryption of data without substantial time and effort.
+The need for encryption is twofold.
+Firstly, encryption makes it difficult to read and use any sensitive information that an app stores on a device.
+Secondly, encryption adds an additional layer of security to sensitive information that is exchanged between apps and remote servers.
+The SSL/TLS protocols, when used correctly, prevent Man-in-the-Middle (MITM) attacks that lead to data exfiltration.
+Unfortunately, a significant number of apps do not validate server certificates or verify hostnames, as we described in our blog on SSL vulnerabilities, leading to data theft.
+The risk of exfiltration increases with rooted devices.
+This could be either by commission, where the user roots her device, or by omission where a malicious app downloaded from a third-party market roots the device.
+For instance, although the recent TowelRoot exploit was more of a proof-of-concept, it can be embedded in third party apps and used to silently root a device.
+A successful root exploit gives the attacker super user privileges, which means he can install or uninstall any app, read any data in memory or on the file system, send text messages or connect to remote servers without any further user interaction.
+While all bets are off once the device is rooted insofar as protecting sensitive information is concerned, crypto vulnerabilities in apps make it that much easier for malicious apps to silently exfiltrate arbitrary data stored on the file system or sent over https.
+The following is a breakdown of the desirable security properties in data encryption.
+High Entropy.
+The word “entropy” is informally used as a measure of randomness or unpredictability.
+Cryptographic algorithms are harder to break when there is more unpredictability in the random numbers generated for use in encryption.
+A way of introducing unpredictability in Android is to use the SecureRandom class.
+Calling nextInt on a SecureRandom object returns a pseudo-random number that depends on a seed.
+The seed is a critical part of generating random numbers.
+Therefore, a source with high entropy is desirable when choosing a seed.
+By default, the SecureRandom class reads a seed from /dev/urandom which is one of the best sources of randomness on a Linux platform.
+The random numbers read from /dev/urandom are generated from an entropy pool that uses noise from device drivers and other sources.
+Detected vulnerability.
+To detect vulnerabilities caused by the lack of high entropy, we check whether the app uses a seed that is statically defined in an instance of the SecureRandom class.
+In Android versions 4.2 or earlier, the seed picked will replace the internal seed.
+In Android versions after 4.2 it will supplement rather than supplant the internal seed, remedying the vulnerability.
+A seed that is statically defined in the app can be easily obtained by decompiling the app bytecode.
+Using this seed and an instance of SecureRandom, an attacker can re-generate the same sequence of pseudo-random numbers that are used by the app, thus eliminating entropy.
+Stateful encryption algorithms.
+Stateless encryption algorithms will always encrypt identical inputs into identical outputs.
+In other words, a given username will always be encrypted into the same stream of bytes each time the algorithm is invoked.
+Since the algorithm always encrypts a given text fragment to identical cipher text, an attacker can build a reverse dictionary by choosing input text and docketing the output generated by the algorithm.
+This can then be used to decrypt arbitrary data without knowledge of the keys used for encryption.
+The security property that prevents these attacks is called “Indistinguishability under Chosen-Plaintext-Attack” or “IND-CPA” for short.
+Stateful encryption algorithms use a randomly generated initial vector to scramble the encrypted data.
+If the initial vector is a randomly selected value across encryption calls, identical input text will not be encrypted to identical output text.
+This makes it very difficult to build a reverse dictionary for an attacker.
+Further, if the initial vector is picked from a good source of entropy, such as from a properly initialized instance of SecureRandom as outlined above, it is very difficult to systematically guess the initial vector used in a session.
+Detected vulnerability.
+To detect vulnerabilities from the use of stateless encryption algorithms we check if the app uses any of the algorithms that use the Electronic Codebook (ECB) transformation mode to encrypt data.
+This includes algorithms such as AES/ECB/NoPadding, DES/ECB/PKCS5Padding, etc.
+These transformations are stateless and do not possess the IND-CPA property.
+Transformations that use the Cipher Block Chaining (CBC) schema are stateful and hence do possess the IND-CPA property.
+An attacker using the Chosen-Plaintext-Attack (CPA) can break the encryption achieved using algorithms that do not possess the IND-CPA property.
+Password-Based Encryption (PBE).
+An important function of cryptography is to enable users to encrypt data using a passphrase.
+The data can then be stored securely, or sent securely over the network.
+Since users want easy to remember passphrases, the difficulty in these cases is in balancing the need to have a phrase that is easy to remember while making it difficult for an attacker to guess.
+A solution to the problem is generating a key from a given passphrase, and using that key to encrypt data instead of using the passphrase directly.
+In PBE, users supply a passphrase, the app supplies a salt, which is just a random sequence of characters that is appended to the passphrase.
+The result is then scrambled to generate a key.
+This process is repeated several times to make re-construction of the key computationally hard.
+The key generated at each step is augmented with the salt and the result scrambled to generate a new key.
+The final key generated at the end of these iterations is used to encrypt the data.
+The number of iterations is supplied by the app.
+RFC 2898 recommends a minimum of 1000 iterations to yield a strong cipher key.
+The larger the iteration count, the longer it takes an attacker to compute the key, assuming he knows the salt and tries to guess the passphrase.
+Detected vulnerability.
+To detect weak PBE, we check if the salt is a statically defined constant, as an attacker could then decompile the app and get the salt, rendering PBE ineffective.
+The secure way to generate a salt is from a good source of entropy such as from a properly initialized instance of SecureRandom.
+We further check if the iteration count being used with a PBE algorithm is below the recommended number of 1000 and flag that as a vulnerable use of PBE.
+The seeds, salts, initial vectors, and keys used for encryption should never be statically defined in the app as this allows the attacker to get them by decompiling the app.
+Stateless encryption algorithm instances can be subjected to a CPA to aid decryption.
+Given the ability to decrypt data, an attacker can use several methods, as outlined below, to exfiltrate sensitive information.
+1.
+Exploiting transmitted data
+a.
+If an app sends encrypted data over http, then the data can be easily read by an MITM.
+In this case, the attacker can decrypt the data being sent.
+b.
+If an app has SSL vulnerabilities, an attacker may launch an MITM attack.
+With cryptographic vulnerabilities, the data being sent can again be easily decrypted.
+2.
+A successful root exploit
+a.
+If an attacker succeeds in rooting a device, then all bets are off.
+They have access to everything on the device.
+With weak cryptography the problem is worse as the attacker can determine which apps are on the device and exfiltrate data from apps that are interesting and then decrypt the data offline with minimal effort by exploiting cryptographic vulnerabilities.
+Furthermore, they can decrypt stored passwords and use them to initiate transactions and exfiltrate personal information from all online services that require the user’s login credentials.
+3.
+Exploiting data stored on the device
+a.
+If an app stores data on the SD card, the data can be read by any app on the device.
+If the data is encrypted using weak cryptography as outlined here, an attacker can read it.
+b.
+If an app stores data in internal memory, only the app that stores the data can read it.
+However, other vulnerabilities such as Javascript binding over http allow an attacker to inject and execute arbitrary code.
+The malicious code will have the same permissions and privileges as the app, making it easy to read and decrypt the data.
+c. If a user enables USB debugging and then connects to a compromised machine, an attacker can use adb shell to access the device file system.
+This would give the attacker the same privileges as with a successful root exploit.
+4.
+Intercepting implicit intents
+a.
+If an app sends encrypted data as part of an implicit intent, an attacker can build a benign application that can receive the intent, extract the encrypted data and decrypt it.
+An implicit intent is one that does not specify the component that has to handle it.
+Apps that use implicit intents for internal consumption are particularly susceptible.
+FireEye reviewed free apps in the Google Play store with over a million downloads as of November 22, 2014.
+Out of these 9339 apps, 8261 use some cryptographic functionality provided by the Android platform.
+Before we present our results we wish to emphasize that exploiting cryptographic vulnerabilities can be accomplished using any of the methods highlighted in “Exploiting cryptographic vulnerabilities.” If apps with cryptographic vulnerabilities encrypt data using weak encryption and then send them to remote servers using SSL incorrectly, as outlined in our blog on the subject, then an attacker can gain access to sensitive information.
+Of the handful of apps for which we built attack demonstrations, one sent easy-to-decrypt information to a remote server through an SSL connection that trusted all certificates.
+By building a successful MITM attack we were able not only to exfiltrate the data being sent, but also decrypt it by exploiting a statically defined encryption key.
+In another instance we found that an app stored easy-to-decrypt data on the file system.
+This required a prior root exploit on the device to succeed before we could read and decrypt the encrypted data.
+Acknowledgments: We would like to thank Tao Wei and Dawn Song for their technical inputs that lead to the development of the Crypto vulnerability detection, and the team behind the FireEye Mobile Threat Prevention Platform for their feedback.
+Figure 1.
+Results of our analysis on apps with over 1 million downloads.
+We now present the results of our analysis on all 9339 free apps on the Google Play store with over a million downloads.
+Of these, 5147 (~62%) contain at least one of the cryptographic vulnerabilities that we studied.
+In Figure 1, we present the number of vulnerable apps we found in each category.
+We use a bounded-depth inter-procedural static analysis framework for our analysis.
+We filter out call-sites that have no direct callers and report only those behaviors that have a high likelihood of being reached when the app runs.
+1.
+Encryption algorithm weaknesses
+a.
+4972 apps use Cipher instances.
+Of these 2913 (58%) use the stateless ECB transformations and are hence vulnerable to Chosen-Plaintext-Attacks.
+While this in itself does not indicate an exploitable vulnerability, it is a simple matter for apps that communicate with remote servers to generate a random initial vector for use in stateful CBC transformations and store them on the server using PKI for secure data transmission.
+b.
+Of the 3895 apps that use stateful CBC transformations, 931 (24%) use static initial vectors that can be easily extracted from the app by decompiling the app bytecode.
+Given that a static initial vector does not change across sessions, the CBC algorithm instance no longer possesses the IND-CPA property and thus becomes effectively stateless.
+2.
+Low entropy related weaknesses
+a.
+1762 (21%) apps use static keys for encryption.
+These can again be extracted from the app and used to decrypt data.
+b.
+Of the 474 apps that use instances of SecureRandom, 111 (23%) use static seeds.
+3.
+Weaknesses in Password-Based-Encryption (PBE)
+a.
+Of the 918 apps that use PBE, 409 (45%) use static salts in PBE that can again be easily extracted.
+b.
+225 (25%) of the 918 apps use PBE with low iteration counts that are less than the 1000 that is required for strong encryption.
+Cryptographic vulnerabilities are serious threats because they increase the effectiveness of other attacks.
+Any successful attack that exploits the incorrect use of SSL, Javascript binding over http, implicit intents carrying sensitive data, data stored on SD cards, among others, will enable an attacker to exfiltrate sensitive information.
+This problem is compounded by root exploits by which an attacker can root a device, determine the apps on the device and selectively transmit arbitrary data for subsequent offline decryption.
+Strong cryptography makes it computational difficult and time consuming for an attacker to gain privileged information.
+We recommend developers pay particular attention to this aspect of their applications to secure privileged and sensitive information.

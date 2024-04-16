@@ -1,0 +1,147 @@
+Ransomware is now one of the fastest growing classes of malicious software.
+In the last few years it has evolved from simple screen blockers demanding payments to something far more dangerous.
+The Ransomware class is now based on so-called encryptors – Trojans that encrypt every kind of data that may be of value to the user without his or her knowledge.
+The data can include personal photos, archives, documents, databases (e.g., databases used in 1C:Enterprise software intended for automation of business activities), diagrams, etc.
+In order to decrypt these files the criminals demand a payment – often a significant sum.
+CryptoLocker, CryptoDefence (and its successor CryptoWall), ACCDFISA, and GpCode are some of the most notorious examples.
+There are also lots of lesser-known families that have spread in Russia and the CIS.
+At the end of June 2014 Kaspersky Lab detected a new encryptor.
+Analysis showed that the Trojan had nothing in common with other known families and a number of features that suggested it was a completely new creation.
+Its name?
+CTB-Locker.
+This new family is detected by Kaspersky Lab as Trojan-Ransom.Win32.Onion.
+This encryption malware belongs to a new generation of ransomware.
+Its developers used both proven techniques ‘tested’ on its predecessors (such as demanding that ransom be paid in Bitcoin) and solutions that are completely new for this class of malware.
+Specifically, hiding the command and control servers in Tor anonymity network complicates the search for the cybercriminals, and the use of an unorthodox cryptographic scheme makes file decryption impossible, even if traffic is intercepted between the Trojan and the server.
+All this makes Trojan-Ransom.Win32.Onion a highly dangerous threat and one of the most technologically advanced encryptors out there.
+The high-level algorithm used by the malicious encryptor is quite ordinary and is as follows:
+after launching, the malware copies its body to (CSIDL_COMMON_APPDATA) and adds the task to launch the file to the Task Scheduler;
+search all the fixed, removable and network drives for files matching a list of extensions (see Figure 1);
+Figure 1.
+Data fragment with a list of file extensions used by the encryptor
+encrypt the files found;
+display a window demanding ransom and containing a list of files that have been encrypted.
+The cybercriminals demand that the user pay ransom in Bitcoins (Figures 2, 3);
+set an image named AllFilesAreLocked.bmp as desktop wallpaper.
+The wallpaper informs the user that data on the computer has been encrypted (Figure 4).
+Figure 2.
+Window informing the victim that files on the computer have been encrypted
+Figure 3.
+The cybercriminals’ demands
+Figure 4.
+Image set as desktop wallpaper
+So what sets this Trojan apart from dozens of similar malicious programs?
+The sample analyzed has a single static command server address, which belongs to the .onion domain zone.
+It is worth noting that this in itself is not ‘innovative’.
+We have seen similar arrangements in other malware types (discussed, for example, here and here).
+However, this is a new development for ransomware.
+Although some of the ransom Trojans from families detected earlier demanded that the victim visit a certain site on the Tor network, the malware discussed here supports full interaction with Tor without the victim’s input, setting it apart from the others.
+This brings us to another feature, which is unique among known malware.
+All the previously detected malware, if it communicated to the Tor network at all, did this in an unsophisticated manner: it launched (sometimes by injecting code into other processes) the legitimate file tor.exe, which is available for download on the network’s official website.
+Trojan-Ransom.Win32.Onion does not use the existing file tor.exe.
+Instead, all the code needed to implement interaction with the anonymity network is statically linked to the malicious program’s executable file (i.e., is implemented as part of the malicious code) and is launched in a separate thread.
+Figure 5.
+Pseudocode showing how launching the tor proxy thread is implemented
+The code contained inside the thread_tor_proxy procedure is nearly all taken from open sources (Tor is an open-source project).
+When connection to Tor has been established and a local tor proxy server has been set up at IP 127.0.0.1 (the port number varies from one infected machine to another and depends on the MachineGuid parameter), the global flag can_complete_circuit is set, which is later checked in the thread thread_post_unlock_data.
+As soon as this happens, the malware establishes network communication with this local address, as shown in Figure 6.
+Figure 6.
+Pseudocode showing how network communication with the tor proxy is implemented
+A request sent by the malware to the server contains protected data required to decrypt the victim’s files.
+Figure 7.
+Data sent to the command server
+In response, the server returns data about the cost of unblocking the user’s files in bitcoins and US dollars, as well as the address of the wallet to which the payment is to be made.
+Figure 8.
+Data returned by the command server
+None of the encryptors known before used compression technologies (with the exception of ACCDFISA, which simply adds files to a password-protected rar-sfx archive; however, in this case encryption and compression is not functionality implemented in a malicious program but simply utilization of a ready-made product – WinRAR).
+In this aspect of its operation, Trojan-Ransom.Win32.Onion also shows considerable originality.
+Here is what it does:
+moves the victim’s file to a temporary file using the MoveFileEx API function;
+reads temporary file from disk block-by-block;
+each block is compressed using Zlib, a freely distributed library (procedure deflate());
+after compression, each block is encrypted and written to disk;
+service information required for decryption is placed at the beginning of the resulting file;
+the encrypted file is given the .ctbl extension.
+Cryptomalware most commonly uses a cryptographic scheme based on the AES+RSA combination.
+In this scheme, the server generates a pair of keys – rsa-public + rsa-private – for RSA, which is an asymmetric encryption algorithm.
+The private key, rsa-private, remains on the server, while rsa-public is sent to the malware.
+Next, the malware generates a new key – aes-key – for each of the victim’s files, to be used by AES, a symmetric-key block algorithm.
+Each file is encrypted using AES, then its aes-key is encrypted using RSA (using the rsa-public key) and saved to the file.
+Since the scheme uses asymmetric encryption, nobody can decrypt the file without having the rsa-private key, which never left the cybercriminals’ server.
+However, Trojan-Ransom.Win32.Onion has used an unusual approach yet again!
+The sample uses the asymmetric cryptographic protocol known as ECDH – Elliptic curve Diffie–Hellman.
+The original Diffie-Hellman algorithm (the so-called key exchange method or shared-secret protocol) was developed some time ago and published in 1976 by famed cryptographers Whitfield Diffie and Martin Hellman.
+A modification of the algorithm which uses elliptic curves was published later in 2000, in a Certicom Research article, Standards for efficient cryptography, SEC 1: Elliptic Curve Cryptography.
+A detailed description of the protocol is beyond the scope of this publication, so we are going to drop the details and describe the main principles that will be helpful in understanding how the malware operates.
+A pair of keys – private and public can be generated.
+The so-called shared secret can be generated from your private key and the other party’s public key.
+If the two parties have exchanged public keys (the private keys are not exchanged!)
+and each has independently calculated the shared secret from the other party’s public key and its own private key, both parties will get the same value.
+The resulting shared secret can be used as a key for any symmetric encryption algorithm.
+The authors of Trojan-Ransom.Win32.Onion used an existing implementation of this cryptographic algorithm, a description of which is available on the Internet.
+The high-level cryptographic scheme used by Trojan-Ransom.Win32.Onion is as follows.
+Key generation:
+the malware generates the pair master-public (public key) + master-private (private key);
+master-private is sent to the server securely along with other data.
+It is not saved on the client (fact I);
+for each file to be encrypted, a new key pair is generated – session-public + session-private;
+the shared secret is calculated: session-shared = ECDH(master-public, session-private).
+Encrypting a file belonging to the victim
+the file is compressed using the Zlib library;
+after being compressed with Zlib, each file is encrypted using AES, with the hash SHA256 (session-shared) used as the key;
+after encryption, the session-public key is saved in the file (fact II), while session-private is not saved (fact III);
+the shared secret calculated – session-shared – is not saved, either (fact IV).
+Decrypting a file belonging to the victim
+The Diffie-Hellman protocol is designed in such a way that the following equality is true:
+ECDH(master-public, session-private) = session-shared = ECDH(master-private, session-public) (fact V)
+The above equality defines the underlying principle on which the operation of Trojan-Ransom.Win32.Onion is based.
+Provided that the Trojan has not saved session-private (see.
+fact III) and session-shared (see.
+fact IV), only one decryption method remains – calculating ECDH(master-private, session-public).
+This requires the master-private key (sent to the cybercriminals’ server, see fact I) and session-public key (saved in the beginning of the encrypted file, see fact II).
+There are no other ways to decrypt the file, which means that the file cannot be decrypted without the master-private key.
+The key sent to the server might be intercepted, but unfortunately, this would not be sufficient to decrypt the victim’s files.
+This is because the malware writers have used the same asymmetric protocol, ECDH, to protect their traffic, albeit with a separate, dedicated set of keys.
+the malicious program’s body contains the public key, network-server-public;
+when establishing a connection, the malware generates a new pair of keys: network-client-public + network-client-private;
+the malware calculates the shared secret network-shared = ECDH(network-client-private, network-server-public);
+the malware encrypts the data being sent using AES with SHA256(network-shared) used as the key;
+the public key network-client-public is sent to the server in an unprotected form (fact VI);
+the client keys, network-client-public + network-client-private, as well as the shared secret network-shared, are not saved (fact VII).
+The cybercriminals have the key network-server-private and receive the key network-client-public from the client (see fact VI).
+As a result, they can decrypt the data received.
+To do this, they have to calculate network-shared = ECDH(network-client-public, network-server-private).
+Without having network-server-private, this value cannot be calculated (see fact VII).
+As a result, unfortunately, intercepting traffic will not provide master-private, without which the victim’s file cannot be decrypted.
+The creators of the early versions of Trojan-Ransom.Win32.Onion had English-speaking users in view as their primary targets, so English was the only supported GUI language.
+In the more recent versions, however, Russian also came to be supported in the Trojan’s GUI along with English.
+The piece of malware also underwent some visual refurbishments, such as a countdown displayed to intimidate the user.
+The new Russian GUI and, more specifically, certain strings within the Trojans’ body give us ground to assume that its creators are Russian speakers.
+The analysis of how Trojan-Ransom.Win32.Onion penetrates victim computers has shown that it is different (once again) in this respect from most other encryptors that are active today.
+For many known ransomware programs, the main propagation vectors are spam messages with malware in an attachment, or brute forcing weak passwords and launching a file via remote administration tools.
+We established that the bot Andromeda (detected as Backdoor.Win32.Androm by Kaspersky Lab products) receives a command to download and run another malicious program from the Email-Worm.Win32.Joleee family to the victim computer.
+The latter is primarily a malicious tool for sending spam emails, but it can also execute a number of commands from the cybercriminals, including the command to download and launch an executable file.
+It is actually Joleee that downloads the encryptor to the infected computer.
+Trojan-Ransom.Win32.Onion‘s propagation procedure is presented in the following flowchart.
+Figure 9.
+Trojan-Ransom.Win32.Onion’s propagation scheme
+Below are the infection statistics as of July 20, 2014.
+Most attempted infections took place in the CIS, while there were individual cases recorded in Germany, Bulgaria, Israel, the United Arab Emirates and Libya.
+Trojan-Ransom.Win32.Onion was detected in the following countries:
+Please note that the above numbers are provided for the verdict “Trojan-Ransom.Win32.Onion” only.
+The number of users attacked by the encryptor is in fact greater, as malicious packers with different verdicts are used to spread the malware.
+Unknown samples of the encryptor are also proactively detected by Kaspersky Lab products as “PDM:Trojan.Win32.Generic”.
+This data is not included into the statistics above.
+The best way to ensure the safety of critical data is a consistent backup schedule.
+Backup should be performed regularly and, moreover, copies need to be created on a storage device that is accessible only during this process (e.g., a removable storage device that disconnects immediately after backup).
+Failure to follow these recommendations will result in the backed-up files being attacked and encrypted by the ransomware in the same way as the original file versions.
+Backup procedures must be in place for any systems containing files of any appreciable importance.
+Even if no malware threats arise, remember – no one is completely secured against a commonplace hardware failure.
+Your security solution should be turned on at all times and all its components should be active.
+The solution’s databases should also be up to date.
+Kaspersky Lab products detect this threat based on its signature with the verdict Trojan-Ransom.Win32.Onion.*.
+Unknown modifications are detected heuristically with the verdict HEUR:Trojan.Win32.Generic, or proactively with the verdict PDM:Trojan.Win32.Generic.
+In addition, Kaspersky Lab products incorporate the Cryptomalware Countermeasures technology which is capable of protecting user data even from unknown encryptors for which there are still no signatures or cloud-based data available.
+This technology is based on the principle of creating protected backup copies of personal files as soon as a suspicious program attempts to access them.
+The technology will automatically restore the file even if it is encrypted by malware.
+For this technology to operate, the System Watcher component must be enabled in the Kaspersky Lab product settings.

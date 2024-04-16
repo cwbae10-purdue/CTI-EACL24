@@ -1,0 +1,98 @@
+Malware families are constantly seeking new ways to hide their code, thwart replication, and avoid detection.
+A recent trend for the delivery of ransomware is the use of the Nullsoft Scriptable Install System (NSIS) with an encrypted payload.
+The list of the most common families using this technique is diverse and includes Cerber, Locky, Teerac, Crysis, CryptoWall, and CTB-Locker.
+Rarely do we see multiple families consistently using the same methods for packing.
+In this case the payload is dependent on the installer for execution, and the decrypted malware payload never touches the disk.
+Using the NSIS packaging method makes the malware harder to collect and find using bulk collection techniques.
+Incoming samples may contain only the DLL responsible for unpacking without the encrypted payload or the NSIS installer.
+In this post, we will look at how the delivery mechanism works, why it is used, and the challenges it poses to researchers attempting to investigate the malware.
+Why is this delivery method popular?
+This attack vector begins its life as the payload of a spam downloader.
+An unsuspecting user opens an email attachment containing a malicious JavaScript or Word document.
+The malicious installer (detected as NSIS/ObfusRansom.
+*) downloads, launches, and drops a DLL file and an encrypted data file in %TEMP%.
+The installer then loads the DLL responsible for decrypting and executing the encrypted payload.
+The unpacker DLL steals five APIs from the NSIS installer’s import address table.
+The DLL then reads the encrypted file into memory, goes to a random hardcoded offset within the file, and decrypts the additional APIs it needs to decompress, write to memory, and execute the encrypted malware payload.
+This level of dependency makes static analysis, emulation, and replication more difficult and creates a delivery system in which the decrypted ransomware never touches the disk.
+During our analysis of these packers we did not find an example of the decrypted malware executable submitted to any of the well-known sample processing sites, such as VirusTotal.
+Packer execution
+The preceding flowchart summarizes the basic execution flow of this packer, which has been found with various levels of obfuscation, though all functionally equivalent.
+We have chosen a less obfuscated sample (MD5: F9AE740F62811D2FB638952A71EF6F72) to make this technical explanation simpler.
+Most versions also attempt some code flow obfuscation to delay static analysis.
+The two common methods of code flow obfuscation we have seen are a QueueUserAPC combined with an alertable Sleep call:
+Or structured exception handling combined with a divide by 0.
+Neither of these methods are unique to this delivery method nor particularly hard to see when performing a static analysis.
+Once inside the main function, the malware first works on deobfuscating three scrambled strings.
+These in some cases can be seen just by running “strings” on the sample.
+as shown in the following screenshot:
+These strings in most cases contain “Kernel32,” a Microsoft API call, and the name of the encrypted file dropped by the installer.
+The following is a sample of Kernel32 being decrypted.
+All three of these strings are deobfuscated in a similar way.
+Deobfuscating algorithm:
+Memory with obfuscated string:
+Memory with deobfuscated string:
+After the strings have been deobfuscated, the malware next crafts a pointer to the installer’s memory space and saves the offsets for FirstThunk and OriginalFirstThunk.
+(A “thunk” is an automatically generated piece of code to assist in calling another subroutine.)
+Essentially, the OriginalFirstThunk is the import name table and FirstThunk is the import address table.
+The unpacker DLL then walks through the OriginalFirstThunk looking for the names of the five APIs it needs to steal and saves their addresses directly from the corresponding FirstThunk entries.
+This loop uses some basic logic based on string size and the position of letters to accurately grab the APIs it needs.
+GetProcAddress:
+GetModuleHandle:
+GetFileSize:
+GlobalAlloc:
+ReadFile:
+These five stolen APIs are used to read the encrypted file into memory, where it will later decrypt the second layer of APIs it needs.
+The packer next prepares the payload.
+When the parent NSIS installer runs, one of the files it drops is an encrypted and compressed file.
+This file is the main payload of the malware, which the packer is preparing to launch.
+As we mentioned, our research shows this payload can be one of a wide variety of malware, including several ransomware variants.
+The malware first opens a file handle to the payload using the CreateFile API.
+The payload name and extension is one of the strings already deobfuscated.
+Value of ECX (filename):
+The malware obtains the size of the file needed for decrypting and reading the file.
+With the file size, a new chunk of memory is allocated for the file to be read into memory:
+With the encrypted file now stored in memory, the malware begins processing this file by decrypting the APIs’ names.
+Each sample we studied had the location of both the API names and decryption key hardcoded in the sample.
+We also found that both of these could typically be found in the first 0x1FFF bytes of the file.
+The decrypting of the API strings is done in a loop using simple arithmetic.
+Encrypted APIs:
+Depending on the sample, this code can be extremely obfuscated.
+We have decompiled this sample and simplified the decryption algorithm used in this loop to only the relevant lines shown below:
+do{ api = *(api_base + counter); key = ~*(counter + randomoffset); *(api_base + counter) = api & key | ~key & ~api; ++counter; }while ( counter < 330 );
+We can see the “encryption” here is extremely basic.
+Some samples we found had slightly different decryption algorithms; however, they were always very basic arithmetic operations against a stored key.
+This function does a bitwise AND once with the key and the encrypted value and then again with those values NOTed.
+The results are then bitwise ORed.
+In our group of samples, the strings being decrypted were always the same; thus the number of iterations remained constant, at 0x14A (330).
+Decrypted APIs:
+The next major task is the decryption of the payload itself.
+The following shows the memory location of the encrypted payload:
+The entire file does not go through the decryption process, only the executable itself.
+The malware uses the size gathered above from GetFileSize and a hardcoded value to determine the amount of bytes to decrypt.
+The decryption algorithm for the payload in our samples was identical to that of the APIs decryption algorithm.
+There is a small noticeable difference from the API decryption process based on when the loop is finished.
+As shown above, ebx holds the amount of bytes to decrypt, which is now acting as a counter.
+Decrypted payload:
+With the file and APIs now decrypted, the malware decompresses its payload.
+The malware authors used standard Windows APIs to perform their compression and use them again after decryption through a call to RtlDecompressBuffer.
+In this API the “2” pushed onto the stack represents the type of compression used.
+According to Microsoft documentation, 2 stands for LZ decompression.
+With the payload fully decrypted and decompressed in memory, we can now dump the fully functional standalone payload using Windbg’s “.writemem” function.
+This allows us to study the payloads and determine whether they are known ransomware variants; however, theses specific payloads had not yet been seen by common malware research sites such as VirusTotal.
+Now setup is needed to execute this payload in memory.
+The decrypted payload never touches the disk, helping reduce the probability of detection.
+The first step is to call CreateProcess in a suspended state.
+The malware executes in this process:
+Following the CreateProcess API, the malware uses a standard process-hollowing technique.
+VirtualAlloc, GetThreadContext, ReadProcessMemory, and NtUnmapViewofSection are used in preparation to write its payload into the new thread.
+WriteProcessMemory copies the unencrypted payload into the new thread.
+Next a Sleep and ResumeThread call start the thread.
+Once the thread has started, the malware immediately terminates the parent thread.
+Summary
+The core functionality of these samples is very simple and does not exhibit any new behavior; yet the delivery method presents a new and interesting challenge.
+The delivery of ransomware in NSIS installers with an encrypted payload has proven to be a unique and effective method for delivering a wide range of malware.
+Currently all the samples explored have contained only variants of ransomware; however, we can easily imagine other families of malware using this technique.
+We have seen a wide range of anti-emulation methods, strong code-obfuscation techniques, and variance in hardcoded values.
+The encryption used for the fields and APIs is generally very weak and not designed to be the main challenge for reversing or detection.
+It is likely that either one threat actor is distributing multiple forms of ransomware, or multiple threat actors are using the same group to distribute their ransomware.

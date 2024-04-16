@@ -1,0 +1,145 @@
+Zebrocy heavily used by the Sednit group over last two years
+The Sednit group – also known as APT28, Fancy Bear, Sofacy or STRONTIUM – is a group of attackers operating since 2004, if not earlier, and whose main objective is to steal confidential information from specific targets.
+Toward the end of 2015, we started seeing a new component being deployed by the group: a downloader for the main Sednit backdoor, Xagent.
+Kaspersky mentioned this component for the first time in 2017 in their APT trend report and recently wrote an article where they quickly described it under the name Zebrocy.
+This new component is a family of malware, comprising downloaders and backdoors written in Delphi and AutoIt.
+These components play the same role in the Sednit ecosystem as Seduploader — that of first-stage malware.
+Victims we have seen targeted by Zebrocy are located in Azerbaijan, Bosnia and Herzegovina, Egypt, Georgia, Iran, Kazakhstan, Korea, Kyrgyzstan, Russia, Saudi Arabia, Serbia, Switzerland, Tajikistan, Turkey, Turkmenistan, Ukraine, Uruguay and Zimbabwe.
+These targets include embassies, ministries of foreign affairs, and diplomats.
+The Zebrocy family consists of three components.
+In the order of deployment these are a Delphi downloader, an AutoIt downloader and a Delphi backdoor.
+Figure 1 shows the relationship between these components.
+In this article we describe this family and how it can coexist with the older Seduploader reconnaissance tools.
+We will talk about some similarities to and differences from Downdelph at the end.
+Figure 1: The Sednit ecosystem
+Figure 1 shows the attack methods and active malware used by Sednit.
+Email attachments are the main entry point to the Sednit ecosystem.
+DealersChoice is still being used, as research from Palo Alto Networks mentioned in this recent blogpost.
+Both Seduploader and Zebrocy are actively being delivered by the Sednit group through email attachments.
+Finally, after a reconnaissance phase, Xagent and Xtunnel are deployed on the targets deemed interesting by the operators.
+The first component of a Zebrocy-based attack arrives as an email message.
+Victims are lured into opening email attachments that can be either Microsoft Office documents, or an archive.
+Malicious documents used by Sednit download the first stage payload via Visual Basic for Applications (VBA), exploits or even using Dynamic Data Exchange (DDE).
+At the end of 2017, the Sednit group launched two campaigns delivering two different malicious documents.
+The first was named Syria – New Russia provocations.doc and the second named Note Letter Mary Christmas Card.doc.
+Figure 2: Zebrocy’s malicious documents
+Both malicious documents contain a VBA macro that creates a randomly-named file in %TEMP%.
+The malware executable is then decoded and written into this file, which is then executed via a PowerShell command or via Scriptable Shell Objects.
+Example of Visual Basic function and base64 encoded first stage from Syria – New Russia provocations.doc document.
+Some campaigns have used an archive to drop the first stage on the victim computer, rather than Office document macros.
+The archive is presumably delivered as an email attachment.
+All first stage of the Zebrocy family are executables with an icon and a document-like filename intended to trick the victim as shown in the Figure3.
+Figure 3: Zebrocy first stage using a Word document icon
+A Delphi downloader is the first stage of the Zebrocy family, although we have seen some campaigns from the Sednit group using the AutoIt stage directly without using this downloader.
+Most of these Delphi downloader binaries use Office document icons or other icons like Windows library, and sometimes these samples are packed with UPX.
+The purpose of this stage is quite straightforward: it retrieves a maximum of information from the victim’s computer.
+When the malware is launched, a splash window pops up with a bogus error message and the filename of the dropped binary.
+For example, if the filename is srsiymyw.exe, the filename that appears in the splash window will be srsiymyw.doc (see Figure 4).
+The pop-up’s purpose is to distract the user so that he won’t think anything unusual is happening on his computer.
+Figure 4: Delphi downloader splash window
+In fact, the downloader is busy creating a file under %TEMP% with a filename hardcoded in the binary (although at this stage, the file is empty).
+Persistence is implemented by adding a Windows registry entry under HKCU\Software\Microsoft\Windows\CurrentVersion\Run\ with the path of the hardcoded filename.
+To gather information, the malware creates a new process using the Windows API CreateProcess function with cmd.exe /c SYSTEMINFO & TASKLIST as lpCommandLine argument.
+Once the information is retrieved, it sends the result via a HTTP POST request to the C&C server hardcoded in the binary.
+It retries until it receives the next stage.
+Delphi downloader HTTP POST request
+Once the request has been sent, the C&C server responds by sending the next stage, if the target is considered interesting by the operator.
+The time elapsing between the sending of the report and the receipt of the payload is a few hours.
+This next stage is written into the file created earlier and executed.
+The AutoIt downloader is another layer of the reconnaissance phase during an infection of the victim computer.
+From this point onwards, two scenarios are possible: in the first one, the Delphi downloader is the first stage and the second stage – which is the AutoIt downloader – is a lightweight downloader.
+In the other scenario, the AutoIt downloader is the first stage and it has all functionalities of the Delphi downloader and even more.
+When the AutoIt downloader is the first stage it performs many reconnaissance functions.
+Even if this one shares some similarities with the Delphi downloader, such as the persistence mechanism and the splash window, it adds more granularity to the reconnaissance phase than that of the Delphi downloader.
+Here is a non-exhaustive list of its capabilities:
+Detect sandbox and virtual environment
+Get list of installed software (via HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall)
+Get Windows version (32-bit or 64-bit)
+Get the process list
+Get hard drive information
+Get screenshot
+Get various information about the victim computer using Windows Management Instrumentation (WMI) objects, probably inspired by code from this GitHub repository
+Depending on the previous stage, the name of the AutoIt binary is different.
+If the malware is dropped as the first stage, it has a document-like name.
+Otherwise it is given the name hardcoded in the Delphi downloader, as shown in Table 1.
+Table 1: AutoIt binary filenames, depending of the first stage
+First Stage
+AutoIt binary Filenames
+Delphi downloader
+csrsvc.exe
+Email attachment
+Protocol List_20160606.exe
+The purpose of this stage is more of less the same as the previous one.
+There are many different versions in the wild but all of them include at least the code to achieve the following:
+Retrieve the serial number of the hard drive C:
+Use network functions from winhttp.dll or winhttp.au3
+Execute the payload received from the C&C server
+In the same way that the Delphi downloader has a splash window, the AutoIt also has a splash window when it comes from an email attachment – the AutoIt is the first stage.
+The splash screen is related to the binary icon.
+For example, an AutoIt downloader with Adobe Reader as an icon displays a splash screen saying that the PDF file the victim would be expecting to be displayed is corrupted.
+An AutoIt binary with a Word icon will display the following popup asking for a password.
+The password is not considered here; we think it’s just a way to distract the victim from the code’s real malicious activity.
+Figure 5: AutoIt downloader Word popup
+The Delphi backdoor is the final stage of the Zebrocy chain of components.
+We have seen Zebrocy downloading the Sednit group’s flagship backdoor, Xagent, in the past.
+Unlike the previous components, this one has an internal version number that doesn’t seem to be related to a specific campaign.
+This version number has evolved over time, as shown in Table 2:
+Table 2: Delphi backdoor internal version history
+Notice that we don’t have the full visibility and we may have missed some versions of the backdoor.
+Besides, there is some overlap between versions meaning that some older versions are still used at the same time as newer versions.
+In the next few paragraphs we will highlight some differences seen in the malware during its evolution.
+The backdoor embeds a block of configuration.
+The configuration values change from one sample to another, but the list of configurable items stays the same.
+However, the way in which the configuration data are stored in the malware sample has evolved over time.
+The first versions of the backdoor embedded the configuration data in plaintext, as shown in Figure 6.
+Figure 6: Delphi backdoor plaintext configuration data
+Then, in later versions, the malware’s authors encoded the configuration data as hexadecimal strings, as shown in Figure 7.
+Figure 7: Delphi backdoor encoded configuration data
+In the latest versions, the configuration data is encrypted in the resources using the AES algorithm.
+Older versions stored it in the .text section.
+The configuration data contains:
+AES keys to communicate with the C&C server
+URLs with paths differing from one sample to another
+The version of the malware
+The windows registry key/value that ensures the persistence of the backdoor
+Path where temporary files are store (%APPDATA%)
+The names of hidden directories to be created to store temporary files: the directory filenames are concatenated with the environment variable (%APPDATA%)
+Once the malware is set up, it executes callback functions via the Windows API function SetTimer.
+These callbacks allow the operator to handle many features and commands of the backdoor.
+Take a screenshot of the Desktop of the victim
+Capture keystrokes
+List drives/network resources
+Read/write into Windows registry
+Copy/move/delete a file system object
+Execute files or create scheduled tasks
+The number of commands handled by the backdoor – about 30 – differs from one version to another.
+To communicate with the C&C server, the backdoor stores the report of these functions into a temporary file.
+Then it will read the content of the temporary file and send it on.
+These temporary files are stored in one of the hidden directories created during the set-up phase.
+Delphi backdoor POST request
+The tempfilename content is the output of whichever commands are executed.
+The content is encrypted using the AES-256-ECB algorithm with the first AES key from the configuration data, then the output is hexadecimal encoded.
+The contents sent to the C&C server vary from one command to another, but all contains at least the HDD serial number and the first four bytes of the computer name.
+For example, HELLO corresponds to the first packet sent by the backdoor to establish contact with the C&C server.
+As shown below it contains the date when the task was launched, the Delphi backdoor’s internal version number, the HDD serial number, the computer name (first four bytes), the command and the date when the backdoor was executed.
+Start: 1/4/2018 1:37:00 PM – [<vx.x>]:42424242ESET-HELLO-[2018-04-04 01-37-00]-315.TXT.
+The second AES key in the configuration data is used to decrypt the answer from the C&C server.
+Like Seduploader, this backdoor is used to deploy Xagent on victim machines apparently deemed “interesting” by the operators after the reconnaissance phase.
+A component written in Delphi is nothing new for the Sednit group, which has already used this language for Downdelph.
+However, even if this latest component has nothing else in common with Downdelph “technically speaking”, there are some points of interest worth mentioning.
+The deployment methods are the same, both being delivered as an email attachment.
+We saw Downdelph for the last time in September 2015, and the first sample of Zebrocy we saw in the wild was dated November 2015.
+Both are written in Delphi.
+We can hypothesize that the Sednit group abandoned one component and started to develop a new one.
+One thing that doesn’t change for the group, however, are the mistakes they made:
+The name of the scheduled task: Windiws
+The function name that retrieves system information in the AutoIt downloader is _SOFWARE()
+Mary instead of Merry in Note Letter Mary Christmas Card.doc
+The byte arrays used by the Delphi backdoor as AES-256 keys are 38 bytes long instead of 32 bytes.
+It’s not a spelling error but probably due to a lack of attention.
+We have seen Zebrocy being heavily used by the Sednit group over the last two years.
+Our analysis of the many new variants that appeared on a regular basis since 2017 clearly indicates that Zebrocy is being actively maintained and improved by its author(s).
+We can consider it as one of the stable, mature tools in Sednit’s arsenal, a tool that deserves to be monitored closely.
+Malicious documents
+Delphi downloader
+AutoIt downloader

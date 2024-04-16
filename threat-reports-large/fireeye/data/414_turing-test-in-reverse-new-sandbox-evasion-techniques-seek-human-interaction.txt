@@ -1,0 +1,83 @@
+Last year, we published a paper titled Hot Knives Through Butter, Evading File-Based Sandboxes.
+In this paper, we explained many sandbox evasion methods--and today's blog post adds to our growing catalog.
+In the past, for example, we detailed the inner workings of a Trojan we dubbed UpClicker.
+The malware was notable for a then-novel technique to evade automated dynamic analysis systems (better known as sandboxes).
+UpClicker activates only when the left mouse button is clicked and released — a sign that it is running on a real, live, human-controlled PC rather than within an automated sandbox.
+If the malware determines it is running in a sandbox, it lies dormant so that the sandbox doesn’t observe any suspicious behavior.
+Once the sandbox incorrectly clears it as a benign file, UpClicker goes on to a real computer to do its dirty work.
+Last year, our colleague Rong Hwa shared the technical details of another sandbox-detecting Trojan called BaneChant.
+Like UpClicker, BaneChant uses human interaction to ascertain whether it is running in a virtual-machine environment, activating only after it detects more than three left clicks.
+Since then, we’ve seen a spate of new malware that pushes the concept further.
+The newest sandbox-evading malware counters recent efforts to mimic human behavior in sandbox environments.
+This blog post describes three tactics that FireEye has discovered in recent attacks.
+Sandbox evasion: a primer
+Most sandbox-evasion techniques fall into one of three categories:
+Human interaction.
+This category includes malware that requires certain actions on the user’s part (a sign that the malicious code is running on a real-live PC rather than within an automated sandbox).
+Configuration specific.
+Malware in this category takes advantage of the inherent constraints of file-based sandboxes.
+For example, knowing that a sandbox can spend, say, five minutes running suspicious code for analysis, malware creators can create code that automatically lies dormant for a longer period.
+If the code is still running after that, it’s probably not in a sandbox.
+Environment specific.
+In this category, malware checks for telltale signs that its code is running in widely used VM environments.
+It checks for obscure files unique to VMware, for instance, or VM-specific hardware drivers.
+The first category of sandbox evasion is one of the trickiest to counter.
+To fool sandbox-detecting malware, some vendors now simulate mouse movement and clicks in their virtual-machine environments to mimic human activity.
+But malware authors are upping the ante with even more sophisticated sandbox detection and evasion techniques.
+To scroll is human
+One malware we discovered lies dormant until the user scrolls to the second page of a Rich Text Format (RTF) document.
+So simulating human interaction with random or preprogrammed mouse movements isn’t enough to activate its malicious behavior.
+Here’s how it works:
+RTF documents consist of normal text, control words, and groups.
+Microsoft’s RTF specification includes a shape-drawing function, which includes a series of properties using the following syntax:
+{\sp {\sn propertyName } {\sv propertyValueInformation}}
+In this code, \sp is the control word for the drawing property, \sn is the property name, and \sv contains information about the property value.
+The code snippet in Figure 1 exploits a vulnerability that occurs when using an invalid \sv value for the pFragments shape property.
+Figure 1: Code exploiting vulnerability in the RTF pFragments property
+A closer look at the exploit code reveals a series of paragraph marks (./par) that appears before the exploit code.
+Figure 2: A series of \.par (paragraph marks) that appears before the exploit code
+The repeated paragraph marks push the exploit code to the second page of the RTF document.
+So the malicious code does not execute unless the document scrolls down to bring the exploit code up into the active window—more likely a deliberate act by a human user than simulated movement in a virtual machine.
+When the RTF is scrolled down to the second page, then only the exploit code triggers, and as shown in Figure 3.0, it makes a call to URLDownloadToFileA function from the shell code to download an executable file.
+Figure 3: Exploit code
+In a typical file-based sandbox, where any mouse activity is random or preprogrammed, the RTF document’s second page will never appear.
+So the malicious code never executes, and nothing seems amiss in the sandbox analysis.
+Two clicks and you’re out
+Another sandbox-evading attack we spotted in recent attacks waits for more than two mouse clicks before executing.
+The two-click condition aims to more accurately determine whether an actual person is operating the targeted machine—most people click mouse buttons many times throughout the day—or a one-time programmed click designed to counter evasion techniques.
+Here’s how this technique works:
+The malware invokes the function Get AsyncKeyState in a loop.
+The function checks whether any mouse buttons are clicked by looking for the parameter 0x01, 0x02, or 0x04.
+(The parameter 0x01 is the virtual key code for the mouse’s left button, 0x02 is the code for the right button, and 0x04 is the code of the middle button.)
+The instruction “xor edi edi” sets the edi to 0.
+If any of the buttons is pressed, the code invokes the instruction “inc edi,” as shown in Figure 4.
+After that, the instruction “cmp edi,2” checks whether the left, right or middle mouse buttons have been clicked more than two times.
+If so, code exits from the loop and gets to its real work.
+Otherwise, it stays under the radar, continuously checking for more mouse clicks.
+Figure 4: Assembly code for evasion employing left, middle or right mouse clicks
+Slow mouse, fast sandbox
+Another recently discovered evasion technique involves checking for suspiciously fast mouse movement.
+To make sure an actual person is controlling the mouse or trackpad, malware code checks how quickly the cursor is moving.
+Superhuman speed is a telltale sign that the code is running in a sandbox.
+This technique also makes use of the Windows function GetCursorPos, which retrieves the system’s cursor position.
+In the example malware code shown in Figure 5, GetCursorPos returns 614 for the x-axis value and 185 for the y-axis value.
+Figure 5: Malware making first call to API GetCursorPos
+After few instructions, malicious code again calls GetCursorPos to check whether the cursor position has changed.
+This time the function returns x= 1019 and y = 259, as shown in Figure 6.
+Figure 6: Malware making second call to API GetCursorPos
+A few instructions after the second GetCursorPos call, the malware code invokes the instruction “SUB EDI, DWORD PTR DS:[410F15]”.
+As shown in the figure 5.0, the value in EDI is 0x103 (259 in decimal) and DS:[410F15] = 0xB9 (185 in decimal).
+The value 259 and 185 are the Y coordinates retrieved from the two GetCursorPos calls.
+If the difference between the two Y-coordinate measurements is not 0, then the malware terminates.
+Figure 7: Subtracting the Y coordinates to detect whether the cursor is moving too quickly to be human-controlled
+In other words, if the cursor has moved between the two GetCursorPos calls (which are only a few instructions apart), then the malware concludes that the mouse movement is simulated.
+That’s too fast to be a real-world mouse or track pad in normal use, so the code must be running in a sandbox.
+A growing challenge
+Cybersecurity is a constant arms race.
+Simulating mouse movement and clicks is not enough to fool the most advanced sandbox-evading malware.
+Now malware authors are incorporating real-world behaviors into their evasion strategies.
+Simulating these behaviors—the way actual people scroll documents, click the mouse button, and move the cursor— is a huge challenge for cybersecurity.
+Anticipating future evasion techniques might be even tougher.
+Expect malware authors to employ more novel techniques that look for that human touch.
+In the paper “Hot Knives Through Butter: Evading File Based Sandboxes,” we've outlined 15 prior evasion techniques that have been used by advanced malware in real attacks to bypass file based sandboxes.
+We plan to continue updating the evasion series as we come across new techniques used by the latest threats and advanced malwares to bypass file based sandboxes.

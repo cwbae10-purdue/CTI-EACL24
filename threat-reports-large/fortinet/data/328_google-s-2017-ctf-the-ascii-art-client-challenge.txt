@@ -1,0 +1,61 @@
+In our last blog in this series, we discussed FortiGuard Labs’ participation in Google’s second annual Capture The Flag (CTF) competition.
+In this blogpost, I want to share how I solved another challenge, called“ASCII Art Client”.
+For this challenge, participants were given two files: a binary file aart_client and a network capture aart_client_capture.pcap.
+File1: aart_client
+File2: aart_client_capture.pcap
+The goal of the challenge was:
+This client displays nice ASCII Art, can it query anything else?
+The aart_client binary is the source of the traffic that was captured in aart_client_capture.pcap.
+Understand the network communication protocol and find the flag in the pcap!
+From the given network capture file, I could see that the client and server apparently use a specific communication protocol, as shown in Figure 1.
+In order to find the flag inside it, I needed to find the key to display the “nice ASCII Art.”
+Figure 1.
+The request and response packets between client and server
+Points: 253
+Category: reversing
+Validations: 31
+First, I checked the file type of the fileaart_client:
+$ file aart_client
+aart_client: ELF 64-bit LSB executable, x86-64, version 1 (GNU/Linux…
+So, I was able to see that it was a 64-bit ELF executable.
+I then ran nc to simulate an HTTP server on a machine:
+E:\>nc -l -p 80 < nc_http_server_session1.txt
+The content of the file nc_http_server_session1.txt is:
+E:\>type nc_http_server_session1.txt
+HTTP/1.1 200 OK
+Date: Thu, 13 Apr 2017 17:37:06 GMT
+Content-Length: 112
+Content-Type: text/html
+Server: TwistedWeb/17.1.0
+787e7f756d667e7c7c15787e70746d667e7c232b4c5c57405554435d5851555b5549505a554e405b545c4f51405c545b4f5449432b193931
+I then used gdb to run aart_client to access the HTTP server.
+In Ubuntu 14.04, I ran gdb with following parameters:
+gdb --args ./aart_client 10.0.0.191
+I set the breakpoint on the recv function in aart_client.
+After the break point was first hit, I stepped in to the recv function.
+By inspecting the data handling code in this function, no valuable information could be found.
+Furthermore, after aart_client received the first response successfully, it disconnected the session and initiated a new one.
+Because the HTTP server simulated by nc can only respond to one session, aart_client terminated abnormally.
+Figure 2. aart_client terminates abnormally because nc can only handle one session
+So, I then decided that the key to solving the challenge was to figure out how to get the ASCII art.
+I guessed that if I could get the ASCII art, the CTF flag could possibly be embedded in it.
+But, should the ASCII art be obtained by decrypting the pcap file, or by analyzing aart_client?
+This was the first question I had to answer.
+So, I decided to simulate the HTTP server, like the one in the given pcap file.
+After simulating the HTTP server was done and the aart_client worked well, I would be able to analyze the key session (such as the session 6 in the given pcap file, which contained large response data) to see if the flag was hiding in it.
+To simulate the HTTP server, I wrote a python script, which sent out a response like the one in the given pcap file.The key code snippet is shown in Figure 3:
+Figure 3.The python script which simulates the HTTP server
+After the python script was executed to run the HTTP server, I ran the aart_client 10.0.0.191 client in ubuntu 14.04 to access the HTTP server.
+After aart_client received the response of the first two sessions, it printed out the ASCII artfile shown in Figure 4 and then exited immediately.
+Unfortunately, I couldn’t see the CTF flag in the ASCII art.
+root@ubopenstchro:/home/renhg/tools/ctf2017# ./aart_client 10.0.0.191
+Figure 4.
+The ASCII art
+By analyzing the traffic, I could see that aart_client only retrieved the responses from session 1 and 2.
+So I ran aart_client 10.0.0.191 again.
+After the python script sent out the responses of session 3 and 4, amazingly, this time the CTF flag was printed on the console, as follows:
+root@ubopenstchro:/home/renhg/tools/ctf2017# ./aart_client 10.0.0.191
+CTF{That-was-a-lot-of-monkey-foot-work?-Good-Job!}
+This was another clever puzzle set up by the Google team for us to solve.
+Not only do these sorts of exercises help Google better analyze and secure their services, it really raises the bar for security professionals who don’t always get to use so many of their skills and tools to solve a problem.
+The truth is that, in these sorts of competitions, everybody wins.

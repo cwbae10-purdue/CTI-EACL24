@@ -1,0 +1,75 @@
+Back in February, I wrote a piece on the major runC vulnerability, CVE-2019-5736.
+The fundamental flaw behind this vulnerability affected most container runtimes, such as LXC and Apache Mesos.
+One container runtime which seemed to be unfazed was CoreOS rkt, on which I heard a lot back when I first started to get into containers.
+So naturally, I was intrigued to check out rkt’s architecture and see what they did differently, and I recently had some time to do so.
+I ended up finding 3 other, unrelated vulnerabilities in rkt.
+These vulnerabilities allow an attacker to compromise the host when a rkt user executes the ‘rkt enter’ command (the equivalent of ‘docker exec’) into an attacker-controlled pod.
+They are currently unpatched.
+rkt is an open source container runtime and a CNCF incubating project created by CoreOS.
+It is a widely loved project, mostly because it was one of the few viable open source alternatives to Docker back in the early container days.
+rkt’s basic unit of execution is a pod, which contains multiple containers running in a shared context (similarly to Kubernetes).
+Honestly, finding container breakout vulnerabilities, especially in a CNCF project, was pretty exciting.
+Though I soon noticed that the project isn’t being actively developed.
+There are still some commits, pull requests and issues from the recent time, but the last release was back in April 2018.
+After some digging, I learned that RedHat acquired CoreOS in mid-2018, and it seems that they didn’t allocate resources to continue developing the project.
+This makes sense as RedHat has a set of runC based container runtimes – CRI-O and podman.
+rkt is an open source project so anyone can pick up development, but judging from its GitHub page, it seems that only a handful are doing so.
+I reported the vulnerabilities to CoreOS and RedHat according to the instructions here.
+They acknowledged the issues and assigned CVE IDs for them, but stated they don’t intend on fixing them:
+“At this point, Red Hat doesn’t have an active plan/timeline for fixing the reported issues before disclosing them to the general audience.
+Thus, my suggestion would be to proceed as follows: … * Yuval publicly reports the two issues … to https://github.com/rkt/rkt * Further follow-ups are handled in the normal way by the community via the GitHub issue tracker.”
+Following their plan, I reported my findings today (30.05.19) in this GitHub issue.
+This is of course not ideal, but at least now any contributor from the community could work on patching the vulnerabilities.
+I don’t know how many users still run rkt in production, but if you do, avoid using the ‘rkt enter’ command, as it contains several unpatched vulnerabilities.
+The ‘rkt enter’ command allows users to run a binary in a running container, and is the rkt equivalent of ‘docker exec’.
+Below is the command’s format: rkt enter [pod-id] [binary-to-run]
+Binaries from the container executed via ‘rkt enter’ run as root, with all capabilities, and with no seccomp filtering or cgroup isolation applied.
+They are only restricted by namespaces, which are not enough to prevent them from breaking out and compromising the host.
+After reporting these issues to RedHat, they were assigned 3 CVE IDs:
+CVE-2019-10144: processes run with rkt enter are given all capabilities during stage 2
+CVE-2019-10145: processes run with rkt enter do not have seccomp filtering during stage 2
+CVE-2019-10147: processes run with rkt enter are not limited by cgroups during stage 2
+All three vulnerabilites are illustrated in the following video:
+The exploitation scenario consists of an attacker with root access to a container and a rkt user that runs ‘rkt enter some-binary’ to execute a binary inside that container.
+The attacker can inject malicious code into commonly used binaries and libraries in the container, which the user is likely to run using ‘rkt enter’.
+For example, an attacker can:
+Overwrite /bin/bash in the container, which is the default binary executed by ‘rkt enter‘ if the user hasn’t specified another.
+Overwrite libc.so.6 in the container, which is likely to be loaded by processes spawned with ‘rkt enter’.
+The attacker can utilize the gcc constructor attribute so that his code is run whenever the modified libc library is loaded by a process.
+Once an attacker is running in the context of a container process spawned by ‘rkt enter’, he can escape the container and gain root access on the host with relative ease as he runs with all capabilities, no seccomp filtering and without cgroup isolation.
+There are likely multiple ways for an attacker-controlled ‘rkt enter’ process to access the host, but the most straight forward approach is to mount the host root directory.
+Consider a scenario where the attacker, which compromised a rkt container, substitutes the container’s ‘bash’ with a malicious version that spawns a reverse shell to the attacker’s machine.
+Once a user executes ‘rkt enter ${pod-id} bash’, the malicious bash executes and the attacker receives a reverse shell on his machine.
+This reverse shell runs in the context of a vulnerable process spawned by ‘rkt enter’, and is therefore not properly isolated from the host.
+The attacker can then proceed to mount the host root directory using the ‘mknod’ and ‘mount’ syscalls, and thus gain root access to the host.
+This scenario is demonstrated in the video below.
+This attack is pretty cool IMO, as it highlights the purpose of the isolation features lacking in the ‘rkt enter’ command.
+A little challenge for you container security enthusiasts – try and list the points of failure for this attack if it was run in a properly isolated container environment (e.g.
+in a process spawned by ‘rkt run’, or in a Docker container).
+Remember that containers follow the principle of security in layers, so the attack can fail at a certain point for multiple reasons.
+Ready, Set… Go.
+And the answer:
+mknod In several container runtimes, such as singularity or podman in the past, the mknod syscall will fail because the container filesystem was mounted with the ‘nodev’ flag.
+In some container runtimes, e.g.
+rkt (not including ‘rkt enter’ processes, obviously), the mknod syscall will fail due to the device cgroup configuration which denies creating block devices using mknod.
+In container runtimes which use user namespace by default, like LXD, the mknod syscall will fail.
+See the “Effect of capabilities within a user namespace” section here for more details.
+In other container runtimes, such as Docker, the mknod syscall will actually work!
+In several container runtimes, such as singularity or podman in the past, the mknod syscall will fail because the container filesystem was mounted with the ‘nodev’ flag.
+In some container runtimes, e.g.
+rkt (not including ‘rkt enter’ processes, obviously), the mknod syscall will fail due to the device cgroup configuration which denies creating block devices using mknod.
+In container runtimes which use user namespace by default, like LXD, the mknod syscall will fail.
+See the “Effect of capabilities within a user namespace” section here for more details.
+In other container runtimes, such as Docker, the mknod syscall will actually work!
+mount The mount syscall will fail due to seccomp syscall filtering The mount syscall will fail due to insufficient capabilities – you won’t have CAP_SYS_ADMIN In some container runtimes, e.g Docker, the mount syscall will fail due to the device cgroup configuration which denies opening block devices for reading.
+The mount syscall will fail due to seccomp syscall filtering
+The mount syscall will fail due to insufficient capabilities – you won’t have CAP_SYS_ADMIN
+In some container runtimes, e.g Docker, the mount syscall will fail due to the device cgroup configuration which denies opening block devices for reading.
+While investigating rkt I also discovered a way to create malicious ACI/OCI images that will compromise the host when run.
+Although this is certainly not ideal, malicious images are not a part of rkt’s threat module.
+rkt supports image signing, and therefore running images from an untrusted source is not aligned with rkt’s recommendations nor proper use.
+I did report this as a possible security-in-depth enhancement in this GitHub issue, which has more details.
+This problem was reported to RedHat as well.
+As I stated at the start of this blog, if you are using rkt, avoid using the ‘rkt enter’ command as the vulnerabilities in it are currently unpatched.
+I also suggest considering alternative container runtimes which are more steadily maintained, such as Docker, podman or LXD.
+Feel free to reach out with any questions you may have through email or @unit42_intel.

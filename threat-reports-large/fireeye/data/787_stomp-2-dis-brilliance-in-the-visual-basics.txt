@@ -1,0 +1,163 @@
+Throughout January 2020, FireEye has continued to observe multiple targeted phishing campaigns designed to download and deploy a backdoor we track as MINEBRIDGE.
+The campaigns primarily targeted financial services organizations in the United States, though targeting is likely more widespread than those we’ve initially observed in our FireEye product telemetry.
+At least one campaign targeted South Korean organizations, including a marketing agency.
+In these campaigns, the phishing documents appeared to be carefully crafted and leveraged some publicly-documented — but in our experience uncommon and misunderstood — TTPs, likely in an effort to decrease detection of the malicious documents’ macros.
+The actor also used a self-hosted email marketing solution across multiple campaigns.
+Notably, the payload delivered in these campaigns leveraged a packer previously affiliated with a commonly-tracked threat actor, an overlap that we will explore later.
+This blog post will review the theme of these campaigns and their targets, the adversary’s unique tradecraft, the MINEBRIDGE C++ backdoor, some potential attribution overlaps, and importantly — the threat actor’s love of rap music.
+While we first identified MINEBRIDGE samples in December, we observed our first phishing campaigns relating to this activity in early January 2020.
+Email addresses used to send phishing messages were associated with domains that appear to have been registered specifically for this purpose within a few weeks of the activity — and were thematically consistent with the content of the phishing messages.
+Additionally, the actor(s) responsible are likely using a self-hosted email marketing solution called Acelle.
+Acelle adds extended email headers to messages sent via the platform in the format of X-Acelle-<variable>.
+The messages observed across campaigns using these TTPs have included a “Customer-Id” value matching “X-Acelle-Customer-Id: 5df38b8fd5b58”.
+While that field remained consistent across all observed campaigns, individual campaigns also shared overlapping “X-Acelle-Sending-Server_Id” and “X-Acelle-Campaign-Id” values.
+All of the messages also included a “List-Unsubscribe” header offering a link hosted at 45.153.184.84 suggesting that it is the server hosting the Acelle instance used across these campaigns.
+The sample table for one campaign below illustrates this data:
+tax return file
+tax return file
+tax return file
+tax return file
+The URLs requested by the malicious documents and serving the final MINEBRIDGE payloads delivered in each of these campaigns provide additional overlap across campaigns.
+In all observed cases, the domains used the same bullet-proof hosting service.
+The URI used to download the final payload was “/team/invest.php” or, in one case, “/team/rumba.php”.
+Perhaps the most fun overlap, however, was discovered when trying to identify additional artifacts of interest hosted at similar locations.
+In most cases a GET request to the parent directory of “/team/” on each of the identified domains served up the lyrics to rap group Onyx’s “Bang 2 Dis” masterpiece.
+We will refrain from sharing the specific verse hosted due to explicit content.
+One of the more notable characteristics of this activity was the consistency in themes used for domain registration, lure content, similarities in malicious document macro content, and targeting.
+Since first seeing these emails, we’ve identified at least 3 distinct campaigns.
+Emails associated with this campaign used the CPA themed domain rogervecpa.com registered in late November and the subject line “Tax Return File” with IRS related text in the message body.
+The attached payload was crafted to look like an H&R Block related tax form.
+Observed targeting included the financial sector exclusively.
+Emails associated with this campaign used the same CPA themed domain rogervecpa.com along with pt-cpaaccountant.com, also registered late November.
+The subject line and message body offered a marketing partnership opportunity to the victim.
+The attached payload used a generic theme enticing users to enable macro content.
+Observed targeting focused on a South Korean marketing agency.
+Emails associated with this campaign were sent from several different email addresses, though all used the recruiting-themed domain agent4career.com which was registered on January 20, 2020.
+The subject line and message body referenced an employment candidate with experience in the financial sector.
+The attached payload masqueraded as the resume of the same financial services candidate referenced in the phishing email.
+Observed targeting included the financial sector exclusively.
+The phishing documents themselves leverage numerous interesting TTPs including hiding macros from the Office GUI, and VBA stomping.
+VBA stomping is a colloquial term applied to the manipulation of Office documents where the source code of a macro is made to mismatch the pseudo-code (hereto referred to as "p-code") of the document.
+In order to avoid duplicating research and wasting the reader’s time, we will instead reference the impressive work of our predecessors and peers in the industry.
+As an introduction to the concept, we first recommend reading the tool release blog post for EvilClippy from Outflank.
+The security team at Walmart has also published incredible research on the methodology.
+Vesselin Bontchev provides a useful open source utility for dumping the p-code from an Office document in pcodedmp.
+This tool can be leveraged to inspect the p-code of a document separate from its VBA source.
+It was adopted by the wider open source analysis toolkit oletools in order to detect the presence of stomping via comparison of p-code mnemonics vs keyword extraction in VBA source.
+That is a whole lot of quality reading for those interested.
+For the sake of brevity, the most important result of VBA stomping as relevant to this blog post is the following:
+Static analysis tools focusing on VBA macro source extraction may be fooled into a benign assessment of a document bearing malicious p-code.
+When VBA source is removed, and a document is opened in a version of Office for which the p-code was not compiled to execute, a macro will not execute correctly, resulting in potential failed dynamic analysis.
+When a document is opened under a version of Office that uses a VBA version that does not match the version of Office used to create the document, VBA source code is recompiled back into p-code.
+When a document is opened in Office and the GUI is used to view the macro, the embedded p-code is decompiled to be viewed.
+The final two points identify some interesting complications in regard to leveraging this methodology more broadly.
+Versioning complexities arise that toolkits like EvilClippy leverage Office version enumeration features to address.
+An actor’s VBA stomped document containing benign VBA source but evil p-code must know the version of Office to build the p-code for, or their sample will not detonate properly.
+Additionally, if an actor sends a stomped document, and a user or researcher opens the macro in the Office editor, they will see malicious code.
+Our actor addressed the latter point of this complication by leveraging what we assess to be another feature of the EvilClippy utility, wherein viewing the macro source is made inaccessible to a user within Office by modifying the PROJECT stream of the document.
+Let’s highlight this below using a publicly available sample we attribute to our actors (SHA256: 18698c5a6ff96d21e7ca634a608f01a414ef6fbbd7c1b3bf0f2085c85374516e):
+Document PROJECT stream:
+ID="{33C06E73-23C4-4174-9F9A-BA0E40E57E3F}" Document=ThisDocument/&H00000000 Name="Project" HelpContextID="0" VersionCompatible32="393222000" CMG="A3A1799F59A359A359A359A3" DPB="87855DBBA57B887C887C88" GC="6B69B1A794A894A86B" [Host Extender Info] &H00000001={3832D640-CF90-11CF-8E43-00A0C911005A};VBE;&H00000000 [Workspace] ThisDocument=0, 0, 0, 0, C Module1=26, 26, 388, 131, Z
+The above PROJECT stream has been modified.
+Within the PROJECT stream workspace, a module is referenced.
+However, there is no module defined.
+We would expect the unmodified PROJECT stream of this document prior to utilization of a tool to modify it to be as follows:
+ID="{33C06E73-23C4-4174-9F9A-BA0E40E57E3F}" Document=ThisDocument/&H00000000 Module=”Module1” Name="Project" HelpContextID="0" VersionCompatible32="393222000" CMG="A3A1799F59A359A359A359A3" DPB="87855DBBA57B887C887C88" GC="6B69B1A794A894A86B" [Host Extender Info] &H00000001={3832D640-CF90-11CF-8E43-00A0C911005A};VBE;&H00000000 [Workspace] ThisDocument=0, 0, 0, 0, C Module1=26, 26, 388, 131, Z
+It is interesting to note that we initially identified this actor only performing this manipulation on their malicious documents—avoiding any versioning complexities--without actually stomping the p-code to mismatch the VBA source.
+This seems like an odd decision and is possibly indicative of an actor assessing what “works” for their campaigns.
+The above malicious document is an example of them leveraging both methodologies, as highlighted by this screenshot from the awesome publicly available web service IRIS-H Digital Forensics:
+We can see that the documents VBA source is a blank Sub procedure definition.
+A quick glance at the p-code identifies both network- based indicators and host- based indicators we can use to determine what this sample would do when executed on the proper Office version.
+When we attempt to open the macro in the GUI editor, Office gets angry:
+For analysts looking to identify this methodology holistically, we recommend the following considerations:
+The GUI hiding functionality results in an altered project stream wherein a module exists, but there is no module, class, or baseclass defined in the stream.
+This is a potential static detection.
+While the macro source is no longer present, there are still static strings present in Module1 in this sample which may indicate Windows APIs leveraged.
+This is a potential static detection.
+Utilities like the previously mentioned oletools can do all of this detection for you.
+If you identify false negatives, false positives, or bugs, the open source project maintainers respond to them regularly like the superheroes that they are:
+The above methodology creates questions regarding potential efficiency problems for scaling any sizable campaign using it.
+While tools like EvilClippy provide the means to create difficult to detect malicious documents that can potentially sneak past some dynamic and static detections, their payloads have the additional burden of needing to fingerprint targets to enable successful execution.
+While actors with sufficient resources and creativity can no doubt account for these requirements, it is relevant to note that detections for these methodologies will likely yield more targeted activity.
+In fact, tertiary review of samples employing these techniques identified unrelated activity delivering both Cobalt Strike BEACON and POSHC2 payloads.
+We recently expanded our internal FireEye threat behavior tree to accommodate these techniques.
+At the time of publication, the authors were unable to directly map the methods – PROJECT stream manipulation and VBA stomping – to existing techniques in the MITRE ATT&CK Matrix™ for Enterprise.
+However, our team submitted these as contributions to the ATT&CK knowledge base prior to publication and will make additional data available for ATT&CK Sightings.
+Successful detonation of the previously detailed malicious document results in creation of “uCWOncHvBb.dll” via a call to URLDownloadToFileA to the URL hxxps://marendoger.com/team/rumba.php.
+The returned MINEDOOR packed MINEBRIDGE sample is saved in the executing users AppData directory (Eg: C:\Users\username\AppData\Roaming\uCWOncHvBb.dll), and then subsequent execution of the DllRegisterServer export via invocation of “regsvr32.exe /s %AppData%\uCWOncHvBb.dll” occurs:
+This will result in a ZIP file being retrieved from the URL hxxps://creatorz123.top/~files_tv/~all_files_m.bin using the Windows API URLDownloadToFileW.
+The ZIP file is written to %TEMP%, unzipped to the newly created directory %AppData%\Windows Media Player, and then deleted:
+The ZIP file contains legitimate files required to execute a copy of TeamViewer, listed in the file creation area of the IOC section of this post.
+When a file named TeamViewer.exe is identified while unzipping, it is renamed to wpvnetwks.exe:
+After completing these tasks, uCWOncHvBb.dll moves itself to %AppData%\Windows Media Player\msi.dll.
+The phishing macro then closes the handle to msi.dll, and calls CreateProcessA on wpvnetwks.exe, which results in the renamed TeamViewer instance side-loading the malicious msi.dll located alongside it.
+The malware ensures its persistence through reboot by creating a link file at %CISDL_STARTUP%\Windows WMI.lnk, which points to %AppData%\Windows Media Player\wpnetwks.exe, resulting in its launch at user logon.
+The end result is a legitimate, though outdated (version 11, compiled on September 17, 2018, at 10:30:12 UTC), TeamViewer instance hijacked by a malicious sideloaded DLL (MINEBRIDGE).
+MINEBRIDGE is a 32-bit C++ backdoor designed to be loaded by an older, unpatched instance of the legitimate remote desktop software TeamViewer by DLL load-order hijacking.
+The backdoor hooks Windows APIs to prevent the victim from seeing the TeamViewer application.
+By default, MINEBRIDGE conducts command and control (C2) communication via HTTPS POST requests to hard-coded C2 domains.
+The POST requests contain a GUID derived from the system’s volume serial number, a TeamViewer unique id and password, username, computer name, operating system version, and beacon interval.
+MINEBRIDGE can also communicate with a C2 server by sending TeamViewer chat messages using a custom window procedure hook.
+Collectively, the two C2 methods support commands for downloading and executing payloads, downloading arbitrary files, self-deletion and updating, process listing, shutting down and rebooting the system, executing arbitrary shell commands, process elevation, turning on/off TeamViewer's microphone, and gathering system UAC information.
+MINEBRIDGE’s default method of communication is sending HTTPS POST requests over TCP port 443.
+This method of communication is always active; however, the beacon-interval time may be changed via a command.
+Before sending any C2 beacons, the sample waits to collect the TeamViewer generated unique id (<tv_id>) and password (<tv_pass>) via SetWindowsTextW hooks.
+This specific sample continuously sends an HTTP POST request over TCP port 443 with the URI ~f83g7bfiunwjsd1/g4t3_indata.php to each host listed below until a response is received.
+The POST body contains the formatted string uuid=<guid>&id=<tv_id>&pass=<tv_pass>&username=<user_name>&pcname=<comp_name>&osver=<os_version>&timeout=<beacon_interval> where <guid> is a GUID derived from the system's volume serial number and formatted using the format string %06lX-%04lX-%04lX-%06lX.
+Additionally, the request uses the hard-coded HTTP User-Agent string "Mozilla/5.0 (iPhone; CPU iPhone OS 11_1_1 like Mac OS X) AppleWebKit/604.3.5 (KHTML, like Gecko) Version/11.0 Mobile/15B150 Safari/604.1"
+After a response is received, it's processed for commands.
+A single response may contain multiple commands.
+For each command executed, the sample sends an HTTPS POST request over TCP port 443 indicating success or failure.
+The sample responds to the commands below.
+Download and execute an executable from a URL provided in the command.
+File saved to %TEMP%\<32_rand_chars>.exe.
+Download a custom XOR-encoded and LZNT1 compressed DLL from a URL provided in the command and save to %TEMP%\<32_rand_chars>.
+Decode, decompress, and load the DLL in memory and call its entrypoint.
+Move sample file to <sample_name>.old and download a new version of itself to <sample_name> where <sample_name> is the name of this sample (i.e., msi.dll).
+Relaunch the hosting TeamViewer application with command-line argument COM1_.
+Delete <sample_name>.old.
+Relaunch the hosting TeamViewer application with command-line argument COM1_.
+Terminate the hosting TeamViewer application.
+Create and execute the self-deleting batch script tvdll.cmd to delete all unzipped files as well as the sample file.
+Terminate the hosting TeamViewer application.
+Shutdown the system.
+Reboot the system.
+Update the C2 beacon-interval time.
+After executing all commands in the response, the sample sleeps for the designated C2 beacon-interval time.
+It repeats the process outlined above to send the next C2 beacon.
+This behavior repeats indefinitely.
+The self-deleting batch script tvdll.cmd contains the following content where <renamed_TeamVeiwer> is the renamed TeamViewer executable (i.e., wpvnetwks.exe) and <sample_name> is the name of this sample (i.e., msi.dll).
+The identified MINEBRIDGE samples have been packed within a loader we call MINEDOOR.
+Since Fall 2019, we’ve observed a group publicly tracked as TA505 conducting phishing campaigns that use MINEDOOR to deliver the FRIENDSPEAK backdoor.
+The combination of MINEDOOR and FRIENDSPEAK has also been publicly discussed using the name Get2.
+The limited overlap in tactics, techniques, and procedures (TTPs) between campaigns delivering MINEBRIDGE and those delivering FRIENDSPEAK may suggest that MINEDOOR is not exclusive to TA505.
+Recent campaigns delivering FRIENDSPEAK have appeared to use spoofed sender addresses, Excel spreadsheets with embedded payloads, and campaign-specific domains that masquerade as common technology services.
+Meanwhile, the campaigns delivering MINEBRIDGE have used actor-controlled email addresses, malicious Word documents that download payloads from a remote server, and domains with a variety of themes sometimes registered weeks in advance of the campaign.
+The campaigns delivering MINEBRIDGE also appear to be significantly smaller in both volume and scope than the campaigns delivering FRIENDSPEAK.
+Finally, we observed campaigns delivering MINEBRIDGE on Eastern Orthodox Christmas when Russian-speaking actors are commonly inactive; we did not observe campaigns delivering FRIENDSPEAK during the week surrounding the holiday and language resources in the malware may suggest TA505 actors speak Russian.
+It is plausible that these campaigns represent a subset of TA505 activity.
+For example, they may be operations conducted on behalf of a specific client or by a specific member of the broader threat group.
+Both sets of campaigns used domains that were registered with Eranet and had the registrant location “JL, US” or “Fujian, CN,” however this overlap is less notable because we suspect that TA505 has used domains registered by a service that reuses registrant information.
+Post-compromise activity would likely reveal if these campaigns were conducted by TA505 or a second threat group, however, FireEye has not yet observed any instances in which a host has been successfully compromised by MINEBRIDGE.
+As such, FireEye currently clusters this activity separately from what the public tracks as TA505.
+FireEye would like to thank all the dedicated authors of open source tooling and research referenced in this blog post.
+Further, FireEye would like to thank TeamViewer for their collaboration with us on this matter.
+The insecure DLL loading highlighted in this blog post was resolved in TeamViewer 11.0.214397, released on October 22, 2019, prior to the TeamViewer team receiving any information from FireEye.
+Additionally, TeamViewer is working to add further mitigations for the malware’s functionality.
+FireEye will update this post with further data from TeamViewer when this becomes available.
+Process lineage: Microsoft Word launching TeamViewer
+Directory Creation: %APPDATA%\Windows Media Player
+File Creation: %APPDATA%\Windows Media Player\msi.dll %APPDATA%\Windows Media Player\msi.dll.old %APPDATA%\Windows Media Player\tvdll.cmd %APPDATA%\Windows Media Player\wpvnetwks.exe %APPDATA%\Windows Media Player\TeamViewer_Resource_en.dll %APPDATA%\Windows Media Player\TeamViewer_StaticRes.dll %APPDATA%\Windows Media Player\TeamViewer_Desktop.exe %APPDATA%\Windows Media Player\TeamViewer.ini %CSIDL_STARTUP%\Windows WMI.lnk %CSIDL_PROFILE%\<dll_name>.xpdf %TEMP%\<32 random characters> %TEMP%\<32 random characters>.exe %TEMP%\~8426bcrtv7bdf.bin
+%APPDATA%\Windows Media Player\msi.dll
+%APPDATA%\Windows Media Player\msi.dll.old
+%APPDATA%\Windows Media Player\tvdll.cmd
+%APPDATA%\Windows Media Player\wpvnetwks.exe
+%APPDATA%\Windows Media Player\TeamViewer_Resource_en.dll
+%APPDATA%\Windows Media Player\TeamViewer_StaticRes.dll
+%APPDATA%\Windows Media Player\TeamViewer_Desktop.exe
+%APPDATA%\Windows Media Player\TeamViewer.ini
+%TEMP%\<32 random characters>
+%TEMP%\<32 random characters>.exe
+Network Activity: HTTPS Post requests to C2 URLs User-Agent String: "Mozilla/5.0 (iPhone; CPU iPhone OS 11_1_1 like Mac OS X) AppleWebKit/604.3.5 (KHTML, like Gecko) Version/11.0 Mobile/15B150 Safari/604.1"
+HTTPS Post requests to C2 URLs
+User-Agent String: "Mozilla/5.0 (iPhone; CPU iPhone OS 11_1_1 like Mac OS X) AppleWebKit/604.3.5 (KHTML, like Gecko) Version/11.0 Mobile/15B150 Safari/604.1"

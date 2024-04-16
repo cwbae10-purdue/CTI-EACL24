@@ -1,0 +1,116 @@
+McAfee Mobile Research team has found another variant of MalBus on an education application, developed by a South Korean developer.
+In the previous Malbus case, the author distributed the malware through Google Play, but new variants are distributed via the ONE Store in much the same way.
+ONE Store is a joint venture by the country’s three major telecom companies and is a preinstalled app on most Android phones selling in South Korea.
+It has 35 million users (close to 70% of South Korea’s population) and has already surpassed Apple’s app store sales from the end of 2018.
+The application in question is distributed via Google Play and the ONE Store at the same time.
+The malicious application downloads and runs an encrypted payload with malicious functions.
+McAfee Mobile Security detects this threat as Android/Malbus and alerts mobile users if it is present, while protecting them from any data loss.
+Figure 1.
+Screen capture from the application page on the ONE Store
+We found malicious code injected by an attacker, via the developer’s account, into versions 27 and 28 of the application distributed through the ONE Store.
+The App Signature Certificate for versions 26 through 29 distributed from the One Store are the same.
+No other application developed by the same author was found on the ONE Store.
+The ONE Store is now servicing version 29 which does not contain malicious code.
+Google Play still offers version 26, though this is also clear of infection.
+Figure 2.
+Infected version history of the application
+The overall flow of this application, focusing on the malicious function, is explained below:
+Figure 3.
+Overview of malicious behavior
+After the malware is installed, the malicious code has a latent period of 10 hours to avoid being discovered by dynamic analysis.
+Figure 4.
+Using LastUpdateTime to check latent period
+After the latent period, it starts two threads.
+The first one loads native library “libmovie.so” and calls one of its exported functions, “playMovie”, with a phone number as an argument while the second one creates a Java server socket for communication with another native library.
+Figure 5.
+The malicious native library embedded in the APK
+The first loaded library, libmovie.so, contains a curl binary and URLs for secondary payloads in XOR encoded data which are decoded at runtime.
+The XOR value is 0x8E and it is globally used in this library.
+All decoded URLs appear to have been hacked and the decoded URLs drop RC4 encrypted ELF files.
+Table 1.
+Contents in libmovie.so
+Simply put, libmovie.so is a downloader and executer.
+It downloads the next payload from a hacked web server by using a dropped curl binary, decrypts it and loads the library.
+Once the library is loaded, the downloaded file is deleted to avoid detection.
+Lastly, the downloaded code starts from exported function name “Libfunc”.
+Figure 6.
+The main flow of libmovie.so
+As for the RC4 cryptographic library, encryption is the most common way to hide or protect important things.
+Accordingly, it is assumed that there is some important in this file.
+Table 2.
+Additional information of downloaded file
+The file sizes and data for szServer_XX_1 and szServer_XX_2 are the same as shown in Table 2.
+But szServer_XX_3 has several functions that are added, removed or modified a little bit.
+However, it does not affect the overall process.
+“doMainProc” is the core function called by “Libfunc”.
+The first job of the “doMainProc” is selecting the C2 server randomly.
+Table 3.
+C2 server list
+After selecting the C2 server, a randomly created TUID is sent to the server.
+Guessing from its usage, the TUID might be a target device ID to manage contaminated targets.
+Now the application is working as a spy agent, waiting for actions from the selected server and ready to execute commands.
+We discovered the following available commands:
+Table 4.
+Available command list
+Among the malicious commands, an eye-catching feature is SMS and MMS capturing.
+SMS and MMS are saved in the “/data/data/<package name>/files/” directory as file name “sms.txt” and “mms.txt” respectively.
+Figure 7.
+SMS and MMS are saved in txt files
+This feature can be activated by registering the Android receiver.
+Figure 8.
+RegisterReceiver
+This malicious app opens TCP port 1111 locally to communicate with the loaded native library.
+Below is manually interpreted Java code:
+public void run()
+{
+CommunicationThread commThread;
+Socket socket = null;
+serverSocket = new ServerSocket(sock_port); // sock_port = 1111
+if (serverSocket) {
+while ((!Thread.currentThread().isInterrupted())) {
+commThread = new CommunicationThread(this, serverSocket.accept());
+new Thread(commThread).start();
+}
+}
+}
+Figure 9. com.joojang.CharacterClassic.MainService
+The SMS/MMS capture feature is enabled when receiving a “SET” string on local TCP 1111 port and disabled by receiving “FREE”.
+Figure 10.
+SET or FREE
+The loaded native library connects when the “SD_SetSMSCapture” command receives and sends “SET”
+Figure 11.
+SD_SetSmsCapture
+Below is interpreted as C language.
+client = socket(AF_INET, SOCK_STREAM, 0);
+addr.sin_family = AF_INET;
+addr.sin_port = htons(1111);
+addr.sin_addr.s_addr= inet_addr(“127.0.0.1”);
+One other function we have not seen before is “SD_LoadSoFile”.
+This loads a new native library and executes a specific function in it.
+This function seems to change the running native library to a newer one when the current binary has a problem, or to add new features.
+Figure 12.
+SD_LoadSoFile
+This newly discovered malicious code has many similarities compared to Malbus, such as using the same malicious function name starting with “SD_”, file name, XOR’ed strings to hide original strings, embedded files in libraries, command ids, the same version of compiler and so on.
+It also has the differences mentioned above: downloading a malicious library directly instead of installing a plugin APK and no sensitive keyword list such as ‘North Korea’, ‘National Defense’ and so on.
+Figure 13.
+The identical function names from the malicious library
+Figure 14.
+The same version of compiler strings
+Malware can be distributed through all manner of third-party app stores, not only official ones such as Google Play.
+This malware is carefully prepared – the final payload of the malware is the file that was hacked and uploaded to the vulnerable server before malware distribution.
+We believe the authors of this malware will continue to buy or hack trusted developer accounts to update malicious functionality, infiltrate and distribute through official app stores.
+As with previous cases, users should verify the applications they install, even if they download them from official stores.
+McAfee is working with Korean law enforcement agencies to help with the takedown of the attack campaign.
+Initial Downloader (APKs)
+5e57bc8d83a372bf4d046c272cd43db9000036c9b32d8eecead1af75f4958c57
+1613b35c73c6497730490d7712ac015c2b42931446aed149e1292e2ba77d0ff4
+Encrypted Trojan (additional payload)
+d328373cd67c467485b9c96349a0ee08fc3b58fe2c11fb19f4dcb9ea6c7a0dae
+c5bff68022ead6302f710f1ce1c3d5682a8cd3610b1f8ed2563098d7ac4e1909
+c410cacbb0be8f649f082148c91f4cef27f101b8db3ce64a02882506c9b51a63
+178dddf38ec232d540bd88320521d8134644da1e7af19e7ae295b2d614e3ab56
+Decrypted Trojan (additional payload)
+9fc914545fbb99b7e0d4a5207f5a2b32a8a127a36caa9159d4feeac445c509f7
+df651ac1bfd60cd29cea85cc410002b933552260c2439fe86a4f32486abd0828
+63d10c9cd105c7b17effef18d31d571fe4c9c999966cc09bdb40df07c1b6baa8
+f99212b70729942923fe26b996791cdd8eb561f8ae017e1d71202fbb97f7d245

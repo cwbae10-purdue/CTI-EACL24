@@ -1,0 +1,106 @@
+Threat Analysis: This blog originally appeared on the enSilo website and is republished here for threat research purposes.
+enSilo was acquired by Fortinet in October 2019.
+A new loader-type malware has adopted a technique similar to Process Doppelgänging and spread like wildfire in the last year and half.
+This loader is a significant threat – besides GandCrab, which closed up shop earlier this year – as it delivers over a dozen other payloads, including FormBook, LokiBot, SmokeLoader, AZORult, NetWire, njRat and Pony stealer.
+During an analysis we conducted while tracking the GandCrab ransomware (one of the more notorious malware families in 2018 and 2019), we noticed an interesting behavior.
+In some cases, it seemed to have been using Process Hollowing as part of its attack chain.
+A quick look revealed that it’s not a plain Process Hollowing implementation, but rather a hybrid variation involving Process Doppelgänging.
+The same hybrid variation was reported by Malwarebytes back in August 2018 in relation to Osiris (a banking trojan).
+We decided to name the loader “TxHollower” because Transactional NTFS APIs are abbreviated “TxF” in the docs, and Malwarebytes dubbed the specific implementation “Transacted Hollowing”.
+Using some basic hunting operations, we were able to get our hands on hundreds of instances of the loader.
+Sorting through them, we found seven distinct versions and over twenty different malware families that use them.
+The first known sample in the wild predates the Osiris’ by a few months.
+It was interesting to see the progression of the loader over time and how its developers tweaked and adapted it to maximize effectiveness and defeat security products.
+The sample with the GandCrab payload we examined was an exact match to Osiris’s first stage loader.
+Since the previous publication focused mainly on the implementation of the Transacted Hollowing, we thoroughly analyzed it to check if it had any other interesting capabilities.
+In addition to its known use of section remapping of ntdll.dll to bypass user-mode hooks, we found that the loader also provides a persistency mechanism and that its capabilities are configurable – but more on that to follow.
+Except for samples of the first version, almost all executables are applications based on the MFC library, with some statically-linked on compile time, while others load it dynamically.
+The loader itself is a shellcode and is xor encrypted in the binary.
+Execution is passed to it indirectly as a callback made from different enumeration functions, such as EnumResourceTypes, EnumWindowStations, EnumDesktops, and EnumWindows.
+The payload and configuration also are kept encrypted in PE sections that are not normally used.
+Given that enSilo (now FortiGuard Labs) discovered the Process Doppelgänging technique, we had a keen interest in examining the loader ourselves.
+In contrast to the original technique of using an existing executable on disk, a new file is created inside the transaction in the %TEMP% folder.
+The name of the file, chosen by loader’s developers, “Liebert.bmp”, is probably an attempt to try and trick poorly implemented endpoint solutions that rely on file extensions.
+By camouflaging it as a data file it’s more likely this action will be overlooked, as those types of files are usually expected to be seen inside transactions.
+Also, we assume they decided against using NtCreateProcess to be able to extend the range of supported OS versions, as this API can cause BSOD on some Windows 10 builds (Threshold 2, Redstone 1-2).
+There are slight configuration changes between versions, according to different features.
+However, a majority of the configurations remain the same.
+It holds the decryption key for the payload, size of the payload, decides whether to make the loader persistent, and what name and id of an executable is used for hollowing.
+The selected executable is also mapped to the running loader process to find the address of its entrypoint.
+In case the loader’s executable is selected, an interesting side effect occurs when using IDA for dynamic analysis.
+IDA’s debugging engine waits for events and acts automatically when they are triggered, and one such event is the loading (or mapping) of new PE modules.
+When a module is loaded at a different base address, all information related to it is rebased to that new address.
+Since the debugged PE is the module that is mapped again, IDA thinks it has new base address and moves all breakpoints from it.
+No code runs from the newly mapped module, so the debugger loses track of the executed instructions.
+This also affects single-stepping, thus making it a nice anti-analysis technique against IDA.
+Before diving in, we should explain how we decided to number each version.
+Usually, the version is determined either by when it was first observed in the wild or according to a label in the binary.
+As with many cases of threat hunting of this scale, when using public tools such as VirusTotal we work under the assumption that we don’t possess all the data.
+Although v5 was seen before v4, even if just shortly, there is a notable progression of the code which is carried over to v5.
+Supporting this progression, the v5 shellcode is smaller than v4 but bigger than the following versions.
+While there is a possibility that the timestamp of the PE can be forged, in a certain version this field is being used by the loader for a different purpose, so we know it’s meaningless.
+The configuration and payload are bundled together and embedded in the binary.
+They are found by searching the PE in memory for a hardcoded magic value.
+Configuration is Base64 encoded and the payload is encrypted with Blowfish, a symmetric-key block cipher, using a 384-bit key and compressed.
+Persistency is achieved using BITS COM objects to copy the loader to the user’s startup folder.
+“svchost.exe” and “wermgr.exe” are the hardcoded system executables used by the Transacted Hollowing, and bypassing hooks placed on ntdll.dll are done using the Section Remapping technique.
+Additional decryption operations for the loader shellcode were added.
+The decoded configuration is partiality encrypted with a hardcoded key.
+It introduced new security product evasion capabilities.
+At different points in the shellcode, the names of the loaded modules are hashed using a custom function and compared to constant values to change to the loader’s course of action:
+Before the loader starts it checks for a module, which name is unknown, it creates a new window with a message loop and starts the loader shellcode again in a new thread.
+If UMEngx86.dll (Symantec SONAR) is present, instead of transaction APIs, the virtual memory APIs are used to perform the hollowing.
+The payload and configuration are stored separately.
+The configuration is searched for only in a specific PE section.
+The magic value used to mark its position is computed from values stored at PE header fields, such as the timestamp and entrypoint.
+Base64 encoding was removed and the entire configuration is encrypted with a different algorithm in which the magic value is used as the key.
+The payload resides in a dedicated section and is accessed directly through the PE section table based on a hardcoded index.
+It is also not guaranteed to be compressed.
+Transacted Hollowing switched one of the hardcoded system executables from “wermgr.exe” to “WerFault.exe” and added support for payloads that require relocation.
+The payload can also be executed in the running loader process with Reflective Loading.
+This behavior is configurable as an alternative to Transacted Hollowing and is barely ever used in the wild.
+It is worth noting that the reflective loading code supports TLS callbacks, which is not so common in most implementations of the technique.
+The user-mode hooks evasion was improved to allow bypassing hooks in the WOW64 layer.
+It uses Section Remapping again, but for the 64-bit ntdll.dll.
+Function calls are done with a slightly modified version of the rewolf-wow64ext project, and only if a hook was detected on the original 64-bit ntdll!NtWriteVirtualMemory.
+The hook bypass is buggy and actually prevents the loader from running on 32-bit machines as it uses the 64-bit functions, even though they are obviously not available.
+Attempts to fix the WOW64 user-mode hooks bypass bug.
+Implemented the persistency method using regular Windows API functions.
+The previous implementation is kept as a fallback option in case required functions from shell32.dll and kernel32.dll aren’t found during initialization.
+The WOW64 user-mode hooks bypass bug that prevented support for 32-machines was fixed.
+The earliest sample of the loader delivered NetWire, and is from 10/3/2018 – that’s four months before Malwarebytes’ report.
+We found this loader with multiple GandCrab versions, starting with v5 and going all the way to v5.2.
+The latest version of the loader is the most prevalent in the wild, and the second version has remained in constant use throughout all this time, as can be seen in figure 4.
+The most common payloads are SmokeLoader, NetWire, and Remcos RAT.
+Attackers choose the loader’s own binary or the second hardcoded system executable (wermgr.exe or WerFault.exe) almost exclusively as the hollowing target.
+A significant number also use it to set up persistency on the victim’s machine.
+Though the loader also supports Reflective Loading, attackers choose to opt out from it entirely and continue using Transacted Hollowing.
+In addition, the overall majority of them compress the payload even after that was made optional.
+Some samples were wrapped in an additional layer, such as MSI files, and in other cases loaders were nested with each other.
+While we didn’t observe actual infections, we were able to find a few samples we suspect to be related to the infection chain, like downloaders and droppers of TxHollower.
+The type of files include PE executables, JavaScript, and documents.
+The documents are Rich Text Format (RTF) files and seem to include macros and exploits, such as CVE-2017-11882 that targets Microsoft Office’s Equation Editor.
+Their names are largely related to receipts or invoices.
+GandCrab is known to be delivered via an exploit kit.
+SmokeLoader and AZORult were documented to use the same exploit kit.
+Other malware families we identified are also connected directly or indirectly to CVE-2017-11882.
+In general, most malwares from the payloads are related to exploit kits.
+It’s possible that TxHollower is provided by another party and bundled with different kits.
+The information detailed in this blog post reaffirms Malwarebytes’ assessment that the loader has a different origin, rather to being tied to those behind the Osiris banking trojan.
+The wide variety and circulation of payloads make it easy to assume TxHollower is bundled with some offensive framework or exploit kit.
+There are probably additional variations of the shell application.
+It’s likely that earlier versions of the loader exists without the Transacted Hollowing implementation.
+Attackers are known to reuse resources and tools in their attack chains.
+Most notable are droppers, packers, and loaders.
+It highlights the fact that shared components and code make tracking and attributing various groups even more complicated.
+The usage of process doppelgänging-like techniques in-the-wild is increasing, which may suggest that not all security products have adopted and are not yet able to detect or prevent them.
+The FortiEDR platform is capable of blocking the threat.
+ca1427ed05ad6f2ec495c41cb5c8ac1da4a596df037c1c4b4e6214256b5a936c (v1, NetWire)
+e7d3181ef643d77bb33fe328d1ea58f512b4f27c8e6ed71935a2e7548f2facc0 (v2, Osiris)
+49b769536224f160b6087dc866edf6445531c6136ab76b9d5079ce622b043200 (v2, GandCrab 5.0.3)
+5af6a56ea050d1834dfc126602aa6ab47445bbbe98f7c43ada3b9cfb05872e2d (v3, AZORult)
+14cf23d63d48a3189c483a62cfeba4f29d88b2e7bf40c33072332d3f897ce1db (v4, SmokeLoader)
+0acfcc6d0bf014de656bf919741e72a66d75ea96d6f38c929d0540d7d12dab2a (v5, GandCrab 5.1)
+6c3e11a29155473231b22e10cf9162293c78c7ec4e0bcfeb54b85fa10c60b005 (v2, MSI wrapper, FormBook)
+b7b9713d2d43703ef4b66c2df66386453513be78efd25a50ffbe90db656fe472 (v5, TxHollower wrapper, REMCOS)
+Find out about the FortiGuard Security Services portfolio and sign up for our weekly FortiGuard Threat Brief.

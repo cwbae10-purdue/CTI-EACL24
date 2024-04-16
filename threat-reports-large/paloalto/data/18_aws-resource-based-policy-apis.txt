@@ -1,0 +1,59 @@
+Unit 42 researchers discovered a class of Amazon Web Services (AWS) APIs that can be abused to leak the AWS Identity and Access Management (IAM) users and roles in arbitrary accounts.
+Researchers confirmed that 22 APIs across 16 different AWS services could be abused the same way and the exploit works across all three AWS partitions (aws, aws-us-gov or aws-cn).
+AWS services that can be potentially abused by attackers include Amazon Simple Storage Service (S3), Amazon Key Management Service (KMS) and Amazon Simple Queue Service (SQS).
+A malicious actor may obtain the roster of an account, learn the organization’s internal structure and launch targeted attacks against individuals.
+In a recent Red Team exercise, Unit 42 researchers compromised a customer’s cloud account with thousands of workloads using a misconfigured IAM role identified by this technique.
+The root cause of the issue is that the AWS backend proactively validates all the resource-based policies attached to resources such as Amazon Simple Storage Service (S3) buckets and customer-managed keys.
+Resource-based policies usually include a Principal field that specifies the identities (users or roles) allowed to access the resource.
+If the policy contains a nonexistent identity, the API call that creates or updates the policy will fail with an error message.
+This convenient feature, however, can be abused to check whether an identity exists in an AWS account.
+Adversaries can repeatedly invoke these APIs with different principals to enumerate the users and roles in a targeted account.
+Furthermore, the targeted account can’t observe the enumeration because the API logs and error messages only appear in the attacker’s account where the resource policies are manipulated.
+The “stealthy” property of the technique makes detection and prevention difficult.
+Attackers can have unrestricted time to perform reconnaissance on random or targeted AWS accounts without worrying about being noticed.
+AWS IAM manages permissions between users, resources and applications using various types of policies.
+Resource-based policy is a type of policy attached to resources within an AWS service.
+Each AWS service can have multiple resources and each resource can be attached with a different policy.
+For example, an S3 service can create multiple bucket resources and the SQS service can create multiple message queue resources.
+At the time of this writing, there are 26 AWS services that support resource-based policies, as shown in Table 1.
+The policy determines the actions that principals can perform on the attached resource.
+A principal can be an AWS user, role or service.
+The actions that can be performed depend on the type of service.
+Figure 2 is an example resource-based policy attached to an S3 bucket.
+Two principals are allowed to access the bucket, user “Bob” in account 123456789012 and IAM role “qa-role” in account 98765431098.
+The principals can perform three actions, GetObject, GetBucketLocation and ListBucket on S3 bucket “awsexamplebucket”.
+Note that the principals do not need to be in the same account as the bucket, meaning that a policy can also grant cross-account access to resources.
+Figure 2 is the simplest form of a policy.
+A more complicated policy may consist of multiple statements and conditions.
+To avoid human errors, AWS validates every field in the policy before the policy can be applied to a resource.
+The validator ensures the specified principals actually exist and the specified actions are supported by the service.
+In Figure 2, an error message is raised because “GetFiles” is not a supported action.
+Policy validation is a feature from AWS that facilitates the user experience.
+While most users benefit from the feature, adversaries may also find the feature useful for performing reconnaissance in another account.
+Because the policy validator checks whether the specified principal exists, it gives adversaries a way to build up knowledge of a targeted account’s roster gradually.
+As we will show, adversaries may abuse policy validators in multiple AWS services that support resource-based policies.
+When defining a principal in a resource-based policy, users ask AWS to authenticate and authorize the principal to access the resources in an AWS account.
+If we provide an invalid username or role name, the authentication will fail.
+One of the authentication best practices for implementing a secure authentication process is to avoid giving out account-specific information in error messages.
+The AWS policy validator inadvertently leaks account-specific information in the error messages.
+When creating or updating a resource policy, the AWS policy validator explicitly reveals if the specified principal exists or not.
+An adversary could use the error messages to check whether a user or an IAM role exists in a targeted account.
+By repeating this process with a wordlist, an adversary can enumerate and discover the existing identities in a targeted account.
+Figures 3 and 4 show the error messages when we specify a nonexistent IAM role in different AWS services’ resource policies.
+These policies are rejected and can’t be saved.
+The process can also be performed programmatically using AWS APIs, making the enumeration scalable.
+One concerning property of this technique is that it is completely unobservable by the target or victim.
+When making changes to a resource policy, the AWS CloudTrail logs and error messages only appear in the resource owner or the attacker’s account.
+The “stealthy” property makes detection and prevention almost impossible.
+A similar technique was first published in a blog by Rhino Security Labs, in which they used the IAM role trust policy to check whether a cross-account IAM role exists.
+Unit 42 researchers identified and confirmed that at least 22 APIs across 16 AWS services can be exploited, as shown in Table 1.
+The commonality between these APIs is that they all take a resource policy as input and the policy needs to have a valid “Principal” field.
+Detecting and preventing identity reconnaissance using this technique is difficult as there are no observable logs in the targeted accounts.
+However, good IAM security hygiene can still effectively mitigate the threats from this type of attack.
+Although it’s not possible to prevent an attacker from enumerating identities in AWS accounts, the enumeration can be made more difficult and you can monitor for suspicious activities taken after the reconnaissance.
+To mitigate this issue, we recommend the following IAM security best practices for organizations:
+Remove inactive users and roles to reduce the attack surface.
+Add random strings to usernames and role names to make them more difficult to guess.
+Log in with identity provider and federation, so that no additional users are created in the AWS account.
+Log and monitor all the identity authentication activities.
+Enable two-factor authentication (2FA) for every user and IAM role.

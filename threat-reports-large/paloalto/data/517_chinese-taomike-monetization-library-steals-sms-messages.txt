@@ -1,0 +1,76 @@
+Mobile app creators are often looking for ways to monetize their software.
+One of the most common ways to do this is by displaying advertisements to users or by offering in-app purchases (IAPs).
+Mobile monetization platforms create software libraries that authors can embed into their apps to start earning money quickly.
+We previously highlighted the dangers of installing apps that enable IAPs using SMS messages, as these apps typically have access to all SMS messages sent to the phone.
+While not all SMS-based IAP applications steal user data, we recently identified that the Chinese Taomike SDK has begun capturing copies of all messages received by the phone and sending them to a Taomike controlled server.
+Since August 1, Palo Alto Networks WildFire has captured over 18,000 Android apps that contain this library.
+These apps are not hosted inside the Google Play store, but are distributed via third party distribution mechanisms in China.
+Background
+WildFire captures many samples of mobile malware that intercept and upload SMS messages.
+Most of these are created by malware authors who set up command and control (C2) servers with third party hosting providers and frequently update their locations to avoid detection.
+Among these malware we have found many that are created by “mobile monetization” companies who distribute apps that provide little value but have a high cost to the user.
+These apps are often installed by tricking users into clicking a pop-up, only to find later that a charge has appeared on their phone bill.
+Antivirus programs typically identify these apps as malware, the topic of this blog is something different and harder to detect.
+Taomike is a Chinese company that aims to become the biggest mobile advertisement solution platform in China.
+They provide an SDK and services to help developers display rich advertisements with a high pay rate.
+Taomike has not previously been associated with malicious activity, but a recent update to their software added SMS theft functionality.
+The apps this library is embedded in may be legitimate and have significant functionality, but their developer’s choice to use this library has put them at risk.
+Technical Details: SMS Theft
+Not all apps that use the Taomike library steal SMS messages.
+Our analysis indicates that only samples that contain the embedded URL, hxxp://112.126.69.51/2c.php have this functionality.
+This is the URL to which the software uploads SMS messages, and the IP address belongs to the Taomike API server used by other Taomike services.
+We have captured around 63,000 Android apps in WildFire that include the Taomike library but only around 18,000 include the SMS theft functionality.
+We believe there are different versions of the Taomike SDK and only some of them include SMS uploading behavior.
+Based on our data, the version that contains the SMS stealing functions is newer and was released around August 2015.
+Apps that use earlier versions of the library appear to be safe.
+The Taomike library is called “zdtpay” and is a component of Taomike’s IAP system.
+Because Android apps are required to list the permissions they need in their manifest file, we can see that this library requires both SMS and network related permissions.
+The library also registers a receiver named com.zdtpay.Rf2b for both the SMS_RECEIVED and BOOT_COMPLETED actions with highest priority of 2147483647.
+Figure 1.
+Registered receiver for SMS_RECEIVED
+The registered receiver Rf2b reads SMS messages whenever they arrive.
+The message body and sender phone number are collected as shown in Figure 2.
+Figure 2.
+SMS body and sender number read
+If the device has just booted, it will start the service MySd2e, which then registers a receiver for Rf2b as shown in Figure 3.
+Figure 3.
+MySd2e Service registers receiver for Rf2b
+SMS information collected by the receiver is saved in a hashmap with “other” as the key and sent to a method that uploads the message to 112.126.69.51 as shown in Figure 4.
+Figure 4.
+Information uploaded to IP Address used by api.taomike.com
+All SMS messages sent to the phone are uploaded, not just those that are relevant to Taomike’s platform.
+Figure 5 shows a packet capture of a test message upload.
+The message content is “hey test msg” as circled with dashed red box.
+Figure 5.
+SMS uploaded via HTTP in pcap
+The Taomike library makes contact with the following URLs, but only the “2c.php” path is used to capture SMS messages.
+The rest appear to be used for other parts of the IAP functionality in the library.
+http://112.126.69.51/2c.php
+http://112.126.69.51/imei_mobile.php
+http://112.126.69.51/install_report.php
+http://112.126.69.51/error.php
+http://112.126.69.51/rixian.php
+http://112.126.69.51/order_mo.php
+http://112.126.69.51/order.php
+http://112.126.69.51/order_status.php
+http://112.126.69.51/tdstatus.php
+Risks and Mitigation
+We have captured over 18,000 samples that contain the SMS stealing library since August 2015, meaning the number of affected users is considerable.
+We expect the number of affected apps and users to increase as more developers incorporate the newer version of Taomike library.
+The infected apps are not limited to a single developer or third party store as many developers appear use the Taomike library.
+Some of the infected apps purport to contain or display adult content.
+We do not know how Taomike is using the stolen SMS messages, but no library should capture all messages and send them to a system outside the phone.
+In version 4.4 of Android (KitKat) Google began preventing apps from capturing SMS messages unless they were defined as the “default” SMS app.
+Users outside of China and those that only download apps from the official Google Play store are not at risk from this threat.
+To protect Palo Alto Networks customers from the Taomike SMS stealer, we’ve made the following protections available:
+Palo Alto Networks WildFire will automatically identify and block malicious APK samples containing the SMS stealing Library
+Threat Prevention signature 14798 will detect and block the malicious C2 communication, including the SMS upload traffic from Taomike library
+Palo Alto Networks AutoFocus users can identify and investigate this threat using the Taomike tag
+Conclusion
+Even popular third party monetization platforms are not always trustworthy.
+When developers incorporate the libraries into their apps they need to carefully test them and monitor for any abnormal activities.
+Identifying monetization and advertising platforms that behave poorly and abuse their users is something that our industry must to do ensure the safety of all mobile devices and their users.
+Acknowledgement
+We greatly appreciate the help from Rongbo Shao from Palo Alto Networks in working on the Threat Prevention signature.
+We would also like to thank Ryan Olson, Benjamin Small, Richar Wartell, and Chris Clark from Palo Alto networks in publishing the discovery.
+Related Sample Hash Values

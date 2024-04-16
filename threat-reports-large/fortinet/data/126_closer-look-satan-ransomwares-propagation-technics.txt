@@ -1,0 +1,84 @@
+FortiGuard Labs Breaking Threat Research
+Satan ransomware first appeared in early 2017, and since then threat actors have been constantly improving the malware to infect its victims more effectively and to maximize its profits.
+For instance, FortiGuard Labs has discovered a campaign which was also utilizing a cryptominer malware as an additional payload to maximize its profits from its victims.
+Aside from the fact that this file-encrypting malware targets both Linux and Windows platform, it also employs numerous vulnerabilities to propagate itself through public and external networks.
+In fact, FortiGuard Labs has discovered a new variant that has added more to its already long list of targeted vulnerabilities.
+This post details how this malware finds new targets from both internal and external networks.
+Its initial spreader, conn.exe on Windows and conn32/64 on Linux, is capable of propagating through both private and public networks.
+In older campaigns, its Linux component (conn32/64) only propagates through non-Class A type private networks.
+However, it has recently been updated and now supports both private and public network propagation.
+For the Windows component (conn.exe), nothing much has really changed, and it even still carries the EternalBlue exploit (from the NSA) and the open-source application Mimikatz.
+Most of its previously identified vulnerabilities are still exploited in this update, but the Apache Struts 2 remote code execution vulnerabilities (S2-045) and (S2-057) have been removed for some unknown reasons.
+Some of the vulnerabilities it targets include:
+JBoss default configuration vulnerability (CVE-2010-0738)
+Tomcat arbitrary file upload vulnerability (CVE-2017-12615
+WebLogic arbitrary file upload vulnerability (CVE-2018-2894)
+WebLogic WLS component vulnerability (CVE-2017-10271)
+Windows SMB remote code execution vulnerability (MS17-010)
+Spring Data Commons remote code execution vulnerability (CVE-2018-1273)
+The main update we observed is the addition of several web application remote code execution exploits, which are also implemented in the Linux version.
+The following are the new vulnerabilities targeted by this strain:
+Spring Data REST Patch Request (CVE-2017-8046)
+ElasticSearch (CVE-2015-1427)
+ThinkPHP 5.X Remote Code Execution (no CVE)
+Let’s take a look on how its propagation is performed.
+As mentioned, its spreader is capable of propagating through both private and public networks.
+It performs IP address traversal and attempts to scan and execute its entire list of exploits on every IP address encountered, along with its corresponding hardcoded port list that is described below.
+To be more efficient, it implements multi-threading, in which separate threads are spawned for every propagation attempt for every targeted IP and port.
+For private networks, it retrieves all possible IP addresses in the victim’s network.
+The Windows version of the spreader attempts to propagate to hosts in a private network regardless of the class type.
+Contrarily, the Linux component avoids the Class A type private network.
+Figure 1.
+Linux spreader checking private IP address
+It iterates through all IP addresses in all subnets in the network attempting to sweep all hosts in the network.
+Figure 2 shows a snippet of the Linux version iterating the target IP addresses.
+The same implementation is used in Windows version as well.
+Figure 2.
+Propagating to a private network (conn32)
+In the case of target public IPs, the spreader retrieves the target from its C2 server, as shown in the next figure.
+From there, it iterates the target IP address from xxx.xxx.xxx.1 to xxx.xxx.xxx.254.
+In our monitoring, all the target IPs being served in this campaign are located in China.
+Figure 3.
+Receiving Target Public IPs from its C2 server
+The Windows component implements EternalBlue exploit, Mimikatz, an SSH Brute-Force attack, and numerous web exploits for propagation.
+These are also included in the Linux version, aside from the EternalBlue exploit and Mimikatz.
+This malware also contains a hardcoded list of target ports commonly used by services and applications that it tries to exploit.
+For each TCP port, it attempts to scan and execute its entire exploit list.
+Again, to be more efficient, sub threads will be spawned for every port.
+For the Windows component, if the port number is 445 (SMB/CIFS), it performs the EternalBlue exploit.
+If the port number is 22 (SSH), it performs SSH credential brute forcing using a hardcoded list of usernames and passwords.
+If the port number is not on the aforementioned ports, it attempts to execute its web application exploits.
+Figure 4.
+Windows Component target port checking
+It’s practically the same for the Linux version, without the port 445 (SMB) checking.
+Figure 5.
+Linux Component target port checking
+From there it performs a standard exploitation procedure - find hosts running the target vulnerable services or applications and attempt exploitation.
+Each of the target web applications has its own defined URL that the malware tries to access and then trigger the exploit against the target host.
+Figure 6.
+Scan and exploit web application
+Next, it notifies its C2 server for every exploit that has been executed against the target host.
+Figure 7.
+Sending its exploit execution report to the C2 server
+We also observed that it attempts to scan some applications like Drupal, XML-RPC, Adobe, etc.
+but don’t have a corresponding exploit payload.
+It just notifies its C2 server if the application exists.
+Most likely, its purpose is to gather statistics of application usage that can be targeted in future attacks.
+The malware authors can easily update their spreader to implement an exploit against one of these applications if they observe that enough of clients that are using it.
+Satan Ransomware is becoming more and more aggressive with its spreading.
+By expanding the number of vulnerable web services and applications it targets, it increases its chance of finding another victim and generating more profits.
+In addition, Satan Ransomware has also already adopted the Ransomware-as-a-Service scheme, opening it up to use by more threat actors, which means more attacks and more revenue.
+FortiGuard Labs will continue monitoring its development and will keep everyone posted.
+FortiGuard’s Antivirus service detects samples as W32/ShadowBrokers.AE!tr, Linux/CoinMiner.FE!tr and Linux/Filecoder.R!tr.
+FortiGuard’s Webfilter service blocks and categorizes the C2 server as Malicious Website.
+For the added web application exploit, FortiGuard IPS signature detects it as follows: a.
+Spring Data REST Patch Request(CVE-2017-8046) - Pivotal.Spring.PATCH.Request.Handling.Remote.Code.Execution.
+b. ElasticSearch (CVE-2015-1427) - ElasticSearch.Dynamic.Script.Arbitrary.Java.Execution c. ThinkPHP 5.X Remote Code Execution - ThinkPHP.Request.Method.Remote.Code.Execution
+-= FortiGuardLion Team =-
+Sample (sha256):
+54a1d78c1734fa791c4ca2f8c62a4f0677cb764ed8b21e198e0934888a735ef8 - W32/ShadowBrokers.AE!tr 02e1a05fdfdf4f8685d92ba09d698b8be66ae6d020dc402ff2119501dda9597c - Linux/CoinMiner.FE!tr 51F2E919A7ECFB3B096DDCB71373E86E81883B4B59848D2F6F677F9E317A8468 - Linux/Filecoder.R!tr
+C2 server:
+111.90.159.103 111.90.159.104 111.90.159.105 111.90.159.106 111.90.159.106/d/conn32 111.90.159.106/d/cry32
+Learn more about FortiGuard Labs and the FortiGuard Security Services portfolio.
+Sign up for our weekly FortiGuard Threat Brief.
+Read about the FortiGuard Security Rating Service, which provides security audits and best practices.

@@ -1,0 +1,196 @@
+FortiGuard Labs Threat Analysis Report
+Affected platforms: Windows Impacted parties: All Impact: Information Stealing, Keylogger Severity level: High
+Malware analysis is the art of analyzing and investigating different threats to determine their malicious activity and behavior on a system.
+It is a key element in the incident response process.
+If done with speed and accuracy, your chances for success are increased.
+If you're slow to analyze or inaccurate in your results, you will most likely increase the impact the threat will have on your business.
+With the sophistication of malware these days – specifically, their anti-analysis techniques – it can be difficult to deconstruct a threat in a timely manner.
+By the time you finish, the threat may have already spread throughout your environment.
+To deal with this issue, companies need to leverage a combination of human expertise and technology automation.
+This blog will focus on the traditional manual analysis (human only) steps to give the reader an idea of how to analyze a DotNet file as well as the time it takes to do so.
+We will then take a quick peek at how leveraging automated analysis technology can drastically reduce your analysis time, and ultimately, your response time.
+Before we get started, let’s discuss the basics of DotNET.
+Today, there are multiple programming languages allowing programmers to develop their PE (Portable Executable) files.
+Some of these languages are Microsoft Visual C/C++, VB6 (The DotNET predecessor), and the DotNET framework.
+Each one of these languages has its disadvantages and advantages.
+Some PE files developed and compiled in one of these languages may be easier to analyze and deal with from both a dynamic and static perspective than others.
+The Microsoft DotNET framework, for example, is a developer platform introduced by Microsoft.
+The DotNET framework is used for creating and running various applications, such as web, standalone, and mobile applications.
+DotNET applications can be developed in Microsoft C# (pronounced C-SHARP) and VB.NET, although Microsoft C# is the most prevalent programming language nowadays.
+Relative to C/C++, Microsoft C# is an easier language for applications development.
+Therefore, many attackers and legitimate developers prefer to develop their PE files and applications using C#.
+As you will read in this blog post, there are typically several indicators to determine when a file was developed in a DotNET language.
+If you are an analyst interested in analyzing a malicious or a legitimate executable specifically developed in C#, you may find out that some files are harder to deal with.
+The reason is that a lot of compiled DotNET executables may also use anti-analysis techniques for the purpose of obfuscating their code and hiding their operations during an execution on the system.
+If you have the right analysis tools, and are well-versed in some analysis techniques, that can help you with your analysis.
+After all, if you deal with a malware variant, 99 percent of time you would want to know what the code or the file does during an execution on the system.
+There are many static analysis techniques of DotNET executables.
+However, this blog post will present two analysis use cases.
+The first use case will focus on an obfuscated keylogger, while the second will look at the dynamic load of a DotNET executable in memory.
+Both use cases provide information about the analysis method that anyone can use to deal with each file.
+However, before you begin to read about the analysis of each use case, here are some methods to identify DotNET executable characteristics.
+As mentioned, DotNET files are executables developed in the DotNET framework.
+Both regular executables and DotNET files are compiled, and typically have the .exe extension.
+However, the main difference between them is that a compiled DotNET executable typically imports the DLL file mscoree.dll.
+The import API function starts at the _CorExeMain API function or on the DLL side at the _CorDllMain.
+The following figure (taken from VirusTotal) illustrates the DLL and Windows API function import imported by a DotNET executable:
+On that note, should you ever encounter an executable and you are not certain what compiler was used to compile the file to an executable, there are some free tools that you can leverage in your static analysis of that file.
+Some of these tools are Detect-It-Easy (DIE), PEstudio, and CFF explorer, and the list goes on and on.
+Some of these tools will be covered in this blog post, but for the most part, they all can be used to determine what import DLLs and API that the executable is linked to.
+If you see only an import for the mscoree.dll file and the call to the API function _CoreExeMain, chances are you have come across a DotNET executable.
+DotNET executables also possess another characteristic very unique to them.
+Once a DotNET executable is developed in Visual Studio, the executable itself will get two different Global Unique Identifiers (GUIDs).
+These GUIDs are typically stored as a string in the DotNET file once it is compiled to an executable.
+These GUIDs can be found running strings on a DotNET executable, or as seen in figure 2, online reputation resources such as VirusTotal will list them under the executable file details section:
+The Module Version Id (MVID) GUID is generated during the DotNET project build, and is unique to the build itself.
+The TypeLib ID is generated by Visual Studio during a project creation.
+Aside from helping you to identify a file as a DotNET executable, these GUIDs can also be used to associate files to a particular project, because if the same DotNET project is constantly maintained, the compiled executable should receive similar GUIDs.
+Speaking about DotNET GUIDs, security researchers also refer to them as NetGUIDs.
+Those NetGUIDs can be also used to identify DotNET files with a specific project.
+Malware variants that were developed in DotNET can also be associated by the same NetGUID if they possess the same value.
+A good article about hunting for malware by NetGUIDS was published a few years back.
+Now that you have a good baseline on how to identify DotNET files, let's dissect our two use case scenarios.
+The executable analyzed in this section contains the following static characteristics:
+Filename: Mixed Grade.exe
+SHA1: b33bb284b540a69b9c6a65912a439d00682c896a
+File Size: 2350080 bytes
+Compile Time: 2020-03-23 07:57:14
+The file Mixed Grade.exe is a malware associated with the HawkEye Keylogger.
+However, Mixed Grade is not a DotNET file in itself.
+If you’re asking yourself why this file is mentioned here, as you read through the use case you will see that the actual payload component is a DotNET file.
+There are some steps that need to be done first in order to get to the final HawkEye payload.
+Let’s go briefly through those steps (they are quite interesting) and then we will focus on the DotNET payload itself.
+Side Note: This blog post won’t get into the details of the HawkEye keylogger functionality because the objective here is to describe different analysis methods of DotNET executables.
+However, If you’re interested in reading about a technical HawkEye Keylogger analysis, please read the Fortinet blog post about HawkEye.
+When executing the Mixed Grade.exe file, it spawns the file RegAsm.exe – a legit Windows Assembly Registration tool.
+However, right after that spawns, Mixed Grade injects a PE into the suspended RegAsm.exe (this technique is also known as process hollowing).
+At this point, RegAsm is no longer a legit process as it contains the main HawkEye payload.
+By looking into the RegAsm.exe memory dump, it is apparent that the name of the injected file is Reborn stub.exe and it’s a DotNET executable.
+The following figure illustrates that process:
+The filename, as seen in the version information, is taken from the executable header.
+There are many methods to dump the file Reborn Stub.exe file from memory.
+But the easiest, and one of the most intuitive methods for dumping this file from memory is to use tools like the pe-sieve tool (Hook finder).
+Using this tool will allow you to dump this file from the memory dump.
+We won’t cover the dump process here as it is out of scope for this blog post.
+After this executable is dumped from memory, it is verified that it is indeed a DotNET executable.
+The DIE tool was used for this identification process.
+This tool is a packer identifier, among its many other functionalities.
+However, as seen in the following figure, it helps to identify that the dumped executable is indeed a DotNET executable:
+Reborn Stub.exe static characteristics:
+Filename: Reborn Stub.exe
+SHA1: 5fb78f117d48b7f2cdb312cb553a33aa8bc17346
+File Size: 566272 bytes
+Compile Time: 2019-01-22 15:01:45
+Now that the dumped payload is confirmed to be a DotNET executable, an analysis of this file is required.
+(The following section is the DotNet analysis part you have been waiting for.)
+Tools such as DnSpy, ILSpy, DotNet reflector, and dotPeek make the DotNET analysis much easier.
+DnSpy has many useful features, and it is going to be used for the analysis in this use case as well as the next one.
+DnSpy is an open-source utility for static and dynamic analysis of DotNET executables.
+What makes DnSpy unique is that it also includes a debugger that allows its users to debug the DotNET executable during the analysis of the dynamic executable of the file.
+DnSpy is also a decompiler and a DotNET assembly editor.
+When dropping (or loading) a DotNET application (executable) through DnSpy, it will decompile the executable.
+Once the file is decompiled you can view methods and classes of the decompiled code.
+Please note that the process of decompiling a DotNET executable will probably not reconstruct the original source-code, but it will be the closest to “source-code.” Once you have dropped the file into DnSpy, you can also debug the code and perform a dynamic analysis.
+Now let’s drag and drop our suspicious DotNET executable Reborn Stub.exe into DnSpy.
+As you can see in the following figure, DnSpy was able to decompile the executable to “source-code”:
+Side Note: In order to see the main function of the program, right-click on the program name and choose Go To Entry Point or click on “Main”, in the main unit of the program as seen below:
+As you can see in figure five, you don’t have to be a seasoned programmer to realize that the code is not readable.
+This is because the code is obfuscated, with the classes, modules and anything in between all obfuscated by default.
+The obfuscation technique used here is likely through a free .NET obfuscation tool called ConfuserEx.
+In order to assist with the deobfuscation of this code, you can use a free deobfuscator and unpacker tool called de4dot, This tool is great in finding obfuscated patterns and deobfuscating them.
+The following figure illustrates the command used for the deobfuscation of that DotNET executable using the de4fot tool:
+If the deobfuscation process is successfully completed, there should be a new output file.
+The deobfuscated output file in this case is 400000.RegAsm.output file, which by default is located in the current folder running the de4dot tool (if the same command seen above was used for this process).
+Now that there is a new output file, let's take a look at the deobfuscated file by dragging and dropping it back in the DnSpy utility.
+Figure 8 illustrates the code after the deobfuscation process:
+In the new output file there are several things that the analyst can learn.
+First and foremost, the new DotNET executable now contains a NetGUID in the file header, as seen in the following figure:
+Since the functions and code are now readable, the analyst can try to learn and understand what this HawkEye payload does by reading through the code.
+For example, reading through the code it clearly mentions that this payload is the HawkEye Keylogger:
+Another example of details that can be revealed once we are able to read the code is by looking at the static variables in the deobfuscated executable, as seen in the following figure:
+Going through the code, these variables are used for keylogging passwords, grabbing information from the clipboard, and on and on.
+In any case, this blog post won’t dig into the code details step-by-step.
+However, this DotNET executable is a Keylogger variant that is more sophisticated than usual because of all its functionalities and capabilities.
+A typical Keylogger will store its stolen information in a .tmp file, and this one will do the same after execution.
+However, in our case, right after writing to the .tmp file the information is copied to memory and sent to a remote server, and the temp file content is then erased from the system.
+With a deeper analysis and the use of a debugger (we used a WinDbg debugger), we managed to catch the content of the tmp file right before it was erased from the system.
+While the file contains stolen information from Chrome and Internet Explorer web browsers, it also managed to steal a password from Internet Explorer (IE), as seen in the following figure:
+The MixedGrade keylogger performed the process hollowing technique by injecting the Reborn Stub.exe file into a legit RegAsm.exe.
+The Reborn Stub.exe is a DotNET executable, and we used the DnSpy utility i to decompile it to “source-code.” The code turned out to be unreadable and obfuscated, so we ran the de4dot command and created a new file with the same content, but this time it was readable.
+In full-protection mode, the FortiEDR platform will detect the Mixed Grade.exe executable in pre-execution mode, and the injection in memory on a post-execution process hollowing rule.
+Any action that occurs as a result of this injection in memory will then get blocked.
+In the figure above there was an attempt to access the WMI service.
+The executable analyzed in this section contains the following static characteristics:
+Filename: TenClips.exe
+SHA1: 0acefc6bd7e1620eba0198255a220948b4723cb2
+File Size: 150002 bytes
+Compile Time: 2010-12-09 18:58:13
+This case is a bit more interesting than the previous one.
+This use case includes a legit application.
+However, the application is dynamically loading another executable in memory, which appears to be a DotNET executable.
+Here we will present how to dump raw assembly from memory once it’s been loaded during the debugging process using the DnSpy utility.
+As seen in the previous use case, we’ll drag and drop the executable to DnSpy and look at the entry point (the main function.)
+If you don’t know how to get to the code in the main function, please refer to use case 1 to learn how to get there.
+The following figure illustrates how the code appears when stepping through the main function:
+At first glance, the code doesn't tell much, but the variable rawAssembly appears to be interesting.
+The only way to understand the code her, and what the exact role that rawAssembly plays, is by debugging this executable through DnSpy.
+Let’s start with two breakpoints, and after that lets zoom into the functions.
+The following figure shows one breakpoint on row line 248 (the if condition) and the other on row line 258 (the rawAssembly loading process):
+By pressing start (green play), the debugger will run and stop at the very first breakpoint.
+If you click “Continue” it will then step into the next breakpoint.
+Once you are at the second breakpoint, take a look at the Locals field RawAssembly.
+Locals are variables loaded in memory in real time and can be viewed during the debugging process.
+If you compare the RawAssembly variable under Locals in the two breakpoints, you will notice that the rawAssembly variable in the second breakpoint now has size in memory:
+A very interesting question would be, “what happened to the variable between the two breakpoints, and what is the actual value?” The DnSpy utility has a cool feature that enables an analyst to check a variable’s memory by right-clicking on the value --> Show In Memory Window --> choose a memory number (it doesn’t matter which one you choose.)
+Pick a number and you should get this output:
+Usually, the memory section isn’t that revealing unless you can review the memory section with the Assembly language.
+However, in this case it is apparent that the code section is an executable.
+The MZ string (hexadecimal: 4D 5A) gives it away.
+That means that the rawAssembly’s value is an executable file that was loaded in memory.
+Another cool DnSpy feature is its ability to export a memory section to a file on disk.
+To save that section into a file, simply right-clicking on the memory --> Save selection... (the output here was saved as output_TenClips.exe):
+As mentioned in the introduction, there are various ways to check whether a file is a DotNET executable.
+The chosen method this time is the CFF Explorer utility.
+As you can see in the figure below, this file also imports the DLL file mscoree.dll:
+Earlier, it was mentioned that the RawAssembly had a certain size on the second breakpoint.
+Look at rawAssembly’s size (represented in Hex) in Locals (figure 20 on the right) and then look at the size of the output_TenClips.exe executable (figure 20 on the left) and you will notice that they are the same (0x00044A08 HEX equal to 281096 bytes file size):
+Since the TenClips is a legit file in general, we won’t continue to analyze output_TenClips.exe further.
+However, if you are curious where the executable code is coming from in the original executable TenClips.exe, take a look at the debugging process one step further.
+Instead of jumping from one breakpoint to another, step into the code’s line by line by using the step into option during the debugging process, or just by pressing F11.
+byte[] rawAssembly, on row line 246, is just a declaration that means that somewhere between lines 246 and 258 rawAssembly gets a value.
+However, if you look closely you will see in the first if condition (row line 248) that the variable raw Assembly is declared as reference (out), which means that after this line rawAssembly will probably have a value.
+By pressing on F11 you will step into row line 248 with the debugger, and it will take you to the LF function:
+Let’s explain in general what the function LF does.
+By using many conditions, it looks for specific code parts in the TenClips.exe program itself and then assembles them into one executable code - output_TenClips.exe.
+Now you can understand that the if condition in the main function (entry point - row line 248) checks for assembly success.
+If it fails, it will print an error.
+If successful, it will execute the assembled code.
+When the TenClips.exe executable was executed, the program gathered code sections from the program itself, assembled them into one executable code (output_TenClips.exe), loaded it to memory, and then executed it.
+This technique is called Dynamic Loading in Memory.
+If you’re wondering why a legitimate application performs this kind of a trick, the answer is simple.
+Just as with a malicious executable, the programmer may want to hide the code and make it difficult to read it statically.
+Why?
+There could be many answers.
+However, if done with a malicious executable, it typically hides the actual code of the payload and only loads it into memory after execution.
+However, the dynamic loading of another executable in memory doesn’t necessarily always mean it's a malware executable or a malicious operation.
+Keep that in mind!
+As mentioned, speed and accuracy in analysis are vital for a successful incident response outcome.
+This blog post demonstrated a manual analysis of two DotNET use cases.
+And the reality is it takes a decent amount of time to get to the end product, as seen in each use case.
+Of course, that time depends on the executable analysis, complexity of obfuscation techniques, and the skill sets of the analysis for each variant.
+And it assumes that the analyst has all the necessary tools and skill sets for the analysis job to be successful.
+Fortinet’s FortiResponder services, on the other hand, perform most of these actions automatically.
+This includes (but is not limited to) parsing the events, dumping information and executables from the memory, and deobfuscating files – all in an automated repeatable fashion.
+For more perspective, a manual analysis of the two presented cases can take approximately 20-30 minutes by a seasoned analyst, and if you are a beginner it can take up to several hours with debugging.
+Compare that to FortiResponder services as an example.
+By combining human expertise and automated technology to analyze a threat, analysis can be completed within minutes.
+It may not seem like a lot, but during a fast-moving investigation it can greatly contribute to minimizing the impact that a security incident may have on your business.
+Use Case #1
+FortiEDR platform is capable of identifying most post infection activities such as process hollowing in memory that we discussed in this blog.
+Use Case #2
+The FortiEDR Platform detects Dynamic Loading in memory.
+In full-protection mode, the platform will also block any action occurring as a result of Dynamic Loading in memory.
+Protections have been provided for non-FortiEDR customers.
+Learn more about FortiGuard Labs threat research and the FortiGuard Security Subscriptions and Services portfolio.
+Sign up for the weekly Threat Brief from FortiGuard Labs.
+Learn more about Fortinet’s free cybersecurity training initiative or about the Fortinet Network Security Expert program, Network Security Academy program, and FortiVet program.

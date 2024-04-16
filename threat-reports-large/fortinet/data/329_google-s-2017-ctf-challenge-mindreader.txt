@@ -1,0 +1,59 @@
+This past June 17th and 18th, 2017, Google hosted their second annual Capture The Flag (CTF) competition.
+The Google team created security challenges and puzzles that contestants were able to earn points for solving.
+It’s a clever way to leverage the security community to help protect Google users, and the web as a whole.
+Last year, over 2,400 teams competed, and this year the number was even higher.
+FortiGuard Labs decided to pull together a team and then write up a report on the experience.
+So, first things first, this challenge was under the miscellaneous category.
+So in preparing for the challenge we needed to expect the unexpected and broaden our horizon from the start.
+At first look, the challenge looked like a Web Application based challenge wherein we needed to input some text to be read by the webserver using the endpoint /?f=.
+Like any normal Web Application, we started off with XSS payloads, directory traversal, etc.
+Since there is no context (like it should be in a dynamic website) as to what input to be provided, we got no response.
+I tried several inputs, but none returned any result.
+Finally, I tried to ‘DIRECTLY’ (without any traversal) read the /etc/passwd file, like most hackers do.
+And voila, Houston responded with the /etc/passwd file.
+Using the same approach, we got responses from /etc/shadow, /etc/issue.net, and /etc/debian_version, as seen in the following figures:
+As a result, we knew that the system was Debian 8.8 (Jessie), and also that /etc and its subdirectories were accessible.
+Looking at ‘/etc/mtab’ we noticed that the response contained ‘app_engine’.
+“Hmm, maybe it is using the Google App Engine?”
+/etc/mtab response => /dev/sda1 /var/log/app_engine ext4 rw,relatime,data=ordered 0 0
+Looking at /etc/resolv.conf we were able to confirm that it was, indeed, inside the Google Cloud Platform.
+Looking at the output, it seemed like‘kuqo48d’ was a pretty random choice of name.
+We wondered, “is this a docker installation?” We decided to confirm.
+Looking up /usr/sbin/policy-rc.d we saw docker instructions, so we could verify that it was, indeed, a docker installation.
+We also notice several signs of chroot being used, as seen in /etc/bash.bash.rc and /root/.bashrc.
+So, we were also able to determine that this was definitely a Jail’ed environment.
+Afterwards, I started thinking that maybe the challenge was more “literal.” The challenge was called ‘MIND’reader, which in this context could possibly refer to reading the memory of the server.
+But, we weren’t sure, YET.
+On a normal Linux system, the memory is stored inside /proc, but when we tried to access /proc we hit a 403 Forbidden Access error.
+Another thought was to look at the web application framework used in this site.
+But which web application was it?
+We tried accessing index.html and index.php, but with no result.
+Finally, I remembered that the original Google website was built on ‘Python’ decades ago.
+Which led me to think that this site could have been built using python as well.
+The most popular and logical python file that came to mind was main.py, and voila, Houston again responded.
+Here, we noticed the word ‘FLAG’ so we knew that we had found some sort of hint.
+Looking at the python file closely, we observed that os.environment might have the FLAG inside of it.
+We also noticed that proc/random/zero/stdout/stderr keywords were all blocked by the web application.
+This explains why we got a 403 earlier when trying to access /proc.
+BUT, the main.py hint clearly stated that the FLAG was inside the OS environment value.
+So, how do we access the environment values?
+We tried accessing /etc/environment, but no luck there, and we had already looked under the bashrc, bash_profile and other user files.
+The only option remaining was the environment details inside /proc, BUT that was inaccessible.
+We had hit a wall.
+However, after some Googling around I came across a post online that stated that the /dev/fd is symlinked to /proc/self/fd.
+Here’s the link: https://www.google.com/#q=dev/fd
+But, could we access /dev/fd??
+Not sure, so let’s check.
+/dev/fd is a directory, so we needed to access individual file descriptors.
+We tried to access /dev/fd/1 to /dev/fd/7, but we didn’t get any response.
+BUT, finally, /dev/fd/8 returned the following value.
+NOW we knew that we could access /dev/fd, and we also knew that /dev/fd symlinked to /proc/self/fd
+/dev/fd --> /proc/self/fd
+But, we needed /proc/self/environ.
+So, we tried a simple directory traversal using the command /dev/fd/../environ, and BINGO!
+we had the FLAG!
+The FLAG is CTF{ee02d9243ed6dfcf83b8d520af8502e1}
+This was a fun and interesting challenge, and it really made us work to figure out the clues.
+Out of the thousands of teams participating, we placed 115th, which we were pretty happy with.
+Because so many people and organizations around the world use Google services, an event like this that attracts the top security professionals in the industry is a clever and effective way to improve security that benefits millions.
+We plan to continue to participate in similar events in the future.

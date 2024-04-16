@@ -1,0 +1,48 @@
+The creators of Nemucod, the code responsible for downloading and executing malware like Locky, have been hard at work polishing their code.
+Some time ago, we detailed how the Locky ransomware infection process works.
+Since then, the creators of the Nemucod “downloader” (the code responsible for downloading and executing malware like Locky) have been hard at work polishing their code.
+One of the latest versions of Nemucod shows some notable changes over the older versions.
+In the past, the process was pretty simple: “User opens malicious file → File downloads payload → payload gets executed”.
+In the more recent versions however, it’s somewhat less straightforward.
+Let’s have a look at what the code does in more detail.
+To make it more readable, this code was deobfuscated from its heavily obfuscated original format.
+Earlier versions of Nemucod only used one method to connect to the internet.
+However, this could fail because of different infrastructure configurations (Windows version, proxy servers, etc).
+To provide greater compatibility, the authors of Nemucod created a function that tries to connect using multiple methods:
+The first method to work is the one that gets used.
+Until now, Nemucod came with one address (usually a compromised webserver) from which to try to download its payload.
+This was a single point of failure; once that payload was removed, the attack would fail.
+Perhaps with the hope of increasing its chances of success, recent versions have included multiple download locations, as seen in these examples:
+The code cycles through the list of sites until one succeeds:
+In the past, the payloads downloaded by Nemucod were regular “.exe” binary files.
+These could then be directly executed.
+However, downloading “.exe” files meant that devices such as stateful firewalls, IDSes and UTMs were able to intercept the payload for a security scan – or even reject it.
+To avoid such possible snags, the latest version of Nemucod downloads an obfuscated file.
+First, it downloads the file to the victim’s %TEMP% directory:
+After saving the obfuscated payload, this function passes the file content to a function that performs the first round of deobfuscation:
+As it turns out, the first deobfuscation step is a simple substitution cipher.
+All characters in the file are converted to their decimal values.
+If a character’s decimal value is higher than 127, the character is replaced with its corresponding value from a pre-defined array of characters.
+If not, the character remains untouched:
+After the first round of deobfuscation is completed, the file content is passed to a function that does a second round of deobfuscation.
+This round consists of three steps:
+Remove the last four characters from the file content
+Perform an XOR operation on every character with the character “s” (0x73)
+Reverse the file content
+At this point a rudimentary check of whether the resulting file content is a valid payload is performed.
+It checks whether the file size is between 174,080 and 189,440 bytes and the file starts with “MZ” (0x4D5A), the “magic bytes” of a portable executable (PE) file.
+If any of these comparisons fail, it jumps back to step two and tries to download a payload from the next download site:
+If all checks pass, the file is written to the user’s %TEMP% folder:
+The function named deobRound3 during the deobfuscation process subjects the file content to another round of character substitution similar to the one in step 3.
+These character substitution rounds are most likely executed to avoid problems with “Wide Characters” during the second round of deobfuscation.
+Finally, all characters are converted back from their decimal value and the file content should be a valid Windows executable file:
+Now that the payload is ready, it needs to be executed.
+Instead of running the “.exe” file directly, the newer versions of Nemucod creates a “.bat” file that starts the executable.
+It then executes the “.bat” file:
+If “all goes well”, the user is now infected.
+As you can see, the authors of Nemucod have been busy improving their downloader to increase the probability that it can run its malicious payload undetected.
+With all these new features, one can even speculate that they are working hard to improve their success rate in corporate environments, where proxy servers and UTM gateways may have been blocking their payloads in the past.
+customers 366.wsf [JS/TrojanDownloader.Nemucod.ABI trojan] MD5: 4DEDF4085E6D2F74CB879AD2E9680AFB SHA1: EF2A9C6A61E98091A952328592D45214F6E44178
+cstomers 9679.js [JS/TrojanDownloader.Nemucod.ABI trojan] MD5: 42D054143A67DE14EE10F7B8C91D8A1A SHA1: D3DC6E3D066BFA8E1F4408DE471BC95B001D0D25
+Yhnpl47OMCLJm.exe [a variant of Win32/Kryptik.EYIB trojan] MD5: C1F95ADBCAF520BF182F9014970D33E5 SHA1: 80B96F0207B9C5D1DAA3A6E6CF646F5AFA7BBA2C
+—

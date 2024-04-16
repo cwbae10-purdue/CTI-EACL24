@@ -1,0 +1,96 @@
+[This post was updated on June 27 at 18:40 Pacific time.
+The updated section is marked.]
+The world woke up today to another ransomware outbreak wreaking havoc throughout companies’ networks.
+This time, the family causing the fuss is Ransomware Petya, a nasty variant that encrypts files and the computer’s master boot record (MBR), rendering the machine unusable.
+Ransomware Petya has been around since at least March 2016 and differs from usual ransomware families because it encrypts a system’s MBR in addition to encrypting files.
+This double stroke renders the disk inaccessible and prevents most users from recovering anything on it.
+The new variant found today has further increased its nastiness by adding a spreading mechanism similar to what we saw in WannaCry just a few weeks ago.
+Petya comes as a Windows DLL with only one unnamed export, and uses the same EternalBlue exploit when it attempts to infect remote machines, as we can see below:
+In the preceding image we can see the typical transaction occurring right before the exploit is sent—as we discussed in our WannaCry blog.
+Once the exploit succeeds, the malware copies itself to the remote machine under C:\Windows, and starts itself using rundll32.exe.
+The process is executed under lsass.exe, the Windows process injected by the Eternal Blue exploit.
+Because the WannaCry outbreak caused many people to apply all the latest Windows patches, Petya introduces a few more spreading mechanisms to be more successful.
+The next method Petya attempts is to copy itself and a copy of psexec.exe to the remote machine’s ADMIN$ folder.
+If it is successful, the malware attempts to start psexec.exe using a remote call to run it as a service, as we can see below:
+The preceding image first shows the DLL being copied to the remote host.
+And the following image shows psexec being copied and then attempting to start it using the svcctl remote procedure call.
+Both files are copied to the C:\Windows folder.
+One last method attempted by the malware is to use the Windows Management Instrumentation Command-line (WMIC) to execute the sample directly on the remote machine, using stolen credentials.
+The command used by the malware looks like this:
+exe %s /node:”%ws” /user:”%ws” /password:”%ws” process call create “C:\Windows\System32\rundll32.exe \”C:\Windows\%s\” #1
+where “%ws” is a variable representing a wide string, which will be generated based on the current machine and credential being exploited.
+Once the malware runs on the machine, it will drop psexec.exe to the local system as c:\windows\dllhost.dat, and another .EXE (either 32- or 64-bit version depending on the operating system) to the %TEMP% folder.
+This binary is a modified version of a password dump tool, similar to Mimikatz or LSADump.
+The preceding code shows the LSA functions used during password extraction.
+This .EXE accepts as parameter a PIPE name similar to the following:
+\\.\pipe\{df458642-df8b-4131-b02d-32064a2f4c19}
+This pipe is used by the malware to receive the stolen passwords, which are then used by the WMIC shown above.
+All these files are present in the resource section of the main DLL in a compressed form, as follows:
+The malware then encrypts local files and the MBR, and installs a scheduled task to reboot the machine after one hour using schtasks.exe, as seen below:
+The encryption used by the malware is AES-128 with RSA.
+This is different from previous variants, which used SALSA20.
+The RSA public key used to encrypt the file encryption keys is hardcoded and can be seen below:
+The malware also attempts to clear Event logs to hide its traces, by executing the following commands:
+wevtutil cl Setup & wevtutil cl System & wevtutil cl Security & wevtutil cl Application & fsutil usn deletejournal /D %c:
+After the machine is rebooted, the ransom message appears and demands US$300 in Bitcoins:
+At this moment there are few transactions to this account, but this could change quickly once more people start to notice they are infected:
+We will update this blog as more information arrives.
+Systems protected with McAfee ENS 10.5 and McAfee Total Protection should be protected from known samples if their products are up to date and connected to McAfee Global Threat Intelligence.
+McAfee Adaptive Threat Protection, which integrates machine learning and containment capacities, detects both the main DLL as well as the dropped EXE, as seen below:
+Detection for the main DLL is shown above, and for the sample dropped in %TEMP% is shown below:
+Update (June 27)
+After further analysis of the current samples, we have learned more about this threat:
+This map shows the current distribution of clients that have detected known samples, with darker colors representing a greater number of detections:
+The following diagram shows the flow of events after the initial infection:
+Reports on social media claim there is a kill switch in the malware that can be activated by creating a specific file under C:\Windows.
+Although we do see code to check for the existence of the file, we cannot confirm that this filename is fixed.We have observed in our replication that the filename checked at the target machine must be the same filename used in the source machine.
+Thus it is not possible to predict what this filename must be before the infection occurs, and we cannot confirm that this is a possible kill switch.
+The ransomware component affects far fewer file extensions than is common.
+The list of extensions that will be encrypted by the malware:
+The four resources present in the resource section follow.
+They are simply compressed by ZLib and extracted during the malware initialization: exe digitally signed by Microsoft.
+32-bit .exe with the password-stealing component.
+64-bit .exe with the password-stealing component.
+Shellcode with a modified version of the Eternal Blue exploit.
+exe digitally signed by Microsoft.
+32-bit .exe with the password-stealing component.
+64-bit .exe with the password-stealing component.
+Shellcode with a modified version of the Eternal Blue exploit.
+Once a machine is infected, the sample attempts to spread to other machines on the network.
+Unlike WannaCry, which attempted to infect all IP addresses on the network, Petya’s approach is more precise and generates much less traffic over the network.
+Upon execution, the sample will check if the current machine is a workstation or a domain controller.
+If the machine is identified as a domain controller, the malware will query its DHCP Service to retrieve a list of machines that were served with IP addresses within all subnets defined on the DHCP server.
+Every client IP address retrieved with this technique is attacked with the EternalBlue exploit to spread the malware to other machines on the network.
+The malware has not yet been found to use any document or social engineering technique as a propagation mechanism.
+The main DLL component accepts a parameter for its export.
+This parameter is the time it will wait before rebooting the machine.
+By default, when the malware infects a remote system, it runs the remote DLL with the value “40,” which makes it wait 40 minutes before rebooting the machine, as shown below: Rundll32 c:\windows\<dll name>.dll,#1 40
+Rundll32 c:\windows\<dll name>.dll,#1 40
+The malware uses AES-128 encryption to generate the key to encrypt the files.
+This variant uses a single key to encrypt all files, which differs from some other malware families.
+This key is generated once during the initialization of the malware.
+As we saw with WannaCry network traffic, this malware also sends at some point a hardcoded IP address as part of the ConnectX request in the NETBIOS sessions.
+The IP address in the NETBIOS packet is highlighted below and can be used to detect malicious traffic on the network:
+[End update]
+Indicators of compromise
+Known hashes
+027cc450ef5f8c5f653329641ec1fed91f694e0d229928963b30f6b0d7d3a745 (main 32-bit DLL)
+64b0b58a2c030c77fdb2b537b2fcc4af432bc55ffb36599a31d418c7c69e94b1 (main 32-bit DLL)
+f8dbabdfa03068130c277ce49c60e35c029ff29d9e3c74c362521f3fb02670d5 (signed PSEXEC.EXE)
+02ef73bd2458627ed7b397ec26ee2de2e92c71a0e7588f78734761d8edbdcd9f (64-bit EXE)
+eae9771e2eeb7ea3c6059485da39e77b8c0c369232f01334954fbac1c186c998 (32-bit EXE)
+Files
+c:\windows\dllhost.dat
+c:\windows\<malware_dll> (no extension)
+%TEMP%\<random name>.tmp (EXE drop)
+Other indicators
+PIPE name: \\.\pipe\{df458642-df8b-4131-b02d-32064a2f4c19}
+Scheduled task running “shutdown -r -n”
+Detection
+McAfee products detect this threat as Ransom-Petya with coverage from DAT Version 8574 (ENS DAT Version 3175).
+McAfee detects this threat with Global Threat Intelligence File Reputation (with a Low setting).
+McAfee Network Security Platform detects Petya ransomware: 0x43c0bd00- NETBIOS-SS: MS17-010 SMB Remote Code Execution (Eternal Tools and WannaCry Ransomware) 0x451e3300- HTTP: Microsoft Office OLE Arbitrary Code Execution Vulnerability (CVE-2017-0199)
+0x43c0bd00- NETBIOS-SS: MS17-010 SMB Remote Code Execution (Eternal Tools and WannaCry Ransomware)
+0x451e3300- HTTP: Microsoft Office OLE Arbitrary Code Execution Vulnerability (CVE-2017-0199)
+For the latest information on McAfee product protection against this attack, read this Knowledge Center article.
+For more on how McAfee products can help defend against this attack, see “How to Protect Against Petya Ransomware in a McAfee Environment.”

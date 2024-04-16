@@ -1,0 +1,121 @@
+Sage 2.0 is the new kid on an already crowded block of ransomware, demanding hefty ransom of 2.22188 bitcoins (roughly 2000 USD) per infection.
+We have recently begun seeing this malware being distributed by the same malicious spam campaigns that serve better-known ransomware families, such as Cerber and Locky.
+In this article we will take a closer look at some notable characteristics of this new threat, and provide some simple ways to mitigate it.
+Sage ransomware has been seen spreading through the usual spam email channels with malicious attachments.
+Older variants didn’t have any email subjects or content, and can only be characterized by an archived attachment with filenames containing the recipient of the email.
+Newer variants have become more sophisticated with the addition of a fake bank notification for social engineering.
+Fig.
+1 - New and old variants of the Sage/Cerber spam campaign
+Archived attachments contain either Javascript or Microsoft Word documents with malicious macros.
+Like we see so often in malicious documents, this malware uses a macro to execute a Powershell script, which in turn downloads the ransomware to the system as %TMP%\Roaming.exe.
+We have also seen variants using random filenames.
+Fig.
+2 - Malicious documents that deliver Sage 2.0 and Cerber
+Fig.
+3 - Executed Powershell scripts from the macros
+The more recent Javascript attachments serve as the first layer of obfuscation for the actual Javascript downloader, which is dropped and executed in the directory %TMP%\.js.
+Fig.
+4 - Javascript packer of the Javascript downloader
+Fig.
+5 - Decrypted Javascript with Sage 2.0 download URL
+A Locky variant was also found to be hosted on the same site (hxxp://affections.top/dd/15.exe) waiting to be served by the campaign.
+In case of interruption or discovery, Sage 2.0 comes with several techniques designed to keep executing in the user’s system.
+To prevent its execution from being terminated, it always runs two processes of itself, each with a watchdog thread looping indefinitely.
+This routine waits for an event that terminates its other process.
+When that happens it spawns another process of itself, keeping the execution going.
+Fig.
+6 - Sage 2.0 process spawns back after terminating
+It also creates a copy of itself in %appdata%/<8-characters>.exe.
+All filenames used by the malware are created using the base64-encoded custom hash of the Machine GUID, which means they are almost always unique per system.
+In Windows 7 and higher versions where the UAC feature exists, it tries to execute its copy with elevated privilege.
+In default Windows settings, this action prompts UAC notification.
+Since this malware does not proceed until the user permits the request, it keeps on prompting until the user allows the execution.
+Fig.
+7 - Sage’s execution triggers Windows UAC
+Just in case the infected system is rebooted in the middle of execution, it also creates a shortcut file (LNK) in the startup folder and adds a scheduled task to execute itself during startup.
+Fig.
+8 - Adds startup shortcut and scheduled task
+Before file encryption, Sage 2.0 checks for the installed locale identifiers in the system and cross-checks them with a hard-coded list.
+If any of these identifiers are found in the list (see image below), the malware terminates and deletes itself from the system without performing any file encryption.
+Fig.
+9 - Function to determine if the system is a target for infection
+Interestingly, it also skips any file encryption if the file “C:\\Temp\lol.txt” is found in the system.
+It’s possible that this is just a way to prevent accidental executions on the author’s machine.
+Fig.
+10 - Exits the function if “lol.txt” was found
+In encrypting files and its network traffic, Sage 2.0 uses the ChaCha20 cipher, which is very much similar to Salsa20 which was used by Petya, another infamous ransom malware.
+The algorithm was determined mainly due to the operators and round values that were used during encryption.
+Fig.
+11 - Characteristic xor-rot-add operators and constants of ChaCha20
+As a basic summary, a 20-hex byte master key is generated and passed to the ChaCha20 algorithm.
+From that, 40-hex bytes are generated and used in a simple XOR operation to encrypt the file content 40-hex bytes at a time.
+Another 40-hex bytes will be generated for the next set of data and so on.
+The master key is unique for each file, and is created using Elliptic Curve Cryptography on a randomly generated 20-hex value.
+In our analysis, it appears that this function is done twice, encrypting the random value by two levels.
+To further complicate the decryption of the files, it only writes the first level of the encrypted key on the file.
+So to get the actual key, the value from the files needs to go through that same function again.
+Fig.
+12 - Structure of file encrypted by Sage 2.0
+Since the encryption is symmetric and the key is generated locally, this malware can encrypt the system without C&C contact or an internet connection.
+The list of extensions that it encrypts can be found in the Appendix of this article.
+As previously mentioned, the keys to encrypt the files are generated locally and stored in the encrypted files.
+This way it is no longer necessary to send they keys it to its C&C.
+The sample that we analysed sends the data to “mbfce24rgn65bx3g” with either “er29sl.in” or “rzunt3u2.com” as its domain.
+These domains can be found encrypted at the overlay of the malware executable using the same ChaCha20 cipher.
+The malware ID and the key used to decrypt the domains are also hard-coded in the overlay.
+Fig.
+13 - Encrypted Domains and hard-coded key in the overlay
+Network activity observed with this malware is only for system identification.
+The collected system information is stored in a “packed” structure.
+Fig.
+14 - Packed system information
+Later on, the information is encrypted using the ChaCha20 cipher with the same key used to decrypt the domains.
+The malware identifier is also prepended to the data before it is sent to the C&C.
+We suspect that the C&C contains pairs of malware identifier and keys to decrypt the encrypted network traffic.
+Fig.
+15 - Malware encrypts collected system information
+Conveniently, it also executes a function to convert the “packed” information to much more readable data.
+In the following structure, we can easily identify the information that this malware gathers to identify the system.
+Ransom Note
+Aside from creating HTML ransom notes (!Recovery_<3-chars>.html) on infected directories, it also changes the user’s desktop wallpaper.
+As usual, the notes contain the typical message to intimidate the user about the encrypted files along with instructions on how the payment can be made.
+Fig.
+16 - HTML ransom note
+Fig.
+17 - Desktop Wallpaper set by Sage 2.0
+Explicitly requesting higher privilege from the user and using symmetric encryption demonstrate that Sage 2.0 has not reached a level where it can stand beside Locky or Cerber with respect to capabilities.
+However, it is still a ransom malware capable of causing considerable damage on a system, and must not be taken lightly.
+The cyber criminals behind these attacks appear to be juggling between relatively old and new ransomware families to increase their chances of infecting systems.
+However, since their infection vectors have not changed much, there are simple ways to mitigate such attacks.
+Set UAC to “Always notify” – Doing this prevents any executable from gaining higher system privilege without notifying the user.
+If the system is suspected of Sage 2.0 infection, a simple way to stop the execution is to reboot in Safe Mode and remove the autostart elements
+Be suspicious of attachments - An email with an executable or script attachment, even when archived, are good signs of malicious intent.
+In such cases, always try to check the files before opening.
+Disable Macro – Document macros are still one of the major distributors of malware in the wild.
+If this feature is not needed or used on a frequent regular basis, it is advised to always have it disabled.
+-=FortiGuard Lion Team=-
+20dd2391367c65bd47f4f077f4cfff979086b0306829695348d37bc0fc66456b - W32/Kryptik.FNGP!tr
+714faf1c72f7b738799d99a3c7595134eeadd4b61f80e4071370e176864f77e7 - W32/Kryptik.FNGP!tr
+770bcc42029c73542ca3d9388bafb2c85e456dd8ef950abdeb7b0e1fd93f6eae - W32/Kryptik.FNGP!tr
+8aabf4fd450226f00b19c74d9dc75c773537a9f96ca1d53132109b9b4b68d34b - W32/Kryptik.FNGP!tr
+9e03f1775731e13c59a8513638929f6ddd39dd2f00814f45e489b52b0328203d - W32/Kryptik.FNGP!tr
+b71167636e00ed97a10e0bf63270709d1dd32dac9001db1892bd9178382afd7d - W32/Kryptik.FNGP!tr
+bc811f6a4717c6ff4b1d312694fc01bf59de1738dae13cf4bda43e7154e2ae03 - W32/Kryptik.FNGP!tr
+7c9a19c0e7e53383be796dc51615dc80835dd40365f40e5d4c47c43625671f5d - W32/SageCrypt.SGE!tr
+c90e7fdbdcdc44ed8e9f66323be4c74dc516357bbcfa78f24c9e224ec040fa08 - W32/SageCrypt.SGE!tr
+3b36355d10aa53d20e580892da8f18db16e01808e0d8145628a6eb482defad43 - W32/SageCrypt.AC!tr
+678c11809db9de8d3e25dd76cf403e971e99dccf92010bbd0219f890c57a9a7b - W32/SageCrypt.AC!tr
+fe9fb9330c1f075715eab6dbc10d50baaeb26393f6dce10bb6aaa8f66faddc91 - W32/SageCrypt.BS!tr
+Dropped Files:
+%AppData%\{8 alphanumeric char}.exe – main executable
+%AppData%\{8 alphanumeric char}.tmp – encrypted component
+%Startup%\{8 alphanumeric char}.lnk – shortcut file
+%SystemRoot%\Windows\System32\Tasks\{8 alphanumeric char} – scheduled task
+%Temp%\__config{random numbers}.bat – delete-me script
+%Temp%\{3 char}.bmp – desktop wallpaper image file
+{infected directory}\!Recovery_{3 char}.html – ransom note
+mbfce24rgn65bx3g.er29sl.in
+mbfce24rgn65bx3g.rzunt3u2.com
+7gie6ffnkrjykggd.er29sl.in
+7gie6ffnkrjykggd.rzunt3u2.com
+Targeted file extensions:

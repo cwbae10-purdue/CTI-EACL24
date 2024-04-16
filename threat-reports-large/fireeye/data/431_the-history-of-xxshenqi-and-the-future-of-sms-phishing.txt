@@ -1,0 +1,106 @@
+On Aug 3rd, Chinese social media websites reported on the latest and largest SMS phishing (smishing for short) attack in China.
+The public security authorities of multiple cities in Guangdong, Jiangxi, and Jiangsu provinces have posted on their blogs warning Android users of this latest phishing attempt.
+As shown in Fig.
+1, by the time the exploitation attempts were identified, over 100,000 Android users were infected and over 20 Million SMS were sent by the phishing malware.
+On average, each user was charged ¥30 (RMB) or about US$5.
+Fig.
+1.
+Timeline of the XXShenqi malware infecting over 100,000 Android users
+The package name of this new SMS phishing malware is com.example.xxshenqi and the app name appears as XX神器 (XX Powerful Equipment).
+As shown in Fig.
+2, the icon and the title of the malware give the impression of a video player to attract common Android users.
+According to QQ WeChat news, the malware was written out of boredom by a 19 year old freshman student of Central South University on Jul 24th and sent out from his cell phone on Jul 28th.
+By Aug 3rd, the malware had drawn attention from public media; nine hours later, police authorities had identified and detained the hacker.
+Not only is the Android software being distributed a costly nuisance, but it also contains another embedded, malicious apk file that intercepts and sends SMS messages to the hacker’s email address.
+The behavior has been detected by FireEye Mobile Threat Protection platform in Fig.
+8 and will be explained in detail later.
+Both the main malware and the embedded malware are not publicly well known according to VirusTotal until very recently:
+The detection of the main malware is just 5 out of 53 anti-virus vendors:
+Out of 53 different anti-virus vendors, only two were able to detect it the embedded Trogoggle malware:
+SMS phishing is a well-known type of malware in the Android world.
+It collects personal information through SMS while masquerading as a trustworthy app.
+For example in 2012, a Russian smishing malware - neobook.rubakov.strah (version 1.8), sent premium SMS text message with hashed contents to a predefined number that would enable in-app purchases.
+Based on FireEye Dynamic Threat Intelligence, that app was downloaded thousands of times before it was taken down from Google Play.
+Another Spanish smishing malware popular in 2013 was com.ikangoo.whatssex (version 1.7).
+It mimicked the Whatsapp icon with title Wassapp del Sexo, or Sex Wassapp in English.
+It has been removed from Google Play but is still available from the developer’s website.
+This malware would send SMS with user’s device ID for payment purposes at least in one of the older versions.
+There have been many smiting malwares to appear in the last few years and the XXShenqi is not as novel as it seems to be.
+Due to the historical prevalence of SMS phishing, the Android platform began to tighten the reading and writing rights of SMS for Android developers.
+In Android 4.4 (KitKat), the concept of the default SMS app was introduced, allowing users to choose their default SMS app.
+Only the default SMS app would be allowed receive the new SMS_DELIVER_ACTION intent, which the system broadcasts when a new SMS message arrives.
+Furthermore, only the default SMS app receives the new WAP_PUSH_DELIVER_ACTION intent when a new MMS arrives.
+However in Android 4.4, non-default SMS apps can still send SMS if it has the SEND_SMS permission.
+In the Android developer’s page of sendMultipartTextMessage method, it reads: Beginning with Android 4.4 (API level 19), if and only if an app is not selected as the default SMS app, the system automatically writes messages sent using this method to the SMS Provider (the default SMS app is always responsible for writing its sent messages to the SMS Provider).
+As shown in Fig.
+3 and Fig.
+8, the XXShenqi SMS phishing malware can still operate in Android 4.4 however because it has the SEND_SMS permission.
+After installation, the icon of the malware appears as the following:
+Fig.
+2.
+The icon of the “XX神器“ (XXShenqi) malware
+Most Android applications use MainActivity class as an entry point, however, according to the AndroidManifest.xml configuration file in the malicious application, XXShenqi calls WelcomeActivity class to evade signature-based anti-virus detection.
+The WelcomeActivity class is then used to send SMS phishing to contacts located in the Android user’s contact list.
+As shown in the source code above, the ReadCONTACTS()method is called to send the link to the malicious apk file to all contacts.
+Below is a detailed analysis of the ReadCONTACTS()method:
+WelcomeActivity.this.phoneString is the phone number of the entry in the contact list, and WelcomeActivity.this.nameString is the contact name of the entry.
+Fig.
+3.
+The abnormal SMS traffic detected by the FireEye MTP platform
+Individuals who are a member of the victim’s contact list will then receive a copy of the link to the malicious apk.
+Assuming the individual receives the text, downloads the file, opens the file and side loads the APK file into the phone, the individual will then spread the malware to other individuals who are in the their contact list.
+It’s important to note that these methods for downloading apps are common in many regions where Google Play is not the dominant Android app market.
+While sending the SMS, the malware starts the MainActivity, popping up a window to install the trojan SMS uploader embedded in the XXShenqi app – com.example.com.android.trogoogle .
+The message reads: Please install the installation package which has been included into the app.
+The installation can be done by clicking the install button.
+After the install button is clicked, the trojan SMS sender will be installed on the device and run in the background because it kills its processes once the job is done.
+Fig.
+4.
+The pop up window asking for permission to install the embedded malware
+The malware then shows the two pages depicted in Fig.
+5: the login page and the registration page.
+The login page asks for the username and password and has two buttons: login and register.
+If the user clicks register, a registration page opens, as shown in the right picture of Fig.
+5, requesting a username, password, citizen ID number, and their real name.
+The bottom button is the register button.
+Fig.
+5.
+The login page (Left) and the registration page (Right) of XXShenqi
+Usernames for either of the pages are not connected to any real services.
+The registration page does however verify the citizen ID number by checking the format, the length, and the inherent coding of the number.
+A random number of “1234567890” will trigger a pop up of Please input the correct citizen ID number, as shown on the bottom right of Fig.
+5.
+After inputting an acceptable citizen ID number, as shown in the left picture of Fig.
+6, and clicking the register button, a pop up of Successful registration!
+is displayed at the bottom, as shown on the right picture of Fig.
+6.
+Fig.
+6.
+The malware checks the format, the length and the inherent coding of the 18-digit citizen ID number in the registration page (Left) before showing successful registration!
+(Right)
+As demonstrated in the code snippet below, the credentials do not attempt to log into any accounts.
+In the code, if the log in is successful, it just shows being verified; please wait… and wrong password, or username doesn’t exist.
+The two toasts are shown at the bottom of both screenshots in Fig.
+7:
+Fig.
+7.
+The fake pages of verification (Left) and the error message of wrong password or the account doesn’t exist.
+(Right)
+While the Android user is distracted by the login and registration pages, in the MainActivity class, a subclass of BroadcastReceiver called MyReceiver is started.
+The MyReceiver class is to start the com.example.com.android.trogoogle to send SMS messages to the hacker.
+As shown in the source code below, it sends the SMS to an email address and kills its process after completing so that neither thread is seen from the Android system setting tab, nor is the icon shown in the home screen of the phone.
+Fig.
+8.
+More abnormal SMS traffic in the embedded malware as detected by the FireEye MTP platform
+Even when the hacker was finally identified and detained, the only way that authorities could stop the exponential expansion of infected users was by removing the app from its web hosting service.
+Yet the malware can easily be resurrected when repackaged and hosted in numerous cloud storage services.
+As few security mechanisms and detection capabilities exist for mobile malware, it’s easy to see why 20 million SMS were sent and 100,000 users were infected in only a few days.
+Another reason for the spread is the social engineering aspect of smartphones where individuals tend to trust the links sent by someone on their contact lists.
+This is particularly true as we do share links containing pictures or even executable files over the SMS to groups from time to time.
+Finally, many individuals believe that they cannot get malware on their devices still.
+This lowers the guard for the individual using the phone, making them more likely to click on a random link.
+Individuals should be educated that unexpected links such as bargain recommendation or prize information may be not only harmless tricks but also malicious phishing attempts.
+Even if the device in question is just smart phone or tablet, the same precautions that are taken on a PC should be the same as those on a mobile device.
+FireEye analysis of this series of SMS phishing and sending malware that infected over 100,000 users in China and charged $500,000 SMS fees in a few days could continue to expand exponentially even though the hacker has been detained.
+The growth rate of this SMS phishing malware reveals the fact that such app can be developed easily and spread epidemically in the future.
+Although the Android OS has received certain fixes to its wide open permissions for reading and sending SMS in KitKat, malware can still send out SMS in those versions, meaning the newer versions of Android can’t prevent the prevalence of such malware.

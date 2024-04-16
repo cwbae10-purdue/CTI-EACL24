@@ -1,0 +1,82 @@
+A FortiGuard Labs Threat Analysis
+Advanced Persistent Threat (APT) groups pose a great threat to global security, especially groups associated with nation states.
+Of all APT groups, those groups from North Korea have really stood out due to the great damage they have done as well as for their persistence.
+The U.S. Government, in particular, refers to the malicious threat actor connected to the North Korean government as HIDDEN COBRA.
+FortiGuard Labs has been actively monitoring various APT groups such as HIDDEN COBRA.
+For example, in a previous post we gave an overview of the FALLCHILL Remote Administration Tools (RATs).
+Recently, we noticed some new interesting samples from this group, so we decided to take a further look.
+The RAT samples we analyzed are summarized below:
+At a high level, they share similar characteristics:
+Most are 32 bits
+Strings are encrypted to hinder analysis
+Compilation timestamp are from May 04 10:40:47 2017 to Feb 13 04:06:28 2018
+As we shall see, they actually share more similarities than differences.
+In some cases, they even reuse functions.
+Let’s inspect the resource sections in more detail, as they often give clues to the origin of the malware.
+As can be seen, each resource has a language ID associated with it.
+Curiously, most samples have the language ID of 1042.
+As per this authoritative source, 1042 (0x0412) is the language Identifier for Korean.
+Our analysis started by trying to get a feel for what this malware could possibly do on victim’s system.
+In general, the best way to do that is by inspecting the functionality (e.g.
+from an API) that it wants to invoke from the target system.
+So, let get right to it.
+At first sight, these malware do not seem to invoke many APIs.
+The import table is short and does not import many common DLLs and functions.
+Our gut feeling suggested that it will likely resolve functions dynamically.
+And sure enough, we quickly found instances of GetProcAddress.
+It even encrypted its API names too.
+In our experience, this is a common technique designed to hinder static analysis, but it does not stop dynamic analysis.
+So, we traced the malware and figured out the encrypted APIs.
+As can be seen, after patching in IDA everything starts to make sense.
+The following shows one special case where function names are not encrypted at all, and hence static analysis is enough.
+The hash of this special sample is b05aae59b3c1d024b19c88448811debef1eada2f51761a5c41e70da3db7615a9.
+As astute readers may have noticed, the order of the functions being loaded in this sample is very similar to other samples.
+After patching up the function names in IDA, we can clearly see that the malware makes use of core functionalities like registry (Advapi32.dll), networking (ws2_32.dll), and so on.
+To persist, the malware inserts itself into a Run key:
+In some other cases, the malware installs itself as a service.
+As we can see, here is where the original name of the DLL is hidden.
+Let’s get to the main functionality of NukeSped: Remote Administration Tool.
+After more reverse-engineering, we figured out the algorithm used to decode the strings.
+In a nutshell, the malware uses custom encryption based on xor.
+In turn, we used decodeCmd on this core function to decrypt commands from the remote attackers.
+Like a typical RAT, it listens for incoming commands, executes those commands, and then responds.
+The full control flow graph (CFG) looks like the following:
+As can be seen in Figure 14, the control flow of a typical shell is clear.
+At the beginning is the common logic of parsing of the command and its parameters.
+And then there is a distinctly huge switch-case to handle each command.
+We have reverse-engineered the logic of the RAT and found many classical RAT features:
+Iterate files in a folder
+Create a process as another user
+Iterate processes and modules
+Terminate a process
+Create a process
+Write a file
+Read a file
+Connect to a remote host
+Move a file
+Retrieve and launch additional payloads from the internet
+Get information about installed disks, including the disk type and the amount of free space on the disk
+Get the current directory
+Change to a different directory
+Remove itself and artifacts associated with it from the infected system
+Attribution is almost always an imprecise art, but let’s consider the key evidence:
+The pattern of the encrypted strings, and the way string is used for API loading (Figure 8, etc.)
+The feature set and the structure of the main function (RAT) are reminiscent of FALLCHILL (below)
+Most samples of NukeSped have the following cryptography blob (Figure 16).
+Interestingly, they also have a cryptography blob similar to this:
+Interestingly, there are also file name references shared with HOPLIGHT
+Most samples (7 out of 10) of NukeSped are in Korean (e.g.
+Figure 4).
+Given all the evidences so far, we can conclude that the NukeSped RATs have some relation to North Korea threat actors (HIDDEN COBRA) .
+Internal testing by FortiGuard Labs shows that all networks and devices being protected by Fortinet solutions running the latest subscription service updates were automatically protected from this malware.
+In particular, FortiGuard Antivirus service detects samples as the following:
+1a01b8a4c505db70f9e199337ce7f497b3dd42f25ad06487e29385580bca3676 W64/HidCobra.A!tr 8a1d57ee05d29a730864299376b830a7e127f089e500e148d96d0868b7c5b520 W32/NukeSped.AU!tr 32ec329301aa4547b4ef4800159940feb950785f1ab68d85a14d363e0ff2bc11 W32/Trojan.FPIA!tr 73dcb7639c1f81d3f7c4931d32787bdf07bd98550888c4b29b1058b2d5a7ca33 W32/NukeSped.AU!tr 084b21bc32ee19af98f85aee8204a148032ce7eabef668481b919195dd62b319 W32/HidCobra.9CFB!tr 0608e411348905145a267a9beaf5cd3527f11f95c4afde4c45998f066f418571 W32/NukeSped.AU!tr b05aae59b3c1d024b19c88448811debef1eada2f51761a5c41e70da3db7615a9 W32/HidCobra.9CFB!tr c66ef8652e15b579b409170658c95d35cfd6231c7ce030b172692f911e7dcff8 W32/NukeSped.AU!tr f8f7720785f7e75bd6407ac2acd63f90ab6c2907d3619162dc41a8ffa40a5d03 W32/NukeSped.AU!tr fe43bc385b30796f5e2d94dfa720903c70e66bc91dfdcfb2f3986a1fea3fe8c5 W32/NukeSped.AU!tr
+Malicious URLs related to this malware are blocked by FortiGuard Web Filtering Service & the botnet IP engine:
+119.18.230.253
+218.255.24.226
+The author wants to thank Artem Semenchenko for additional insights during the attribution process.
+As usual, FortiGuard Labs will keep an eye out for advanced threats like this to help keep everybody protected.
+-= FortiGuard Lion Team =-
+Learn more about FortiGuard Labs and the FortiGuard Security Services portfolio.
+Sign up for our weekly FortiGuard Threat Brief.
+Read about the FortiGuard Security Rating Service, which provides security audits and best practices.

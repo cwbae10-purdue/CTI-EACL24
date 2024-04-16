@@ -1,0 +1,79 @@
+The McAfee Mobile Research team recently found an active phishing campaign using text messages (SMS) that tricks users into downloading and installing a fake voice-message app which allows cybercriminals to use infected devices as network proxies without users’ knowledge.
+If the fake application is installed, a background service starts a Socks proxy that redirects all network traffic from a third-party server via an encrypted connection through a secure shell tunnel—allowing potential access to internal networks and bypassing network security mechanisms such as firewalls and network monitors.
+McAfee Mobile Security detects this malware as Android/TimpDoor.
+Devices running TimpDoor could serve as mobile backdoors for stealthy access to corporate and home networks because the malicious traffic and payload are encrypted.
+Worse, a network of compromised devices could also be used for more profitable purposes such as sending spam and phishing emails, performing ad click fraud, or launching distributed denial-of-service attacks.
+Based on our analysis of 26 malicious APK files found on the main distribution server, the earliest TimpDoor variant has been available since March, with the latest APK from the end of August.
+According to our telemetry data, these apps have infected at least 5,000 devices.
+The malicious apps have been distributed via an active phishing campaign via SMS in the United States since at least the end of March.
+McAfee notified the unwitting hosts of the phishing domains and the malware distribution server; at the time of writing this post we have confirmed that they are no longer active.
+Since at least the end of March users in the United States have reported suspicious text messages informing them that they have two voice messages to review and tricking them into clicking a URL to hear them:
+Figure 1.
+User reporting a text that required downloading a fake voice app.
+Source 800notes.com.
+Figure 2.
+An August 9 text.
+Source: findwhocallsyou.com.
+Figure 3.
+An August 26 text.
+Source: 800notes.com.
+If the user clicks on one of these links in a mobile device, the browser displays a fake web page that pretends to be from a popular classified advertisement website and asks the user to install an application to listen to the voice messages:
+Figure 4.
+A fake website asking the user to download a voice app.
+In addition to the link that provides the malicious APK, the fake site includes detailed instructions on how to disable “Unknown Sources” to install the app that was downloaded outside Google Play.
+When the user clicks on “Download Voice App,” the file VoiceApp.apk is downloaded from a remote server.
+If the victim follows the instructions, the following screens appear to make the app look legitimate:
+Figure 5.
+Fake voice app initial screens.
+The preceding screens are displayed only if the Android version of the infected device is 7.1 or later (API Level 25).
+If the Android version is earlier, the app skips the initial screens and displays the main fake interface to listen to the “messages”:
+Figure 6.
+The main interface of the fake voice messages app.
+Everything on the main screen is fake.
+The Recents, Saved, and Archive icons have no functionality.
+The only buttons that work play the fake audio files.
+The duration of the voice messages does not correspond with the length of the audio files and the phone numbers are fake, present in the resources of the app.
+Once the user listens to the fake messages and closes the app, the icon is hidden from the home screen to make it difficult to remove.
+Meanwhile, it starts a service in the background without user’s knowledge:
+Figure 7.
+Service running in the background.
+As soon as the service starts, the malware gathers device information: device ID, brand, model, OS version, mobile carrier, connection type, and public/local IP address.
+To gather the public IP address information, TimpDoor uses a free geolocation service to obtain the data (country, region, city, latitude, longitude, public IP address, and ISP) in JSON format.
+In case the HTTP request fails, the malware make an HTTP request to the webpage getIP.php of the main control server that provides the value “public_ip.”
+Once the device information is collected, TimpDoor starts a secure shell (SSH) connection to the control server to get the assigned remote port by sending the device ID.
+This port will be later used for remote port forwarding with the compromised device acting as a local Socks proxy server.
+In addition to starting the proxy server through an SSH tunnel, TimpDoor establishes mechanisms to keep the SSH connection alive such as monitoring changes in the network connectivity and setting up an alarm to constantly check the established SSH tunnel:
+Figure 8.
+An execution thread checking changes in connectivity and making sure the SSH tunnel is running.
+To ensure the SSH tunnel is up, TimpDoor executes the method updateStatus, which sends the previously collected device information and local/public IP address data to the control server via SSH.
+By checking the IP address 199.192.19.18, which hosted VoiceApp.apk, we found more APK files in the directory US.
+This likely stands for United States, considering that the fake phone numbers in the voice app are in the country and the messages are sent from US phone numbers:
+Figure 9.
+APK files in the “US” folder of the main malware distribution server.
+According to the “Last modified” dates on the server, the oldest APK in the folder is chainmail.apk (March 12) while the newest is VoiceApp.apk (August 27) suggesting the campaign has run for at least five months and is likely still active.
+We can divide the APK files into two groups by size (5.1MB and 3.1MB).
+The main difference between them is that the oldest use an HTTP proxy (LittleProxy) while the newest (July and August) use a Socks proxy (MicroSocks), which allows the routing of all traffic for any kind of network protocol (not only HTTP)TTp on any port.
+Other notable differences are the package name, control server URLs, and the value of appVersion in the updateStatus method—ranging from 1.1.0 to 1.4.0.
+In addition to the US folder we also found a CA folder, which could stand for Canada.
+Figure 10.
+The “CA” folder on the distribution server.
+Checking the files in the CA folder we found that VoiceApp.apk and relevanbest.apk are the same file with appVersion 1.4.0 (Socks proxy server).
+Octarineiads.apk is version 1.1.0, with an HTTP proxy.
+TimpDoor is not the first malware that turns Android devices into mobile proxies to forward network traffic from a control server using a Socks proxy though an SSH tunnel.
+In April 2017 researchers discovered MilkyDoor, an apparent successor of DressCode, which was found a year earlier.
+Both threats were distributed as Trojanized apps in Google Play.
+DressCode installs only a Socks proxy server on the infected device; MilkyDoor also protects that connection to bypass network security restrictions using remote port forwarding via SSH, just as TimpDoor does.
+However, there are some relevant differences between TimpDoor and MilkyDoor:
+Distribution: Instead of being part of a Trojanized app in Google Play, TimpDoor uses a completely fake voice app distributed via text message
+SSH connection: While MilkyDoor uploads the device and IP address information to a control server to receive the connection details, TimpDoor already has the information in its code.
+TimpDoor uses the information to get the remote port to perform dynamic port forwarding and to periodically send updated device data.
+Pure proxy functionality: MilkyDoor was apparently an adware integrator in early versions of the SDK and later added backdoor functionality.
+TimpDoor’s sole purpose (at least in this campaign) is to keep the SSH tunnel open and the proxy server running in the background without the user’s consent.
+MilkyDoor seems to be a more complete SDK, with adware and downloader functionality.
+TimpDoor has only basic proxy functionality, first using an HTTP proxy and later Socks.
+TimpDoor is the latest example of Android malware that turns devices into mobile backdoors—potentially allowing cybercriminals encrypted access to internal networks, which represents a great risk to companies and their systems.
+The versions found on the distribution server and the simple proxy functionality implemented in them shows that this threat is probably still under development.
+We expect it will evolve into new variants.
+Although this threat has not been seen on Google Play, this SMS phishing campaign distributing TimpDoor shows that cybercriminals are still using traditional phishing techniques to trick users into installing malicious applications.
+McAfee Mobile Security detects this threat as Android/TimpDoor.
+To protect yourselves from this and similar threats, employ security software on your mobile devices and do not install apps from unknown sources.

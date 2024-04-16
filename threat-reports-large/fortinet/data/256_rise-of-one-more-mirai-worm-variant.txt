@@ -1,0 +1,102 @@
+Not long after a new strain of the Akuma malware was discovered targeting ZyXEL devices with a new series of login/password attacks, FortiGuard Labs last week also began detecting strange scanning activities on uncommon TCP ports 52869 and 37215.
+We and other threat research teams quickly began to suspect that these were tied together, and that there was a new botnet out there.
+With some focused research, the new Satori botnet, or “Okiru” – as it was named by its malevolent author – came to light.
+Okiru is a Japanese word that can be translated to “to get up” or “to rise”.
+Okiru first appeared on our radar at the end of October 2017, but during the first week of December it significantly stepped up its game by also adding worm capabilities to its arsenal.
+I will break down our analysis of this new botnet strain in this report.
+Disclaimer: all the analysis below is based on the file okiru.x86 (dd6e5607f137b6536097670a1211b4e20821ca136e2db26529948ff0a48555ff) that was discovered on Dec 5th, 2017.
+By embedding two different exploits in its code, it now can propagate itself by scanning for vulnerable devices and then compromising them.
+Let’s dig into them.
+As has been stated by other research fellows, the first exploit used by Okiru is linked to the CVE-2014-8361.
+That vulnerability was disclosed in April 2015.
+Devices using the Realtek SDK with the miniigd daemon are vulnerable to OS command injection attacks in the UPnP SOAP interface.
+Figure 1.
+Source code of the Realtek exploit
+As we can see in the source code above, the vulnerability is located in UPnP IGD (Internet Gateway Device) implementation.
+Specifically, a malicious control message expressed in XML using SOAP can be used to trigger a function call ,which is equivalent to a remote procedure call.
+In that particular case, the SOAP action AddPortMapping that is exposed by the service WANIPConnection:1 accepts multiple parameters.
+One of them, called NewInternalClient should be an IP address on the LAN where traffic should be redirected to.
+However, in the code above, we can see the value:
+Note that a backquote character is used to inject OS commands.
+The “wget” command is used to perform an HTTP request to download the malicious payload and store it on the device as filename “c”.
+Then, the same kind of SOAP request, but with a modified command injection, is performed to execute the payload.
+According to the ISC port page, there had been a surge of knocking on that port since Dec 4th, and we can safely assume that this background noise is coming from Okiru.
+Figure 2.
+ISC port 52869 activity
+While that vulnerability was released years ago, based on our experience it seemed quite probable that many affected devices have not been patched, or worse, could not be patched.
+Doing a quick look-up with Shodan confirmed our fears, as it appears that at least 13,000 devices could potentially still be vulnerable.
+Figure 3.
+Shodan world map result looking for port 52869
+From this analysis, it appears that the Top Three affected countries are Taiwan (33%), Ukraine (17%), and Japan (14%).
+We are confident in saying that to this point the first Okiru attack vector is not currently working, but is instead is just generating some network background noise.
+First, the requested URI (uniform resource identifier) is the one advertised via the UPnP discovery protocol (the valid one is /picsdesc.xml, but here it contains a typo) that provides the XML description of the device.
+In our case, that request should result in an HTTP 404 page not found error.
+On top of that, that URI is used as the control URL, but it is not defined in any way as a control point for the WANIPConnection:1 service.
+Which means that the SOAP request to the service will fail.
+For the new worm attack, unusual traffic on port 37215 (as shown by ISC port page statistics) raised some alarms.
+Figure 4.
+ISC port 37215 activity
+As can be seen in the chart above, the traffic shape on that port exactly mirrors the activity on port 52869.
+We can confidently assume that these activities are linked.
+Reaching about 150k sources on Dec 5th, such load on that port is very uncommon.
+We suspect that these devices may have been infected not by Okiru’s worm capabilities, but by credential stuffing.
+To get the bigger picture, we looked at that device fingerprint using Shodan.
+Figure 5.
+Shodan world map result looking for port 37215
+From this analysis it appears that about 250,000 devices could potentially be vulnerable.
+Of these, the Top Three affected countries are Argentina (70%), Tunisia (15%), and Bulgaria (4%).
+Digging a bit on the Internet, it appears a directory traversal vulnerability on that specific port was disclosed in November 2015 targeting Huawei HG532 routers.
+Figure 6.
+Source code of the Huawei exploit used
+Looking at the exploit code, it confirms our suspicion that this attack is targeting Huawei devices as the realm used since its authentication is set to “HuaweiHomeGateway”.
+But it also disproves our hypothesis of a directory traversal vulnerability.
+We can now clearly see it’s sending a malicious control message expressed in XML using SOAP.
+This time, the URI “/ctrlt/DeviceUpgrade_1” looks correct.
+As there were no details of such an exploit on the Internet at that time this was discovered, we assumed that this vulnerability was most likely a zero day.
+Since then, the Huawei PSIRT team has published a security notice about a remote code execution on Huawei HG532 products, but without sharing any technical details.
+According to the code, an Upgrade action is called on the exposed service WANPPPConnection:1 via the control URL “/ctrlt/DeviceUpgrade_1”.
+Then, as in the previous CVE-2014-8361 case, some new code is being injected through NewStatusURL.
+According to its name, NewStatusURL, it waits for a URL as a parameter, but instead the device is tricked into running shell commands via “$()”
+In the example above, a chain of commands is injected, starting with “wget”, to query an external IP address requesting a malicious file to be stored on the device and then executed through NewDownloadURL, as shown below:
+NewDownloadURL is described as accepting a “DownloadURL” as its parameter, but it’s also tricked into printing on the default output the string “HUAWEIUPNP”.
+I am not yet really sure how that string is being used.
+It could be used as a token to check to see if the exploit is running, but since most of the time these kinds of vulnerabilities are blind command injections, no feedback will be sent back to the attacker.
+In the POST HTTP request, please also note the Authorization header:
+Authorization: Digest username="dslf-config", realm="HuaweiHomeGateway", nonce="88645cefb1f9ede0e336e3569d75ee30", uri="/ctrlt/DeviceUpgrade_1", response="3612f843a42db38f48f59d2a3597e19c", algorithm="MD5", qop="auth", nc=00000001, cnonce="248d1a2560100669"
+It is using a digest access authentication mechanism, as defined in RFC 7617.
+Digest authentication should not be confused with the basic HTTP authentication as defined in RFC 7616.
+It means the Upgrade action to be abused and access to be granted needs valid credential.
+After analysis, it appears the exploit is trying to use the default TR-064 account, which username is dslf-config and password is admin.
+Read more on that below.
+Some Huawei devices on port 37215 advertise themselves via the description located at the URI /tr064dev.xml.
+TR-064 is a technical report standard published by the Broadband Forum that basically allows ISPs to manage CPE (Customer-premises equipment) device remotely (like modem/router).
+An HTTP POST request on that file allows us to get the XML description of the device and also which services are available.
+In the HTTP response we are also getting evidence of Huawei devices, as the Server header contains Linux UPnP/1.0 Huawei-ATP-IGD
+From the description, we can see the following.
+Not all the Huawei routers are allowing access to the /ctrlt/DeviceUpgrade_1.
+In the example above, we can see that Huawei EchoLife Home Gateway (HG532c) might be vulnerable, along with other models as well.
+That’s also the case, for example, for the model HG655m “Huawei Home Gateway”, which advertise themselves via /upnpdev.xml, as seen below:
+This also means that if your router is not publicly advertising that control, you do not currently need to be concerned with that attack.
+The second thing to notice is that the controlURL is linked to the serviceType DeviceUpgrade:1, and not to WANPPPConnection:1 as is used in the exploit.
+This has given us some clues that the exploit being used may be broken.
+Last but not least, this service requires any action to be authenticated.
+For that, HTTP digest authentication is used.
+That authentication mechanism was developed to prevent replay attacks by using a nonce value generated by the server.
+This means you need at least two HTTP requests to be able to use that kind of authentication.
+The first is a dummy to extract the WWW-Authenticate header from the response.
+The second request uses the nonce and parameters provided by the servers to generate the cryptographic hash you need to access to that resource.
+In our case, the nonce is hardcoded ("88645cefb1f9ede0e336e3569d75ee30") on the client side in the HTTP POST request.
+This means that when the HTTP request is issued to the device, the nonce value will not match and the device’s HTTP server will issue an HTTP 401 Unauthorized request.
+Either the Huawei routers being targeted have a broken implementation of HTTP digest authentication that are not generating a random nonce at all, or I have a suspicion that the exploit is not working with the code as-is, which means it can’t authenticate to the service.
+Both Okiru exploits are carried over HTTP and are using the static User-Agent “Hello-World”.
+Welcome Okiru!
+But it appears that this message is a bit premature.
+Embedding broken exploits without testing them is likely the work of some script-kiddies playing around with the Mirai code that was leaked back in September of 2016.
+At best, this attack can only be used to DDoS random devices by generating lots of HTTP requests.
+The other possibility is that the code is still in development and that an early strain was somehow inadvertently propagated.
+Nevertheless, FortiGuard team is taking these new waves of IoT botnets very seriously and the two exploit attacks mentioned in this article have been analyzed and new IPS signatures have been provided to protect our customers.
+Attack on port 52869 is covered by D-Link.Realtek.SDK.Miniigd.UPnP.SOAP.Command.Execution, while attack on port 37215 is covered by Huawei.HG532.Remote.Code.Execution.
+-= FortiGuard Lion Team =-
+IOC
+e5fc493874f2a49e1a1594f3ee2254fa30e6dd69c6f24d24a08a562f03b2fd26 Linux/Mirai.Y!tr.bdr dd6e5607f137b6536097670a1211b4e20821ca136e2db26529948ff0a48555ff Linux/Mirai.Y!tr.bdr
+Sign up for our weekly FortiGuard Labs intel briefs or to be a part of our open beta of Fortinet’s FortiGuard Threat Intelligence Service.

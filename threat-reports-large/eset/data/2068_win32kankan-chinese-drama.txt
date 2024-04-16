@@ -1,0 +1,126 @@
+In this blog post, we will describe software detected by ESET products as Win32/Kankan, and explain why its discovery shocked many Chinese users, then we will provide an in-depth analysis of its functionalities – and discuss the evidence that Xunlei Networking Technologies is implicated.
+In this blog post, we will describe a piece of software – detected by ESET products as Win32/Kankan – that recently attracted our attention because:
+It registers an Office plugin with no Office functionalities, which serves solely as a way to obtain persistence on the system,
+It registers an Office plugin with no Office functionalities, which serves solely as a way to obtain persistence on the system,
+It silently installs mobile applications to Android phones connected to the computer via USB debugging,
+It silently installs mobile applications to Android phones connected to the computer via USB debugging,
+It has been signed by a well-known Chinese company called Xunlei Networking Technologies, which is particularly noted for developing the most widely-used torrent client in the world.
+It has been signed by a well-known Chinese company called Xunlei Networking Technologies, which is particularly noted for developing the most widely-used torrent client in the world.
+We are going to first introduce the context around this program, and explain in particular why its discovery shocked many Chinese users, then we will provide an in-depth analysis of its functionalities and finally we will discuss the evidence that Xunlei Networking Technologies is implicated.
+The story related in this article started last June when several complaints appeared on various Chinese forums about a suspicious program signed by the Chinese company Xunlei Networking Technologies.
+The news then spread rapidly and ended up in the headlines of many Chinese websites.
+To understand such media interest, we first have to set the context, which is very likely unknown to most of our non-Chinese readers.
+Xunlei Networking Technologies’s main activity is the development of Xunlei, a piece of software whose purpose is to accelerate the download of various types of files (videos, pdfs, executables,…) – pretty much like Orbit Downloader –, and which is extremely popular in China.
+To explain this popularity, it is worth mentioning how the tool works.
+Roughly summarized, Xunlei maintains a list of locations for each known file and whenever a user starts a download using its browser or torrent client, it chooses the best possible locations to maximize the download speed.
+To implement this process, Xunlei Networking Technologies has developed a complex software ecosystem, including a search engine for the shared files, a multi-protocol torrent client, and even a custom peer-to-peer protocol.
+For interested readers, an extensive study of the Xunlei network has been written by Dhungel et al.
+in 2012 and can be found here.
+As previously mentioned, the program is extremely popular among Chinese people.
+A study published in 2009 by TorrentFreak even positioned Xunlei as the most used torrent client in the world, with more than 100 million peer IDs, while uTorrent peaks at 92 million peer IDs.
+On the other hand, the tool is almost unused outside China, which is unsurprising since there is no English translation of the official website, while the textual content of the tool itself has been translated only by amateurs.
+We can thus speculate that this China-only deployment is a deliberate strategy on the part of the company.
+This background story explains the consternation among Chinese users when some of them found a suspect piece of software on their computer signed by Xunlei Networking Technologies.
+The certificate in question is shown below.
+When we describe the program, you’ll see why it was considered suspicious.
+The program comes as a Windows installer, usually named INPEnhSetup.exe, and based on the Nullsoft Scriptable Install System.
+Simply put, this means that the installer is an archive associated with an installation script.
+In this case the installer begins by contacting the hard-coded domain kkyouxi.stat.kankan.com to report the initiation of the installation.
+Then, it drops three different files onto the system: INPEn.dll, INPEnhUD.exe and INPEnhSvc.exe.
+Afterwards, the library INPEn.dll is loaded into memory and its DllRegisterServer function is called.
+Finally, the installer re-contacts the domain kkyouxi.stat.kankan.com to report the completion of its execution.
+INPEn.dll starts by installing a copy of itself, named INPEnh.dll this time, as a plugin for Word, Excel and PowerPoint named InputEnhance.
+In order to do this, it creates Windows registry keys that will make Office applications use the INPEnh.dll library as a plugin (more details can be found here).
+Some of these registry keys can be seen in the graphic below.
+We can observe that the LoadBehavior key is set to 3, which means the plugin will be loaded at each application startup.
+Interestingly, this is the only way this piece of software gains persistence on the system: every time Word, Excel or PowerPoint is launched, the library is loaded in memory as a plugin.
+Nevertheless, its presence is invisible to the user.
+More than that, it silently executes the following steps:
+Fetch the file conf.kklm.n0808.com/tools.ini, of which an extract can be seen below.
+This file contains various parameters, for example a base64 encoded list of security analysis tools and an URL describing a StatServer, which is again kkyouxi.stat.kankan.com at the time of writing.
+Check whether one of the previously mentioned binary analysis tools is running: if so the Office plugin promptly stops executing.
+The current decoded list is shown below.
+taskmgr.exe|procexp.exe|procmon.exe|devenv.exe|windbg.exe|filemon.exe| ollyice.exe|ollydbg.exe|processspy.exe|spyxx.exe|cv.exe|wireshark.exe
+It is worth mentioning that this list only contains analysis tools – and no security products – like the Windows task manager, OllyDebugger, and even a Wi-Fi network management tool.
+Hence the program is intended to avoid security analyst machines.
+Check if an Internet connection is active by contacting some common Chinese domain names, such as baidu.com and qq.com.
+When there is no Internet connection, it goes into a code loop that regularly checks whether a connection has been established.
+If all the previous checks are passed, the plugin sends various information to the StatServer, notably the Windows version and the application name (WINWORD.exe for example), and then executes INPEnhUD.exe.
+Finally, it enters a task management loop, which we will describe later, since these tasks are furnished by another piece of the puzzle.
+So execution is continued by INPEnhUD.exe, which can be tersely described as an updater.
+In particular, it fetches the hard coded URL update.kklm.n0808.com/officeaddinupdate.xml, of which the current state can be seen below.
+This XML file thus contains a list of file URLs with MD5 hashes.
+The updater then downloads each file, verifies the hash and, if it corresponds, executes it.
+The attentive reader should have noticed that the URL in the previous image points to a program named Uninstall.exe, which is something we will explain later.
+Finally, the updater executes the third dropped file, INPEnhSvc.exe.
+INPEnhSvc.exe, which will be called ‘the service’ in the following text, is the core of this three-program architecture.
+After performing the same test for analysis tools as we saw in the Office plugin, the service fetches an XML configuration file that can contain seven commands, each of them with a number of parameters.
+These commands can be divided into two groups:
+local commands: scanreg, scandesktop, scanfavorites
+local commands: scanreg, scandesktop, scanfavorites
+outsourced commands: installpcapp, installphoneapp, setdesktopshortcut, addfavorites, setiestartpage
+outsourced commands: installpcapp, installphoneapp, setdesktopshortcut, addfavorites, setiestartpage
+As the name implies, the local commands are implemented in the service itself: scanreg looks for a specific registry key and reports its presence or absence to the StatServer, whereas scandesktop and scanfavorites search for shortcut files (.lnk extension) and network link files (.url) respectively in the Desktop and Favorites folders.
+On the other hand, when an outsourced command is received the program communicates with the Office plugin, which is the one responsible for executing it.
+This communication passes through a configuration file named tasklist.ini that contains three different sections: Doing, Done and DoneByDate.
+Also, both binaries contain a list of unique identifiers (GUIDs), each of them being associated with a task.
+More precisely, the communication process is as follows:
+When it receives an outsourced command, the service simply writes the associated GUID in the section Doing with its parameters (URLs, …).
+When it receives an outsourced command, the service simply writes the associated GUID in the section Doing with its parameters (URLs, …).
+During its task management loop the Office plugin reads the GUID, then checks that this GUID is not present in sections Done and DoneByDate of the file tasklist.ini.
+If the GUID is only in section Doing, it executes the associated program logic.
+During its task management loop the Office plugin reads the GUID, then checks that this GUID is not present in sections Done and DoneByDate of the file tasklist.ini.
+If the GUID is only in section Doing, it executes the associated program logic.
+Once finished, the Office plugin writes the GUID in the section Done.
+Moreover, the GUIDs for the commands installpcapp and installphoneapp are also written in the section DoneByDate.
+This is probably done in order to re-execute regularly these commands.
+Once finished, the Office plugin writes the GUID in the section Done.
+Moreover, the GUIDs for the commands installpcapp and installphoneapp are also written in the section DoneByDate.
+This is probably done in order to re-execute regularly these commands.
+The whole architecture is summarized below, with blue rectangles representing processes, and yellow ones representing files.
+The names of the outsourced commands are self-explanatory and no more details are necessary, except of course for the surprising installphoneapp command.
+As the name implies, the command installphoneapp makes the Office plugin download an Android application (an APK file), which is then installed on any Android devices connected to the computer.
+In order to do so, the service first downloads the Android Debug Bridge (ADB) binary – which is part of the Android SDK – plus the libraries this program needs.
+Next, the Office plugin downloads the APK files whose URLs were provided in the XML commands file.
+Finally, it lists the Android devices connected to the computer with the ADB command devices, and then installs on each of them the APKs with the command install.
+Nevertheless, this installation will only work if the Android device has USB debugging enabled, which can be done in the phone settings menu.
+Officially this feature is intended for development purposes only, but it is also commonly needed by certain types of applications (like screenshots app), and by most techniques to root Android phones or install custom ROMs.
+It is worth noticing that with this installation method the user will not see the usual Android permission screen on his phone.
+In other words, the applications will be silently installed on any connected Android phone with USB debugging enabled.
+During our investigation, the Android applications were no longer being downloaded, for reasons that will become clear at the end of this post, but we were able to find four of them on some Chinese security forums.
+The main screen of these applications can be seen below.
+According to our analysis, all these applications provide real features to the user.
+Three of them are Android markets, which allow the user to download various applications onto his phone.
+We were not able to find any clearly malicious features in these applications.
+It is still worth noticing, though, that their code is heavily obfuscated.
+The last one, still available on Google Play at the time of writing, allows the user to make phone calls at so-called advantageous rates.
+Nevertheless, it exhibits some suspicious features, like regular contacts with URLs known to distribute adware for Android phones.
+This application is detected by ESET as a variant of Android/SMSreg.BT, which is a Potentially Unsafe Application.
+Overall, the motivation behind the installation of these particular mobile applications remains unknown.
+The final question we have to address is the role of Xunlei Networking Technologies.
+Not only were the binaries signed with their certificate, but the domain kankan.com, whose subdomain is used as StatServer, corresponds to the company’s video-on-demand service.
+So there is little doubt about the company’s implication in the production of this piece of software.
+In last August, in reaction to the users’ complaints, the company officially admitted during a press conference that some of their employees have used the company resources to create and distribute this program.
+The company’s explanation is that it was made by one of their subdivisions, without the company’s agreement.
+They claimed to have fired the people responsible, and apologized publicly.
+This is in accordance with the fact that an uninstaller – signed by the very same company – has been provided since the beginning of August.
+In particular, any infected computer will download it, thanks to the updater.
+According to our analysis, the uninstallation works correctly, and removes all the program’s artifacts.
+Moreover, all the domain names still up are just doing the minimal work necessary in order to allow the uninstaller to execute.
+The end of Kankan’s distribution can also be verified with the daily number of detections by ESET during August and September, which is shown below.
+We can observe that the software propagation has strongly decreased after a peak around the 8th August (the uninstaller has been signed the 9th of August).
+Finally, the geographical distribution of the infections for the last month is presented below, thanks to the ESET VirusRadar system.
+Without surprise, China has been the only country significantly touched by this piece of software.
+The use of a fake Office plugin to gain persistence, the ability to silently install Android applications, and the backdoor functionalities, confirm the validity of the concerns of Chinese users and explains why ESET detects this program as malicious, under the name Win32/Kankan.
+There are still some open questions, like the original infection vector and the exact reason the Android applications were installed.
+Finally, the degree to which Xunlei Networking Technologies were implicated is hard to tell from the outside.
+On a side note it is surprising to remark that, as far as we know, not one non-Chinese website has ever mentioned this story.
+Thanks to Jean-Ian Boutin, Sieng Chye Oh and Alexis Dorais-Joncas for their help while analyzing this malware.
+Dropper
+A059D6851013523CDC052A03A91D71D3246A14C2 DB59E003D9F5EBF84EB895B2EE7832AF94D0C93E 722773145CB38249E96CC6A7F0FBC7955ACC5D56
+Office plugin
+688B5B319F0E2F5DCD2EDE7BBE39FAE29B5ED83F B221B71CF14E14FEBC4636DE624A2C6CEE3CE725 089A3BB51C5D5218DF47831489F1D8227E73F4B3
+Updater
+1EFD454130A658DB83A171A8DCB944CAEADC8D8F 4F29B2A9778C02F6FDB63F9041DC4D2F4668B484
+Service
+1C223DA59F4BE7907A2FB00FF756083342166A5B 2D00B2DF8B1CEE7411B2D7B8201B382E2896708C

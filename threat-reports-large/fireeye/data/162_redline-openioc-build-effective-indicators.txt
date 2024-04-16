@@ -1,0 +1,83 @@
+Earlier this month, MANDIANT launched the OpenIOC framework (www.openioc.org) along with two free tools - IOC Editor (for building indicators) and IOC Finder (for scanning a single host for indicators).
+What might not be immediately obvious is that these tools all speak the same language - and can be used together to effectively find evil, build reliable indicators and share threat intelligence.
+IOC Finder's default configuration collects an extensive amount of volatile and non-volatile data from a running host: over 20 "audits" covering the file system, event logs, registry, web history, memory and much more.
+Note that "memory" is part of that list - in fact, IOC Finder collects all artifacts necessary for Redline analysis including process memory enumeration, drivers, and hooks - and in the same format as output from Memoryze and our commercial MANDIANT Intelligent Response® product.
+With this you can easily throw IOC Finder on a thumb drive, conduct portable acquisition on a system and then open up the audit results in Redline for immediate visualization and review of memory-related artifacts.
+Let's walk through a simple example in order to tie together the basics of Redline analysis, IOC creation, and scanning with IOC Finder.
+I chose to infect a virtual machine with a simple piece of malware - a known-in-the-wild HTTP downloader named "svchost.exe".
+After infecting the VM, I ran IOC from a USB drive using the default syntax "mandiant_ioc_finder collect".
+Back on my analysis machine, I opened the IOC Finder audit results directory in Redline using the "Start a New Analysis Session...From An Intelligent Response Export" option.
+Once loaded, a single process "svchost.exe" was redlined with a Malware Rating Index (MRI) score of 97 as shown in Figure 1.
+Figure 1: Malicious "svchost.exe" process overview
+This process received a high (poor) MRI score for three reasons:
+The legitimate "svchost.exe" should never spawn from %systemroot% (MRI rule)
+The legitimate "svchost.exe" always includes process arguments (MRI rule)
+The "svchost.exe" binary itself was not digitally signed and had a low frequency of occurrence
+These characteristics can serve as the starting point for a very basic IOC, as shown in the IOC Editor in Figure 2.
+Figure 2: Start of IOC for svchost.exe malware
+The first group of AND'd terms will match on any running process named "svchost.exe" that does not have the expected "-k" argument used by the legitimate Windows generic host process for W32 services.
+The second group of terms will match on any file named "svchost.exe" that is either not within a subdirectory named "system32", or is not digitally signed.
+In order to make this IOC more robust, let's take a look at the dependencies leveraged by this malware as it runs on a system.
+The "Detailed Sections" view in Redline, as shown in Figure 3, will display all of the named sections mapped in this process' memory space.
+From an analysis standpoint this is extremely valuable data because it can give us a sense of an unknown binary's functionality based on the DLLs and imported functions it uses.
+Unique combinations of imported DLLs, import functions, and export functions are often extremely effective in an IOC - although when applied at an enterprise scale, require more aggressive testing to avoid false positives (i.e.
+"just how common is it for a legitimate DLL to have two exports named "ServiceMain" and "Init"?
+).
+Figure 3: Detailed Sections for svchost.exe
+It appears that "C:WINDOWSsvchost.exe" only has a single Import for mscoree.dll - the Microsoft .Net Runtime Execution Engine.
+If it wasn't obvious at this point, it should be apparent now that we're not dealing with the legitimate version of "svchost.exe" - which is certainly not written in .Net.
+That's great material for the IOC!
+In addition, Redline has provided the MD5 hash for the binary and will do so for all imports, so we can incorporate that into our indicator as well.
+The updated IOC is shown in Figure 4.
+Figure 4: Updated IOC for "svchost.exe"
+We added the File MD5 hash as a top level item - remember that all base terms are "OR'd" together.
+We don't need to combine that with any other elements because we know the hash by definition is 100% specific to the malware - if we have a match, we want to report it as a "hit" regardless of any other characteristics.
+We also added "File Import Name" contains "mscoree.dll" as part of the nested "OR" at the bottom of the IOC.
+Finally, I reviewed the untrusted Handles in memory for this process - things like unique mutants can be easy "wins" for an IOC - but did not get any useful results.
+Before making any additional changers to the IOC, let's test it out using IOC Finder.
+I generated a search report for this IOC against the complete set of data collected by IOC Finder, using the syntax "mandiant_ioc_finder report -i iocDir -s auditDir".
+Once completed, I opened up the HTML results in Firefox (which has the best compatibility with the reports' JavaScript-foo).
+The results are shown in Figure 5:
+Figure 5: IOC finder results for "svchost.exe"
+Recall that IOC finder collects data from over 20 audit modules covering disk, registry and memory artifacts on a host.
+Here we see that we've got hits from two of those modules - Process Memory (since the malware was running at the time of analysis) and Raw Files on disk.
+But in addition to our malicious "svchost.exe", there are some potential false positive hits from .Net Framework files named "smsvchost.exe" and "smsvchost.exe.config".
+What happened?
+By clicking on the blue "i" icon we can get more details on why an indicator hit occurred, as well as more details about the file in question (such as parsed elements of the PE headers, if applicable).
+The details for our suspected false positive "SMSVcHost.exe" are shown in Figure 6:
+Figure 6: Details for false-positive IOC hit
+The IOC elements highlighted in yellow are the parts that matched - you'll note that this "hit" was simply due to using a "FileName contains" instead of "FileName is", which is an easy correction.
+As you work with more complex IOCs or examine a broader array of systems with them, you'll frequently come across such scenarios where tweaks are needed to eliminate false positives.
+It's all about maintaining a balance between an IOC that is not too specific, nor too broad, to reliably identify the evidence in question.
+Let's look at the indicator hit details from the Raw File audit for the malicious "svchost.exe" to get more information on this binary on disk, shown in Figure 7.
+Figure 7: Details for malicious "svchost.exe"
+As expected, all of the file-based elements from our IOC were matched by the file audit module, and are therefore highlighted in yellow.
+But there's a lot of other juicy stuff in here: the PE Info and Section Info are great resources for an IOC.
+I used some of this data to make the updates shown in Figure 8.
+Figure 8: Updated IOC with more PE header items
+First, I added the "File Compile Time" to the items "OR'd" with "File Name is svchost.exe" because I'd consider any file named "svchost.exe" compiled at that specific time to be suspicious.
+I then created a large group of items all AND'd together that match anything with: file size range 8000 to 1000 bytes, the PE Subsystem "Windows_GUI", the import "mscoree.dll", the PE Type "Executable", the three sections ".rsrc", ".text", and ".reloc", and either path "WINDOWS" or "WINNT".
+One more simple addition: we can use the Prefetch indicator terms to identify evidence of "svchost.exe" historically executed from a directory other than system32 (leveraging the IOC Finder's Prefech audit module and its ability to parse ".pf" files).
+This could help us find systems previously compromised by the malware, even if it was no longer on disk or in memory, as long as the evidence in Prefetch was still present.
+Figure 9: IOC updated with Prefetch items
+This change was simple - we added two AND'd Prefetch terms to the base of the indicator: "Prefetch path contains not system32", representing the original executable file path as parsed from the ".pf" file, and "File Executed contains svchost.exe", representing the original executable filename.
+Our IOC is now much more robust - even if the attacker makes basic modifications to the malware, it's much less likely that enough of these elements would change to invalidate the entire indicator.
+And we have multiple techniques to find the malware on disk, in memory, or even evidence of it previously executing, regardless of whether the original file was since deleted.
+After re-running the report with this updated IOC, it looks like it worked without returning any false positives.
+We now have three hits for "svchost.exe" from the Prefetch, Memory and Raw File audits, shown in Figure 10.
+Figure 10: Updated report of IOC hits for "svchost.exe"
+Once again, we'd want to review the details for each hit to ensure that all of our indicator terms matched as expected.
+A glimpse at the updated hit information for the file audit results is shown in Figure 11.
+Figure 11: Updated report showing File-based IOC hits for "svchost.exe"
+So where would you go from here?
+We actually just scratched the surface with this IOC, relying on simple data from Redline and IOC Finder during our triage process.
+The next step would be to conduct forensics on the infected system and malware analysis / reverse engineering on the malware itself.
+That could yield additional material for the indicator, such as registry keys for its persistence mechanism, evidence in running memory, restore points, web history, event logs, or anything else collected by the IOC Finder modules.
+If we were investigating an actual compromise, we'd also want to build indicators that characterized how the malware got onto the system.
+These IOCs would be applied to find evidence of compromise on other hosts in the environment.
+In summary, we started out with IOC Finder data gathered from a USB drive on an infected host.
+We took that data and loaded it in Redline to quickly triage the system and identify a suspicious process in memory.
+We gathered initial characteristics of the process using the Redline user interface; and then used those characteristics to build a reliable indicator of compromise that can be used in future IOC sweeps.
+We started with a simple IOC that was easy to create but also easy to evade and returned some false positives, and ultimately built a more robust IOC ready to handle malware variants.
+We hope that you can use the newly enhanced Redline, along with IOC Finder and the hundreds of indicator terms available in the OpenIOC schema, to find evil and solve crime more effectively than ever!
+Stayed tuned to the M-Unition blog for more ways to build effective indicators and more advanced usage of these tools.

@@ -1,0 +1,16 @@
+While analyzing a recent Internet Explorer zero-day vulnerability, CVE-2014-0322 (containing the Flash sample hash b9c9dab0fd30418884800afebbaba4d99f4526ef0c9a47972a20ab20fed0a06d), we noticed the exploit makes an unorthodox call to ZwProtectVirtualMemory to bypass data execution prevention.
+What is different about this call?
+The argument(s) of ZwProtectVirtualMemory are placed in an unusual manner.
+Typically arguments that are pointer variables belonging to the stack must be greater than the extended stack pointer (ESP, in the already allocated region of the stack).
+After setting the stack pivot, the exploit makes the call to ZwProtectVirtualMemory as shown in this screen:
+NTSYSAPI NTSTATUS NTAPI ZwProtectVirtualMemory (_In_ HANDLE ProcessHandle,
+_In_ PVOID * BaseAddress,
+_In_ SIZE_T * NumberOfBytesToProtect,
+_In_ ULONG NewAccessProtection,
+_Out_ PULONG OldAccessProtection
+)
+The third parameter is a pointer variable on the stack, but this one lies in a yet to be allocated region of the stack.
+Typically the pointer should be greater than ESP, but in this case it is smaller.
+Kernel calls don’t use the stack much; they are just a wrapper around the kernel, which has a different stack altogether.
+In the absence of a hook at ZwProtectVirtualMemory (for hook-based detection systems), this call will work smoothly like a normal call; but in the case of any hooks, this parameter has a tendency to get corrupted by allocated local variables of hooks and result in the failure of the API call, which will most likely result in the failure of the exploit–an unusual evasion by failure in the presence of a hook-based detection system.
+We have also seen similar exploitation scenarios in the CVE-2013-3918 zero-day attack.

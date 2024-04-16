@@ -1,0 +1,121 @@
+In March 2018, Japanese media reported the hijacking of DNS settings on routers located in Japan, redirecting users to malicious IP addresses.
+The redirection led to the installation of Trojanized applications named facebook.apk and chrome.apk that contained Android Trojan-Banker.
+According to our telemetry data, this malware was detected more than 6,000 times, though the reports came from just 150 unique users (from February 9 to April 9, 2018).
+Of course, this is down to the nature of the malware distribution, but it also suggests a very painful experience for some users, who saw the same malware appear again and again in their network.
+More than half of the detections were observed targeting the Asian region.
+During our research we received some invaluable information about the true scale of this attack.
+There were thousands of daily connections to the command and control (C2) infrastructure, with the device locale for the majority of victims set to Korean.
+Since we didn’t find a pre-existing name for this malware operation, we decided to assign a new one for future reference.
+Based on its propagation via smartphones roaming between Wi-Fi networks, potentially carrying and spreading the infection, we decided to call it ‘Roaming Mantis’.
+Roaming Mantis malware is designed for distribution through a simple, but very efficient trick based on a technique known as DNS hijacking.
+When a user attempts to access any website via a compromised router, they will be redirected to a malicious website.
+For example, if a user were to navigate to www.securelist.com using a web browser, the browser would be redirected to a rogue server which has nothing to do with the security research blog.
+As long as the browser displays the original URL, users are likely to believe the website is genuine.
+The web page from the rogue server displays the popup message (screenshot below): “To better experience the browsing, update to the latest chrome version.”
+Looking at the HTML source of the malicious webpage, it seems to support five locales: Korean, Traditional Chinese, Simplified Chinese, Japanese and English.
+However, after carefully studying the HTML source, we found that the actual number of target locales is only four: Korean, Simplified Chinese, Japanese and English, based on Android devices.
+As shown in the image above, the HTML code contains an identical message in Traditional Chinese and Simplified Chinese.
+Also, the HTML source contains several short code comments in Simplified Chinese.
+One of the applications pushed to users impersonated a Chrome browser for Android.
+Kaspersky Lab got a copy of chrome.apk (md5:f3ca571b2d1f0ecff371fb82119d1afe) in April 2018.
+The Android application package structure is as follows:
+The package contains classes.dex, which is a Dalvik VM executable file.
+Its main purpose is to read the file named /assets/db.
+It decodes the data inside with a Base64 decoder and produces another Dalvik VM executable named test.dex:
+The extracted test.dex contains the main malicious payload, which is described in more detail below.
+The Base64 encoding technique is probably used to bypass trivial signature-based detection.
+AndroidManifest.xml contains one of the key components of the package – the permissions requested by the application from the device owner during installation.
+From the xml above, it seems that Roaming Mantis requests permission to be notified when the device is booted, using the internet, collecting account information, managing SMS/MMS and making calls, recording audio, controlling external storage, checking packages, working with file systems, drawing overlay windows and so on.
+All these requests are of course backed up by malicious functionality implemented in test.dex.
+For instance, after installation, the malware overlays all other windows with one carrying a message in broken English: “Account No.exists risks, use after certification”.
+After that, the malware starts its own webserver on the device, and renders a page spoofing Google’s authentication on 127.0.0.1.
+The page uses a Google account name obtained from the infected device and asks the owner to complete two input boxes with ‘Name:’ and ‘Date of birth:’, which would facilitate access to the user account.
+After the user enters their name and date of birth, the browser is redirected to a blank page at http://127.0.0.1:${random_port}/submit.
+While analyzing the extracted test.dex, we found an interesting piece of code.
+Just like the distribution page, the malware supports four locales: Korean, Traditional Chinese, Japanese and English.
+The code above was taken from an original Google authentication page intended for an English environment, though we aren’t sure why the three Korean strings appear here.
+The English translations are as follows:
+I have an anomaly on my Google account.
+For voice verification, enter your verification number to verify your Google account.
+//구글 계정이 이상이 있습니다.음성검증을 들어 인증번호를 입력하여 구글 계정을 검증하도록합니다.
+Verification Number.
+//인증번호
+Please enter your verification number.
+//인증번호를 입력하세요
+Judging by these strings, it’s clear that the criminals behind the malware are trying to get a verification code for two-factor authentication.
+There may be a bug or design fault that causes Korean strings to be displayed not just for Korean users but also for those using Japanese and English.
+Traditional Chinese users will see strings in Traditional Chinese.
+The authors could have overlooked this in the rush to launch the campaign, but it reveals a certain bias by the authors towards Korean and Traditional Chinese.
+Permission to receive/read/write/send SMS/MMS and record audio could also allow the malware operators to steal a verification code for the two-factor authentication function.
+Secondly, this malware contains references to Android application IDs popular in South Korea and mostly linked to mobile banking and games.
+The following hardcoded strings were extracted from the malware:
+wooribank.pib.smart
+kbstar.kbbank
+ibk.neobanking
+sc.danb.scbankapp
+shinhan.sbanking
+hanabank.ebk.channel.android.hananbank
+smart
+epost.psf.sdsi
+kftc.kjbsmb
+smg.spbs
+webzen.muorigin.google
+ncsoft.lineagem19
+ncsoft.lineagem
+co.neople.neopleotp
+co.happymoney.android.happymoney
+nexon.axe
+nexon.nxplay
+atsolution.android.uotp2
+Another piece of code verifies the presence of the su binary in /system/bin/, /system/xbin/, /system/sbin/, sbin/ or /vendor/bin/ on a device.
+Regular Android devices do not have the su binary.
+Its presence means the device is probably rooted.
+For attackers this may indicate that a device is owned by an advanced Android user (a signal to stop messing with the device) or, alternatively, a chance to leverage root access to gain access to the whole system.
+Kaspersky Lab discovered a hardcoded URL template (http://my.tv.sohu.com/user/%s) in the malicious application used for malware control.
+The site my.tv.sohu.com is legitimate; however, some content on the user profile pages is controlled by the owners of the profiles.
+A list of account IDs separated by the “|” character were included in the malware: “329505231|329505325|329505338”.
+After getting the content from the sohu.com webpage, the malware extracts a Chinese string from a specific part of the HTML code.
+For example, the malicious application receives the page at http://my.tv.sohu.com/user/329505338.
+After that, it uses the hardcoded regular expression “<p>([\u4e00-\u9fa5]+?
+)</p>\s+</div>” to extract a Chinese string located in a very distinct place on the web page.
+Next, each character is decoded by subtracting 0x4E00, doing a right bitwise shift operation for 3 bits and xoring using the word “beg” as the key.
+The result is the real C2 address, which the malware connects to by using a web socket.
+We traced this activity in the debug log of an infected device.
+In another recent sample (MD5:4d9a7e425f8c8b02d598ef0a0a776a58), the connection protocol, including a hardcoded legitimate website, accounts and the regular expression for retrieving next level C2, had been changed:
+In addition, the \assets\db file name was changed to \assets\data.sql and it’s encoding algorithm have also been changed from Base64 to Base64+zlib.
+The malware author seems to be updating the code quite regularly.
+Researchers wishing to track Roaming Mantis campaign can use the following simplified python script to decode the real C2 server.
+An example of script input and output:
+Most interestingly, the malware is embedded with a new feature that communicates with the C2 via email protocols.
+The data sent contains language, phone number, access information, and the result of a PING test to the C2.
+Kaspersky Lab products detect Roaming Mantis’s malicious apk file as Trojan-Banker.AndroidOS.Wroba.
+Based on the verdict, we checked the statistics from Kaspersky Security Network (KSN) for the two months from February 9 to April 9, 2018.
+There were more than 6,000 detections coming from just over 150 unique users.
+The most affected countries were South Korea, Bangladesh and Japan.
+Based on the design of the malware and our detection statistics, this malware was designed to be spread mainly in Asian countries.
+While Kaspersky Lab products may only see a limited number of infections, based on further analysis of the C2 infrastructure we saw roughly 3,000 connections to C2 infrastructure per day, which suggests a much larger scale for this Android malware campaign.
+Upon every connection the malware sends information about compromised devices to the C2, including system locale, which indicates the possible origins of the victims.
+98% of affected devices appear to have the Korean locale set.
+We have done some calculations and built the following chart based on observed locales:
+The breakdown of the remaining 2% reveals a few more system locales: en_GB, en_US, zh_CN, ja_JP and others.
+As usual in such cases, Kaspersky Lab has got in touch with local CERTs (South Korea being the first) to provide information about the victims to help unsuspecting users remove the malware and prevent further reinfections.
+Kaspersky Lab observed Roaming Mantis’ Android application being distributed via a DNS hijacking technique with the help of compromised routers.
+The malware aims to steal user information, including credentials for two-factor authentication, and give the attackers full control over compromised Android devices.
+At the moment, clues appear to suggest a financial motive and low OPSEC for this attack, which is why we think it is likely to be the work of cybercriminal hackers.
+Our research revealed that the malware contains Android application IDs for popular mobile banking and game applications in South Korea.
+The malware is most prevalent in South Korea, and Korean is the first language targeted in HTML and test.dex.
+Based on our findings, it appears the malicious app was originally distributed to South Korean targets.
+Support was then added for Traditional Chinese, English and Japanese, broadening its target base in the Asian region.
+However, it’s still unclear how the attackers hijacked the router DNS settings.
+If you have any concerns about the DNS settings on your router, please check the user manual and verify that your DNS settings haven’t been tampered with, or contact your ISP for support.
+Kaspersky Lab also strongly recommends changing the default login and password for the admin web interface of their router, never install firmware from third-party sources and regularly update router firmware to prevent similar attacks in the future.
+Based on our investigation, the Roaming Mantis attackers left some additional clues.
+For example, some comments in the HTML source, malware strings and a hardcoded legitimate website point to Simplified Chinese.
+Therefore, we believe the cybercriminals are familiar with both Simplified Chinese and Korean.
+The malicious threat actor behind this campaign remains very active and the malware is updated every day.
+We will keep tracking this campaign to protect our customers and update our readers with new information.
+Kaspersky Lab products detect this malware with the following verdict(s): HEUR:Trojan-Banker.AndroidOS.Wroba
+Malicious hosts: 114.44.37.112 118.166.1.124 118.168.193.123 128.14.50.146 128.14.50.147 220.136.111.66 220.136.179.5 220.136.76.200 43.240.14.44 haoxingfu01.ddns.net shaoye11.hopto.org
+Malicious apks: 03108e7f426416b0eaca9132f082d568 1cc88a79424091121a83d58b6886ea7a 2a1da7e17edaefc0468dbf25a0f60390 31e61e52d38f19cf3958df2239fba1a7 34efc3ebf51a6511c0d12cce7592db73 4d9a7e425f8c8b02d598ef0a0a776a58 808b186ddfa5e62ee882d5bdb94cc6e2 904b4d615c05952bcf58f35acadee5c1 a21322b2416fce17a1877542d16929d5 b84b0d5f128a8e0621733a6f3b412e19 bd90279ad5c5a813bc34c06093665e55 ff163a92f2622f2b8330a5730d3d636c
+class.dex: 19e3daf40460aea22962d98de4bc32d2 36b2609a98aa39c730c2f5b49097d0ad 3ba4882dbf2dd6bd4fc0f54ec1373f4c 6cac4c9eda750a69e435c801a7ca7b8d 8a4ed9c4a66d7ccb3d155f85383ea3b3 b43335b043212355619fd827b01be9a0 b7afa4b2dafb57886fc47a1355824199 f89214bfa4b4ac9000087e4253e7f754
+test.dex: 1bd7815bece1b54b7728b8dd16f1d3a9 307d2780185ba2b8c5ad4c9256407504 3e4bff0e8ed962f3c420692a35d2e503 57abbe642b85fa00b1f76f62acad4d3b 6e1926d548ffac0f6cedfb4a4f49196e 7714321baf6a54b09baa6a777b9742ef 7aa46b4d67c3ab07caa53e8d8df3005c a0f88c77b183da227b9902968862c2b9

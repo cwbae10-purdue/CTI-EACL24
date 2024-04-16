@@ -1,0 +1,93 @@
+We observed new targeted attacks targeting various personnel with pro-Tibetan views.
+The targets?
+We’ve seen targets at various branches of the Taiwanese government as well as a professor at the Central University Of Tibetan Studies in India.
+Taiwan is a logical target since they have a history of accepting Tibetan refugees.
+Also, the other target is a professor at the Central University Of Tibetan Studies in India—a institution founded by the first Prime Minister of India with the Dalai Lama himself.
+It was established in 1967 to educate exiled Tibetans and to preserve Tibetan culture and history.
+The attackers, called the "Shiqiang gang", show a consistent modus operandi.
+They use similar remote administration tool (RAT) payloads, stolen certificates, and seem to target anyone pro-Tibetan.
+The RAT payload in this attack in called "GrayPigeon," also known as "Huigezi" in Chinese[2].
+It is very popular in the Chinese webspace which indicates that the attackers speak the language.
+The RAT payload has multiple layers of encryption making it harder to identify.
+The threat arrives in the form of a targeted email with an XLS attachment.
+The content of the emails are as shown below in Figure 1 and Figure 2.
+The email attempts to draw on the sentiments of the Taiwanese government and activists towards the exiled members of the Tibetan government.
+[caption id="attachment_1707" align="alignnone" width="584"] Figure 1[/caption]
+[caption id="attachment_1708" align="alignnone" width="590"] Figure 2[/caption]
+The content of both the emails are similar and roughly translate to:
+To friends who care about the Tibetan government-in-exile
+Now we publish this for you <<Tibetan government-in-exile offices in the Americas 2013 for the second half the year with detail list requesting for comments>>
+Do not distribute this letter and this is only for friends who care about this
+Also hope that you can actively participate in our activities in the second half of the year
+Office of the Tibetan government-in-exile in the Americas
+Chinese chief liaison officer Gongga Tashi kungatashi
+The attached file in both emails is the same (2010790755b4aca0edc3c50ee8480c0b) When opened, the XLS file exploits CVE-2012-0158 and launches a decoy document as shown in Figure 3.
+The decoy document contains a ruse as usual and this time it states that Tibetan fonts are missing.
+In the background, it drops a series of files eventually leading to the launch and execution of 2013soft.dll.
+This in turn injects a RAT payload in to explorer.exe.
+[caption id="attachment_1703" align="alignnone" width="629"] Figure 3[/caption]
+The main functionality lies within 2013soft.dll (28426ddc3c49635c11a2ee72118e9814) and the subsequent DLL it decrypts and injects in to explorer.exe (05eda4aaa49b2409f52cf2356f4a91db).
+On inspection of 2013soft.dll, it is evident that this payload contains a rather large resource section.
+The MAIN stub in resource section holds large amount of data however it appears to be encrypted.
+[caption id="attachment_1710" align="alignnone" width="648"] Figure 4[/caption]
+On dynamic analysis of the payload, it becomes clear that the Main stub eventually decrypts to the final DLL payload.
+The stub is loaded into memory and decrypted using the loop shown in Figure 5.
+It operates on 8 bytes of data at a time and uses the 16 bytes key "1234567890ABCDEF".
+This, in addition to that fact that it uses the constant value 0x9E3779B9, gives away the algorithm as TEA (Tiny encryption algorithm).
+The TEA algorithm uses this value as the Delta constant.
+[caption id="attachment_1711" align="alignnone" width="427"] Figure 5[/caption]
+It then jumps to the decrypted stub after setting the memory region it resides in as executable.
+The start of this decrypted MAIN stub contains an XOR decryption loop shown in Figure 6.
+This decryption loop decrypts the remainder of the stub.
+Notice how the XOR key "0x27691C" is only 3 bytes in length but the EAX pointer is incremented by 4.
+This means the first byte in every 4 bytes (little endian) is not subjected to XOR.
+[caption id="attachment_1713" align="alignnone" width="421"] Figure 6[/caption]
+You would think we have the payload after two levels of decryption but not in this case.
+It jumps to another shellcode, which performs a rolling byte XOR decryption using a 4 byte key on the latter part of the stub.
+[caption id="attachment_1714" align="alignnone" width="465"] Figure 7[/caption]
+Now we are getting somewhere as we can see an MZ file header interspersed with other characters past the "MinxxxA" marker as shown in Figure 8.
+This data is then subjected to what appears to be a custom decompression algorithm, following which it is injected into a new instance of explorer.exe
+[caption id="attachment_1709" align="alignnone" width="567"] Figure 8[/caption]
+The injected DLL payload is a variant of the RAT called "GrayPigeon"[2] also known as "Huigezi" which is popular in the Chinese web space.
+It is written in Delphi and contains comprehensive functionality.
+The RAT uses various Pascal modules [3] such as "TscreenCaptureUnit.pas" and "UnitServices.pas" also widely seen on Chinese forums and associated with this RAT.
+It creates a mutex "\BaseNamedObjects\[email protected]#$" and sets up startup persistence by adding a registry key "\Software\ts\Explorer\run\2013Soft\run = rundll32.exe C:\WINDOWS\2013soft.dll,Player".
+In this case the RAT was observed key logging and storing the data under C:\WINDOWS\2013soft.log along with the corresponding Window names.
+It then uses the same TEA (Tiny Encryption algorithm) described earlier to decrypt the address of the command and control server "help.2012hi.hk".
+It reuses the key "1234567890ABCDEF" for TEA decryption.
+It makes a DNS query specifically to Google’s DNS server 8.8.8.8 and it attempts to connect to the resolved server on port 91.
+[caption id="attachment_1706" align="alignnone" width="720"] Figure 9[/caption]
+We observed the following outbound communication on port 91.
+[caption id="attachment_1712" align="alignnone" width="576"] Figure 10[/caption]
+This GrayPigeon RAT instance we analyzed had extensive functionality and a summary of the features is listed below:
+Determine Host name and OS version
+Ability to log keystrokes and mouse events
+Ability to capture users screen
+Ability to use Telnet protocol
+Ability to send and receive files
+Sniff URL addresses from Internet Explorer and read form values
+Get list of active services
+Ability to shutdown/restart etc.
+We mined for other samples talking to the same C&C infrastructure and we found two with the md5sums 4e454584403d5521abea98d21ee26f72 and 7de5485b7dd154a9bbd85e7d5fcdbdec which drop Hangame RAT and GrayPigeon RAT respectively.
+The RAT payloads in these instances also phone home to help.2012hi.hk.
+This C&C domain was also referenced in a white paper published by Symantec as part of the overall campaign coined the Elderwood project [4].
+The campaign in the current instance and related samples are more in line with Tibetan themed attacks on NGOs and Taiwanese officials.
+The campaign also heavily uses stolen certificates.
+These have been attributed with the Shiqiang gang as discussed by Snorre Fagerland from Norman[1] and also discussed by Trend [5] and AlienVault [6].
+[caption id="attachment_1705" align="alignnone" width="582"] Figure 11[/caption]
+The decoy document associated with 7de5485b7dd154a9bbd85e7d5fcdbdec also has a Taiwanese target as evident from the contents of the document.
+[caption id="attachment_1704" align="alignnone" width="791"] Figure 12[/caption]
+Also, both these two variants interestingly have digital certificates in the payload [1].
+The certificate for 4e454584403d5521abea98d21ee26f72 is a stolen certificate that has already been revoked.
+Version: 3 (0x2)
+Signature Algorithm: sha1WithRSAEncryption
+Issuer: C=US, O=VeriSign, Inc., OU=VeriSign Trust Network, OU=Terms of use at https://www.verisign.com/rpa (c)10, CN=VeriSign Class 3 Code Signing 2010 CA
+Not Before: Dec 8 00:00:00 2011 GMT
+Not After : Dec 7 23:59:59 2012 GMT
+Subject: C=CN, ST=Guangdong, L=Shenzhen, O=Shenzhen Xuri Weiye Technology Co., Ltd., OU=Digital ID Class 3 - Microsoft Software Validation v2, CN=Shenzhen Xuri Weiye Technology Co., Ltd.
+Version: 3 (0x2)
+Signature Algorithm: sha1WithRSAEncryption
+Issuer: C=CN, ST=Beijing, L=Beijing, O=CA365, CN=CA365 Free Root Certificate
+Not Before: Oct 23 10:47:29 2010 GMT
+Not After : Oct 23 10:47:29 2011 GMT
+Subject: C=CN, ST=shanghai, L=shanghai, O=International Test User, OU=Market, CN=International Test User

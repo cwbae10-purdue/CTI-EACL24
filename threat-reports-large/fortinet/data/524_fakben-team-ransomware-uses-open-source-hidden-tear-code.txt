@@ -1,0 +1,93 @@
+Earlier this month, a new ransomware-as-a-service (RaaS) from a group called “FAKBEN Team” emerged.
+In this post, we will talk about our findings on the ransomware binary that they sell on their website.
+Our analysis indicates that the encryption routine used by FAKBEN Team was grabbed from the open source Hidden Tear ransomware.
+The representative sample that we used has the MD5 c952a88edc0766adf819b30cd2683ac7.
+The malware was developed and compiled using Microsoft Visual C# .NET.
+Persistence
+The malware creates an autorun registry in order to execute every time the system starts.
+It creates registries under the current user’s registries Winlogon and Run with value names Shell and Microsoft, respectively.
+Both of these registries point to the current path of the malware:
+Figure 1.
+Code to add registries
+It also disables the task manager from the registry by setting the DisableTaskMgr value to “1”:
+Figure 2.
+Code to disable task manager registry
+Additionally, it terminates the Task Manager process taskmgr at certain intervals:
+Figure 3.
+Code to terminate task manager process
+C&C Registration
+The malware registers itself to its C&C server using the affected machine’s system information and geoIP location.
+Specifically, the malware obtains the operating system and service pack by querying the ProductName and CSDVersion registries:
+Figure 4.
+Code to collect operating system and service pack
+The malware also collects the GUID of the machine by querying the MachineGuid registry:
+Figure 5.
+Code to collect machine GUID
+The malware then collects the geoIP location using the website www.hostip.info:
+Figure 6.
+Code to collect victim’s geolocation
+The above mentioned data are concatenated with “:” as the delimiter; while the system information is encoded by the malware in Base64:
+Figure 7.
+Code to concatenate collected information
+This will later on be used for the wid parameter in the C&C callback.
+Meanwhile, another parameter that will be sent to the C&C is btc – the bitcoin address of the affiliate.
+The malware parses this at the overlay of the binary:
+Figure 8.
+Malware overlay containing Bitcoin address
+Finally, the two parameters are concatenated and a web request is sent to a compromised website that serves as the ransomware’s C&C:
+Figure 9.
+Code to construct C&C parameters and perform webrequest
+Below is a screenshot of the request:
+Figure 10.
+Screenshot of malware’s webrequest
+Ransomware Routine
+Using the format above, the malware communicates to the C&C server at certain intervals.
+The malware parses the response of the C&C for the following tags:
+“RECEIVED” – instructs the malware to decrypt files “FIRST” – instructs the malware to encrypt files
+The malware also expects a key from the C&C response which it uses for encryption and decryption:
+Figure 11.
+Code to parse C&C response
+The key is the first string before the “:” delimiter from the C&C response:
+Figure 12.
+Code to parse encryption key
+As can be seen above, the malware encrypts files per directory.
+The affected folders are as follows:
+Figure 13.
+Target directories
+It encrypts files with the following extensions from the said directories:
+Figure 14.
+Code grabbed from Hidden Tear ransomware code
+In fact, the above code is extremely similar to the code of the open source ransomware Hidden Tear with only minor differences.
+The malware also seems to have ripped off the AES encryption routine from Hidden Tear, including the concatenation of “.locked” to the file name of affected files:
+Figure 15.
+Code to encrypt files
+Figure 16. AES encryption algorithm
+Ransomware Note
+The malware presents the ransomware note both as text file and as an image that will be used to lock the user’s desktop.
+The ransom message is embedded in the malware in Base64 format.
+This ransom message is then decoded and appended with the affiliate bitcoin address.
+The resulting text is dropped as “READ ME FOR DECRYPT.txt” to all affected directories:
+Figure 17.
+Ransomware note
+For the display image, this malware adds a QR code pointing to the ransomware site.
+The QR code is generated using the following code:
+Figure 18.
+QR code generation
+Below is the resulting image that blocks the victim’s desktop.
+It asks for a 1.505 BTC ransom which is roughly 480 USD at the current exchange rate:
+Figure 19.
+Ransomware display
+Conclusion
+Based on our analysis, the code of this ransomware is elementary and somewhat poorly written.
+For instance, it has the tendency to encrypt its dropped ransomware note “READ ME FOR DECRYPT.txt” since it has no whitelisting mechanism.
+Furthermore, it displays the ransomware image on the user's desktop even if it is unsuccessful in encrypting files.
+These glitches, along with the fact that this ransomware used code from the open source Hidden Tear code, suggest that the cybercriminals behind FAKBEN Team RaaS are amateurs, otherwise referred to as “script kiddies”.
+Ultimately, this indicates that cybercriminals who may have limited development skills are starting to take advantage of the released Hidden Tear code.
+Fortinet proactively detects this ransomware as MSIL/Filecoder.Y!tr and blocks its C&C communication via the IPS signature Fakben.Cryptolocker.RaaS.Botnet.
+-= FortiGuard Lion Team =-
+Indicators of compromise:
+Added registries: HKEY_CURRENT_USER\Software\Microsoft\Windows NT\CurrentVersion\Winlogon Shell = "{malware path}"
+HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run Microsoft = "{malware path}"
+HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Policies\System DisableTaskMgr = "1"
+Added files: {Desktop}\READ ME FOR DECRYPT.txt {My Music folder}\READ ME FOR DECRYPT.txt {My Pictures folder}\READ ME FOR DECRYPT.txt {Personal folder}\READ ME FOR DECRYPT.txt {Desktop}\{filename}.locked {My Music folder}\{filename}.locked {My Pictures folder}\{filename}.locked {Personal folder}\{filename}.locked
+Related MD5 hashes: c952a88edc0766adf819b30cd2683ac7 bd1fb33adfb18751487daf79d902116e 484ff0a68beb7445f5d6d1e9dd112aee

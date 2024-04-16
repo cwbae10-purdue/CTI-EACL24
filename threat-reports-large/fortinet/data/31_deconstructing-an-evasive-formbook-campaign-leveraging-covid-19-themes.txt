@@ -1,0 +1,197 @@
+FortiGuard Labs Threat Analysis Report
+Affected platforms: Windows Impacted parties: Companies that engage with biomedical firms Impact: Remote control of infected computer, information stealing, keylogger Severity level: High
+During our research into COVID-19 threats, FortiGuard Labs has run into a number of unique types of spearphishing lures.
+For example, one of these targets companies that engage with biomedical firms, and as a result, they may be at risk of losing financial resources, data, or intellectual property.
+Within the last couple of days, for example, our spam traps noticed the following email sent out into the wild.
+While this seems to be a run-of-the-mill malicious email template, complete with spelling mistakes and grammar issues, the interesting angle taken by this attacker is that it purports to be from a biomedical company focused on life science research, with distributors worldwide.
+Particularly, the biomedical company claims to work with diseases and cell functions, with the possible intent of using their name to garner favor and a quick reply from the targeted company so they can conduct more COVID research.
+According to the email headers, one target for this spearphishing campaign is a chemical company in the Czech Republic that produces industrial goods for small customers and large enterprises.
+The email seems to have originated from the IP address of 45.55.49.33.
+Digging around further, it appears that this IP address may have been compromised by an unknown attacker.
+The following analysis provides further insight into how this occurred:
+Looking at the header information of the file, we see the following information:
+X-Authenticated-Sender: cpb2.medionline.cl: angeles.ureta@airesgifts.cl
+Research on the domains airesgifts.cl and cb2.medionline.cl reveals the same IP address of 45.55.49.33:
+Performing an internet search on both IOCs also revealed the following post from a user on the Zimbra Forums page:
+The individual in the screenshot above posted the topic “strange activity” and then summarized how they came across some interesting email being sent from an account that does not exist on their server, even though they have various security protocols in place.
+By investigating existing Zimbra vulnerabilities, we came across CVE-2019-9621 and CVE-2019-9670 that when combined – as seen here in this Metasploit Module – can enable a Server Side Request Forgery (SSRF) exploit that allows unauthenticated remote command execution and the execution of unauthorized commands on the server.
+As shown in the first email image above, the lure comes with an attached archive which contains a malicious binary that affects the Windows platform.
+(SHA256: CFC573D1EA473DCB5BCFB0C3F869CC73F464DC3E697DCA44D245C402803A5C90)
+Due to the nature of this email, we suspect that this was a targeted spearphishing campaign, rather than the usual sort of “spray and pray” campaign, and as a result, only companies that could potentially aid in COVID research should be impacted, rather than general individuals in the public space.
+The final payload of this attack is an infostealer named Formbook.
+Given that this attack is trying to leverage the COVID pandemic, while at the same time having specialized targets, the severity level it carries could potentially be significant if it is able to take critical supply chain organizations offline.
+This threat has been seen to contact three domains.
+The first is www.chocolatecoveredcyanide.com.
+Our telemetry observed the following for this domain.
+Country
+Visit Counts
+India
+384
+Nigeria
+8
+Saudi Arabia
+6
+United States
+5
+Philippines
+3
+Cyprus
+3
+We noticed that this domain was most active when the COVID threat was in the midst of becoming a global pandemic.
+This latest email campaign, run in the month of April, has also started to generate a few hits.
+The second domain contacted by Formbook is www.pilazo.com.
+Country
+Visit Counts
+United States
+23
+Cambodia
+12
+Saudi Arabia
+8
+Germany
+8
+Austria
+5
+United Kingdom
+3
+Cyprus
+3
+Nigeria
+2
+Japan
+2
+Similar to the first domain, we began seeing serious spikes in activity beginning in February.
+There was also some traffic detected during the end of March and the second week of April.
+The third domain this Formbook variant contacts is www.elina-teresa.com.
+Our telemetry shows the following data.
+Country
+Visit Counts
+India
+165
+United States
+2
+Indonesia
+1
+While we saw expected spikes in February, we have also seen traffic as recently as the first week of April.
+When FortiGuard Labs first acquired this Formbook variant, VirusTotal reported that only 13/71 vendors had detected it, and only then with a generic name.
+As one of the thirteen vendors, we detected it as MSIL/GenKryptik.EHNS!tr.
+The relatively low number is probably because of the two layers piled on top of the actual Formbook threat, which we will outline below.
+The first layer is actually a trojanized version of what appears to be a school project allowing teachers to input grades for students.
+After a translation service is used, the following appears
+Using dnSpy, the .Net Formbook binary can be decompiled and the source code can be analyzed.
+Indeed, our analysis of the code supports the idea that this is an actual app used for student management.
+However, malicious code has been inserted into the initialization component of the trojanized app when the executable is launched.
+The Class2 class (along with Class1) performs a rudimentary form of steganography in order to decrypt and load the next layer.
+The left side of the picture above contains the code, while the right side contains the image that houses the binary data.
+This binary data is then sent to a decryptor function to create another .Net executable, which is subsequently loaded into memory via a call to the Invoke() function.
+One method to analyze this new executable would be to dump it from memory, after it has already been decrypted, through the above-mentioned steganography trick.
+Using dnSpy, it is possible to step through the code right up until the launch of the new executable.
+The MZ header of the newly decrypted executable can be seen in the rawAssembly variable, at which point it can be saved to a new file by right-clicking the variable name and bringing up the context menu.
+The second layer, named ReZer0, has several malicious functions.
+The AntiSB() function makes sure that this malware is not being executed in a sandbox environment.
+The malware code on the left resembles old anti-sandbox code on the right that we found posted in a programming forum.
+However, the newer malware code seems to be updated.
+In a similar fashion, the AntiVM() malware code also matches the rest of the forum code.
+The function detects Virtualbox by checking the registry and associated drivers.
+VMWare is detected in the same way.
+WINE is checked for by looking at kernel32.dll and seeing if it contains the wine_get_unix_file_name API.
+QEMU is avoided by checking for specific registry entries.
+Furthermore, the WMI database is also queried for video controller information to check for the presence of virtual machines.
+The RunPS() function enables the execution of PowerShell in a hidden window, which in turn is used to modify certain Windows Defender options via the CheckDefender() function.
+Specifically, this layer attempts to set the following options:
+Option
+Outcome
+DisableBehaviorMonitoring
+Do not monitor behavior
+DisableBlockAtFirstSeen
+Do not block at first seen
+DisableIOAVProtection
+Do not scan downloaded files/attachments
+DisablePrivacyMode
+Do not display threat history
+SignatureDisableUpdateOnStartupWithoutEngine
+Do not get definition updates
+DisableArchiveScanning
+Do not scan archives
+DisableIntrusionPreventionSystem
+Do not protect network against known vulnerabilities
+DisableScriptScanning
+Do not scan script during malware scans
+SubmitSamplesConsent
+Never send samples
+MAPSReporting
+Send no information to Microsoft about threats
+HighThreatDefaultAction
+Allow high level threats to continue executing
+ModerateThreatDefaultAction
+Allow moderate level threats to continue executing
+LowThreatDefaultAction
+Allow low level threats to continue executing
+SevereThreatDefaultAction
+Allow severe level threats to continue executing
+To completely disable Windows Defender, the threat may also modify Windows Defender registry settings.
+Once these security settings have been lowered, this second layer creates a persistence mechanism for Formbook by creating a scheduled task.
+This functionality, however, is actually not used.
+Neither is the option to be able to download and save arbitrary files.
+Once the targeted machine has been properly disabled, this layer continues by reading from its resources and decrypting the payload using XOR with a key of tiPyJik.
+This layer then provides an option for injecting the payload into the currently running process, MSBuild.exe, vbc.exe or RegSvcs.exe.
+As the configuration data for this sample describes, it can inject this payload into the current running process using the Process Hollowing injection technique.
+What gets injected into memory is a variant of Formbook.
+(SHA256: BC367850280CD95357F190A3FFBF80567A20D7E89B61F5A21A8658C8A97C6EC1).
+While VirusTotal currently reports that 53/72 vendors now detect this hash, they may actually miss it since it never hits the disk.
+Formbook has been extensively covered in this paper.
+Given the present threat of COVID-19, it is more important now than ever that companies stay vigilant and not fall prey to spearphishing lures.
+Its initial low number of VirusTotal detections do not necessarily mean that this is not more widespread than it appears.
+As Formbook specializes in the harvesting of credentials, these bad actors may have the opportunity to return in the future even if the malware was caught and remediated.
+To defend themselves, companies must maintain cybersecurity best practices such as utilizing two-factor authentication, regularly scheduled password rotation, and not falling for fake emails.
+Security Hygiene: To combat this threat, FortiGuard Labs recommends that all FortiClient definitions are kept up to date on a continual basis.
+Organizations are also urged to maintain a proactive patching routine whenever vendor updates are made available.
+If it is deemed that patching a device is not feasible, it is recommended that a risk assessment is conducted to determine additional mitigation safeguards.
+Training: Organizations are encouraged to conduct ongoing training sessions to educate and inform personnel about the latest phishing/spearphishing attacks.
+Employees should also be reminded to never open attachments from someone they don’t know, and to always treat emails from unrecognized/untrusted senders with caution.
+Further, because of its manner of distribution, it is crucial that end users are educated to spot social engineering attacks through training and impromptu tests delivered by email from the security team.
+Initial Access Mitigation: FortiMail and other secure mail gateway solutions can be used to block specific file types, including phishing attacks, and disarm threats before they reach the user.
+FortiMail can also be configured to send attachments to FortiSandbox, whether on-premises or in the cloud, to determine if a file displays malicious behavior.
+FortiGate next-generation firewalls with anti-virus enabled and a valid subscription are also able to detect and block this threat.
+Fortinet Solutions: If user awareness training fails and a user opens a malicious attachment or link, FortiClient running the latest this-to-date virus signatures will detect and block this file and associated files.
+FortiEDR is also able to detect and defuse this attack before it can impact the targeted endpoint device.
+The files highlighted in this report are currently being detected with the following antivirus definitions:
+File Name: PO - 01CTKT_0001483.exe [SHA256: cfc573d1ea473dcb5bcfb0c3f869cc73f464dc3e697dca44d245c402803a5c90] Detected as: MSIL/GenKryptik.EHYY!tr
+The following network IOCs are currently listed as malicious by FortiGuard Web Filtering:
+hxxp://chocalatecoveredcyanide.com hxxp://elina-teresa.com hxxp://pilazo.com
+cpb2.medionline.cl airesgifts.cl 45.55.49.33
+Phishing Email Protection: E-mail is the primary threat vector for malicious content entering the network so robust e-mail hygiene methods should be employed.
+FortiMail Secure Email Gateway can scan emails and attachments for threats and neutralize them before they reach the user.
+The new API integration with Microsoft365 (was Office365) can also help in the post attack remediation process to hunt for threats and remove them from the inbox.
+Malicious Word Document Protection: FortiGuard CDR (Content Disarm & Reconstruction) processes all incoming files, deconstructs them, and then strips all active content from those files in real-time to create a flat, sanitized file.
+CDR fortifies zero-day file protection strategies by proactively removing any possibility of malicious content in your files.
+This is supported in FortiMail, FortiGate, and other products.
+Exfiltration and C&C: A FortiGate located at each of your ingress and egress points with its Web Filtering service and up-to-date definitions and/or Botnet Security enabled will detect and block any observable outbound connections if configured correctly.
+Initial Access
+T1193 – Spearphishing attachment
+Execution
+T1204 – User Execution
+Defense Evasion
+T1089 – Disabling Security Tools
+T1112 – Modify Registry
+T1027 – Obfuscated Files or Information
+T1093 – Process Hollowing
+T1497 – Virtualization/Sandbox Evasion
+Credential Access
+T1503 – Credentials from Web Browsers
+Discovery
+T1012 – Query Registry
+T1497 – Virtualization/Sandbox Evasion
+Collection
+T1056 – Input capture
+T1185 – Man in the Browser
+T1113 – Screen Capture
+Command and Control
+T1043 – Commonly Used Port
+T1001 – Data Obfuscation
+T1071 – Standard Application Layer Protocol
+Exfiltration
+T1041 – Exfiltration Over Command and Control Channel
+Learn more about FortiGuard Labs threat research and the FortiGuard Security Subscriptions and Services portfolio.
+Sign up for the weekly Threat Brief from FortiGuard Labs.
+Learn more about Fortinet’s free cybersecurity training initiative or about the Fortinet Network Security Expert program, Network Security Academy program, and FortiVet program.

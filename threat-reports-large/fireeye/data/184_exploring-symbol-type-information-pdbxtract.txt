@@ -1,0 +1,42 @@
+Mandiant is introducing a new free tool today, PdbXtract™, which allows you to browse and search PDB-type information.
+PdbXtract allows you to explore symbolic type information as extracted from Microsoft PDB files.
+This tool is primarily designed for reverse engineering Windows-based applications and for exploring the internals of Windows kernel components.
+You can download PdbXtract.
+A programming database (PDB) file is a binary file containing program debug information in a Microsoft-proprietary format.
+This file is produced by the compiler/linker when a program is built.
+The information it contains is used by debuggers to debug a program and can greatly assist a developer in debugging program issues by resolving function pointers to symbolic names, for example.
+Perhaps the most useful and richest source of debugging information contained in PDBs is type data which holds detailed information about data structures, constants, and other named symbols.
+While this information is primarily used to debug program components, it can also be used to gain insight into how core operating system components work by observing both the format of the data structure and how the structure is used.
+PdbXtract is not a pure PDB parser.
+It only extracts type information using Microsoft's DebugInterface Access (DIA) COM.
+If you are interested in just parsing/dumping raw PDB information, there are a few alternatives out there to DIA, including Volatility's open source pdbparse (http://code.google.com/p/pdbparse/) or the PDB utility that comes with the Undocumented Windows 2000 Secrets book.
+However, most of the practical tools I have seen that operate on PDB's use DIA, including Microsoft's own Dia2dump, this one http://www.codeproject.com/Articles/37456/How-To-Inspect-the-Content-of-a-Program-Database-P and this one http://www.ishani.org/web/articles/obsolete/pdb-cracking-tool/, to name a few.
+To reiterate, PdbXtract does not parse or capture the wealth of other information available in a PDB, including: functions, debug streams, modules, publics, globals, files, section information, injected sources, source files, OEM specific types, compilands, and others.
+The tools mentioned above are fine for inspecting the contents of a single PDB.
+However, often times as part of my job in R&D, we have to use knowledge of type information across all supported Windows operating systems to implement features.
+For example, if you are dealing with partially undocumented or "opaque" types (example: you need to walk the PEB's InInitializationOrderModuleList to obtain a list of loaded modules in a process) or have full source type information but do not want to tie your program to a specific version of those types as implemented in the headers of the SDK you are compiling against, you probably want to just use static offsets such as:
+The problem has always been: how do I get the value of InInitOrderModList_Offset for all platforms we support, taking into account 32-bit/64-bit variations?
+The answer has always been: useWinDbg (or if you are interested in possibly-correct kernel symbols only, you might use Matt Suiche's Moonsols library (http://msdn.moonsols.com )).
+Launch a VM for each OS you want to support, attach with a debugger, and use the power of WinDbg to extract the type information.
+Well, WinDbg's magical "dt" command just relies on the PDB information for the corresponding binary (after retrieving the necessary symbol files from your local symbol store and optionally the Microsoft public symbol server), so it stands to reason that we should be able to do the same.
+The end goal is to make a searchable database for all the exported types of OS binaries we care about, so that we don't have to constantly relive the tedium of doing this in WinDbg.
+PdbXtract has two main features: exploring a single PDB (PDB Explorer) and searching a library of PDBs for one or more operating systems.
+PDB Explorer opens the PDB, parses type information using DIA, and displays a list of all structs, unions and enums.
+If you click on one of the types, a C-style struct (with offsets) definition will be displayed in the text area to the right, as shown below for the type IMAGE_FILE_HEADER.
+The library tab allows you to create and search a library of PDB type information.
+I have created a library for *most* of the operating systems we support for the following important system binaries: kernel (ntoskrnl.exe, ntkrpamp, ntkrnlpa, ntkrnlmp),ndis.sys, win32k.sys and hal (hal.dll, halaacpi.dll, halmacpi.dll).
+You might ask why other system DLLs were not included, such askernel32, user32, advapi32, etc.The answer to that being the corresponding PDBs for those binaries you get off the symbol server are stripped of type information.
+Why?
+Because Microsoft expects you to use their headers when you compile your application, and thus your program'sPDB will have the necessary type information.
+The library included with PdbXtract covers several of Microsoft's major operating system releases, but you can easily add more symbols.
+PdbXtract includes a utility, called PdbFetch, that simply runs Microsoft's symchk utility to grab the symbols for the file names you supply (usage: pdbfetch, where is a text file that contains a list of full paths to system binaries you want to retrieve symbols for).
+Pdbfetch creates a "PDB set" which consists ofthe directory structure with containing PDBs as created by symchkplus a manifest.xml file which summarizes the OSplatform information.
+To use a PDB set in PdbXtract, go to the library tab and click "new" if you want to create a new library from the PDB set or "add" if you want to add them to an existing library.
+Once you create/add a PDB set to a library you can delete them - the only thing that matters is the sqlite .pdbx database that's created.
+Perhaps someone out there will find this useful and maybe create a searchable web front end with the resulting SQLite database?
+The sky is the limit.
+Let me know if you do by commenting below.
+As a final note, you might wonder why you can't just download the entire symbol packages from Microsoft, which include every symbol file on the MS Symbol server, and create a ginormous library.
+Why is there a requirement to acquire the PDBs using pdbfetch?
+The answer is - you could do that - but it is data overload(several GB of PDBs) when you will not care about 99% of them.
+Plus it is easier to capture OS platform/build info at run time rather than guessing at it from the name of the symbol package installer (PDBs give no indication of what OS the corresponding binary originated from).

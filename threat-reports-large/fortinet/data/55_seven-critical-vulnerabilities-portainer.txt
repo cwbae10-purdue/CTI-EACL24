@@ -1,0 +1,58 @@
+A FortiGuard Labs Technical Advisory Report
+Portainer is a lightweight management UI which allows you to easily manage your Docker host or Swarm cluster.
+Over the past few months, FortiGuard Labs has been working closely with the Portainer team to address multiple critical vulnerabilities that we discovered in their Portainer application.
+In this technical advisory we will provide an overview of each of these vulnerabilities.
+At the time of writing, all of the issues identified in this blog have been fixed and published by Portainer.
+Fortinet’s FortiGuard Labs appreciates their quick responses and timely fixes.
+All versions of Portainer prior to version 1.23.0 are vulnerable to two XSS vulnerabilities.
+The first XSS occurs in a multiselect HTML component that allows administrators to create a new user whose username can also be a JavaScript payload.
+Whenever an administrator visits a page which displays a list of users, the XSS payload will be triggered, as shown in Figure 2:
+The Endpoint access management page is also vulnerable to the username-as-JavaScript payload, as demonstrated in Figure 3:
+The second XSS vulnerability exists in the confirmation modal when a user performs a file deletion.
+Any authorized user can upload files with an arbitrary file name.
+When other users try to delete a file containing a JavaScript payload, XSS will be triggered, as shown in Figure 4:
+Portainer enables users to upload files with the volume browser.
+The volume endpoint retrieves three parameters to upload files: volume ID, file name, and file path.
+However, only the file path is sanitized before the fix.
+Therefore, it’s possible to traverse the path by manipulating the volume ID or file name to upload files to an arbitrary location inside the container.
+As a result, the file HELLO is not uploaded into the _data directory as usual, but into its parent instead:
+By exploiting this vulnerability, any authorized user can upload and execute an arbitrary executable in a Portainer container by chaining an improper access control vulnerability (authorization bypass) and an insufficient check issue in Extension Activation.
+In Portainer versions prior to 1.23.0, the ownership model allows users to specify who has permission to access their resources.
+By default, Portainer enforces access control to the resources in the docker according to the access control level defined for each user, with the exception that Administrators have full control over all resources.
+However, the ownership model of Portainer relied on the object ID, which is usually a random unique UUID.
+If users know the object ID, they can eventually gain access to that resource.
+At first glance, relying on a random unique UUID to provide Administrators with full resource control seems like a reasonable solution because it should be nearly impossible to guess or brute force the random object ID.
+However, volume resources can also be accessed via volume name, which is much easier to figure out.
+Below is an example, in which the volume is owned by Administrators:
+Other users who do not have permission will not see this volume by default:
+However, they can still access these volumes if they know the volume name, simply by directly querying the URL:
+As a result, any user can download, upload, or delete any data in the volume.
+In addition, the Portainer volume contains a file called portainer.db, which is a database that stores user credentials.
+By manipulating this database, users can escalate their privileges to Administrator, or disclose other sensitive information.
+The problem is due to an improper access control on Extension Activation, in which any authenticated user can access the Extension page and activate licenses.
+Chaining with above arbitrary file upload allows an authenticated user to overwrite the extension executable and execute it by activating the corresponding extension, which leads to remote code execution in the Portainer container.
+Another authorization bypass appears in the Host Filesystem Management feature.
+Portainer allows an administrator to enable the feature to manage the host filesystem from the UI.
+Only Administrators have access to this feature.
+However, this authorization only happens in the UI.
+The API endpoint still allows any authenticated user to access this feature:
+At this point, any authenticated user will have full permission over the host filesystem.
+This is a critical vulnerability, but it only works if the Host Filesystem Management feature is enabled, which is not the default setup.
+The next vulnerability, FG-VD-19-120, is a different story.
+In Portainer, users have two ways to create a container: create a container alone or create a multi-container as a stack.
+When creating a new container alone, users have an option to mount the host filesystem into the container:
+Administrators can disable the bind mount for non-administrators due to its potential security risk:
+When bind mount is disabled, users are no longer allowed to map a volume with a host file path.
+However, there is no security check in place when we create a stack.
+By instructing Docker to bind mount a host file path into the container in the Compose file, we can access the host filesystem whether or not the bind mount is allowed.
+The patch by Portainer parses the Compose file content and disallows bind mount:
+FortiGuard Labs reported seven vulnerabilities to Portainer in September 2019, and we have subsequently worked closely with the Portainer team to resolve all issues.
+All vulnerabilities are rated critical and easy to exploit, allowing attacker to steal the session, escalate privilege or access to host filesystem.
+Fortinet released the following IPS signatures to protect our customers from the identified XSS vulnerabilities:
+Portainer.Users.XSS Portainer.VolumeBrowse.XSS
+Other vulnerabilities are logical vulnerabilities, and the best recommendation is for administrators to upgrade to Portainer release 1.23.0 as soon as possible.
+If you are interested in this kind of assessment for your software or application, FortiGuard Labs provides a tailor-made vulnerability assessment and penetration testing service that can help you improve the security of your products.
+Check out https://fortiguard.com/services/pentesting for more information.
+Learn more about how FortiGuard Labs provides unmatched security and intelligence services using integrated AI systems.
+Find out about the FortiGuard Security Services portfolio and sign up for our weekly FortiGuard Threat Brief.
+Read about the FortiGuard Security Rating Service, which provides security audits and best practices to guide customers in designing, implementing, and maintaining the security posture best suited for their organization.

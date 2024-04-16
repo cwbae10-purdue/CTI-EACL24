@@ -1,0 +1,169 @@
+FortiGuard Labs Threat Analysis Report
+Affected platforms: Windows Impacted parties: Windows users with saved credentials Impact: Collecting device information and saved credentials Severity level: High
+Agent Tesla is a spyware, keylogger, and information stealer Trojan written in Microsoft’s .Net language (C#, VB .Net, etc).
+Agent Tesla has been observed in the world since 2014, and has been active ever since.
+Agent Tesla is also a commercial project, whose subscription license is sold on its official website.
+Several days ago, FortiGuard Labs captured a phishing email with an attachment that is being used to spread a new version of Agent Tesla.
+Figure 1 below shows the phishing content, where we marked off the sensitive information.
+In the following analysis, we will display how this variant spreads in the victim’s system, what data it steals from the victim’s device, as well as how it submits that stolen data back to its command and control server.
+The malware comes as an executable file originally named “*** Delivery Report.exe”.
+This file is a compiled AutoIt executable that can be easily decompiled by using the Exe2Aut or myAut2Exe tools.
+While both tools generate the same code, for certain samples myAut2Exe provides more readable output.
+To analyze this code, there are two options: analyze the sample in its original form as an executable file, or try to decipher the content by reading – and modifying – the AutoIt code.
+We have chosen the latter for this report, using code analysis and mixing it with dynamic analysis when necessary, particularly the process injection part of the malware.
+After the decompilation process, we can be seen that the code is heavily obfuscated.
+However, because we have access to the source code, it is relatively straight-forward to modify it to help with the deobfuscation and data dumping process.
+The sample AutoIt code contains 18 functions in total.
+However, only a few of those function calls that we identified during our testing were actually executed.
+As a result, our analysis will focus on only those detonating functions.
+The following table indicates the purpose of each function and is sorted in order of appearance and execution.
+Function Name
+Purpose
+Description
+nzozinnxnz()
+Embedded File
+Allocation
+Concatenates binary data in a variable that will be used in subsequent function calls.
+jxblsvvseo()
+Memory & Data Allocation
+Processes the binary data from the previous step.
+It receives three parameters, including the variable pointing to the binary data of the embedded .NET executable, and a security key that will be used during the decryption process.
+yzwwsccdll()
+Process Injection (Preparation)
+This function does not receive parameters.
+However, this function acts as a wrapper to the dpubfytzxt() function.
+It also sets the target program location (@HomeDrive & "\\\\Windows\\\\Microsoft.NET\\\\Framework\\\\v2.0.50727\\\\RegSvcs.exe") as well as the data of an embedded .NET executable.
+dpubfytzxt()
+Process Injection
+(Execution)
+This function receives two parameters.
+The first parameter passes a variable with the location of the “RegSvcs.exe”.
+The second parameter is a copy of the variable that holds the embedded .NET binary data.
+A shellcode is also part of this function, which will be in charge of performing the actual process injection.
+After the decompilation process, it can be seen that the code is heavily obfuscated.
+This particular malware sample makes use of a function called rbqbjtckpiuv() that was observed to perform most of the data deobfuscation.
+The function receives two parameters, a variable that holds HEX strings and an integer.
+The HEX string is converted to a binary by calling the BinaryToString() function
+The string is now split into single elements
+A loop is iterated through each element of the string to:
+a.
+Convert it to its ASCII representation by calling the Asc() function b. Xor the element using the integer number passed as a parameter to the function by calling the BitXOR() function c. Finally, returns a character corresponding to a UNICODE code by calling the ChrW() function
+Due to having access to the source code, it is relatively straight-forward to modify it accordingly to help with the deobfuscation of key functions and the overall data dumping process.
+Here the function dpubfytzxt() (Figure 5) performs a number of actions.
+It setups a shellcode (with a size of 8136 bytes) by concatenating several variables in cascade.
+It then allocates space by calling the Windows API VirtualAllocfunction, creates a C/C++ style structure (DllStructCreate), and sets the (DllStructSetData) data that will be used within the injection process.
+It then dynamically calls the (DllCallAddress) function at a specific memory address.
+The shellcode that performs the injection is stored in the variable called $n1.
+Once the shellcode has delivered the payload and the process injection has concluded, the entire control is passed to the RegSvcs.exe program, as expected.
+After the successful execution of the process injection, the payload starts looking for popular FTP clients, such as: FTPGetter, FTP Navigator, FlashXP, SmartFTP, among others.
+In our analysis, the injection payload is a Portable Executable (PE) file.
+For a better understanding about how this injected payload works, we extracted it directly to perform an isolated analysis of the threat.
+We elaborate our research on the payload in the next part of this post.
+To better analyze this payload file, I extracted it from the memory of the RegSvcs.exe process.
+In a PE analysis tool, as shown in Figure 8, it was detected as a 32-bit executable compiled by Microsoft Visual C#/Basic.Net.
+The extracted PE file (.Net App) should run like any other EXE files.
+However, the developer of this malware modified its data in the PE structure.
+When you double-click on it to run, the Windows system pops up a warning message, like the one shown in Figure 9, saying that this is not a valid Win32 application.
+Executing it in a debugger provides a similar message.
+This is a tricky little problem for analysts.
+After going through every PE structure data of the extracted file, I found there were several fields with incorrect values.
+After modifications and multiple tests, finally managed to get the .Net application to run without popping up a warning.
+The screenshot of the extracted .Net application, shown in Figure 8, was analyzed in .Net debugger dnSpy.
+This revealed that it was compiled on March 2nd, 2020, though the project name, the class names and the function names were obfuscated.
+This is done so analysts cannot read out the meanings directly from the names.
+The entry point function (the main() function) is jkp.jkm().
+This malware uses a code obfuscation technology that messes with the original code flow by putting the original code into “for”, “switch-case”, and “goto” statements.
+The condition value of the control statement “switch-case”, which determines which code branch it will go to, is dynamically calculated at runtime.
+The malware uses this code obfuscation strategy throughout all the functions.
+In the following figure, we see a code snippet captured from the jkp.jkm() function.
+In this malware, all constant strings are encrypted in a huge array (whose definition occupies more than 18,000 lines), and are decrypted before use by calling the function <Module>.\u202E().
+I modified the name as cls_Module.decode_str_by_idx() to more easily recognize it.
+I also renamed other functions for the same purpose.
+In my analysis, the malware first kills any duplicated malware from running processes by searching for the program name (RegSvcs.exe).
+It then starts two threads, but the thread functions did not turn out any useful information.
+I will explain them in other sections.
+Finally, it reaches a function called jfd_collect_credentials() (the original name was jfd()), which is the key function for collecting saved credentials from installed software in the victim’s device and then submitting the stolen credentials to its C&C (Command and Control) server over the SMTP protocol.
+Figure 12 is a screenshot of the code snippet of function jfd_collect_credentials(), which is very easy to see now because I have removed the obfuscation code, which I mentioned in Figure 11.
+This function calls many sub-functions, including kpa_Chrome(), kpm_Mozilla(), and so on, to collect saved credentials.
+It then adds them into the List object “list”.
+The bottom part adds groups of software names and their credentials file folder paths into another List object called “list3”.
+All items in “list3” will be enumerated later.
+It then collects the credentials from files under the folder path if they exist, with each credential added into “list” as well.
+Each item added in “list3” contains data similar to the example below:
+("Opera Browser", "C:\Users\{user-name}\AppData\Roaming\Opera Software\Opera Stable", true)
+It collects the saved credentials of “Opera Browser” saved in "C:\Users\{user}\AppData\Roaming\Opera Software\Opera Stable".
+Through my analysis, the list below includes all of the software targeted by this malware:
+Web Browsers:
+Google Chrome, Mozilla Firefox, Microsoft IE & Edge, Apple Safari, Tencent QQBrowser, Opera Browser, Yandex Browser, 360 Browser, Iridium Browser, Comodo Dragon, CoolNovo, Chromium, Torch Browser, 7 Star Browser, Amigo Browser, Brave, CentBrowser, Chedot, Coccoc, Elements Browser, Epic Privacy, Kometa, Orbitum, Sputnik, Uran, Vivaldi, Citrio, Liebao Browser, Sleipnir 6, QIP Surf Browser, Coowon Browser, SeaMonkey , Flock Browser, UCBrowser , BlackHawk Browser, CyberFox Browser, KMeleon Browser, IceCat Browser, IceDragon Browser, PaleMoon Browser, WaterFox Browser and Falkon Browser.
+Email Clients and Messenger Clients:
+Microsoft Outlook, Mozilla Thunderbird, Aerofox Foxmail, Opera Mail, IncrediMail, Pocomail, Qualcomm Eudora, The Bat!
+Email, Postbox, Claws Mail, Becky!
+Internet Mail, Trillian Messenger and ICQ Transport.
+VPN, FTP Clients and Download Managers:
+OpenVPN, FileZilla, Ipswitch WS_FTP, WinSCP, CoreFTP, FTP Navigator, FlashFXP, SmartFTP, CFTP, FTPGetter, DownloadManager and Coowon jDownloader.
+This malware not only collects credentials from files, but also from the system registry.
+Let’s take a look at how it collects Microsoft Outlook credentials from the system registry.
+It tries to access four sub-keys from the system registry, which are:
+"HKCU\Software\Microsoft\Office\15.0\Outlook\Profiles\Outlook\9375CFF0413111d3B88A00104B2A6676"
+"HKCU\Software\Microsoft\Windows NT\CurrentVersion\Windows Messaging Subsystem\Profiles\Outlook\9375CFF0413111d3B88A00104B2A6676"
+"HKCU\Software\Microsoft\Windows Messaging Subsystem\Profiles\9375CFF0413111d3B88A00104B2A6676"
+"HKCU\Software\Microsoft\Office\16.0\Outlook\Profiles\Outlook\9375CFF0413111d3B88A00104B2A6676".
+Usually, one of the sub-keys is used by Outlook, depending on the version.
+Once one sub-key is found to exist, it goes through all its sub-keys to pull out the values of "IMAP Password", "POP3 Password", "HTTP Password", and "SMTP Password".
+Figure 11 shows a group of my saved email account information that the malware just harvested from the system registry and added into a variable of “list”.
+After the malware has collected all available credentials from the victim’s system, its next step is to format these credentials and send them to its server.
+This malware sends the credentials over the SMTP protocol, just like sending an email.
+The attacker has registered an email account in advance for receiving stolen credentials.
+To send these SMTP packets to the server, it has to provide the attacker’s email account credentials.
+The email account, password, and host are decrypted.
+Figure 14 shows the moment when the malware has just settled down the host and email account information for SMTP.
+The submitted email has the following data fields.
+Subject: It starts with “PW_” and is followed with victim’s user name and computer name for submitting credentials, like “PW_user-name/computer-name”.
+From and To: Both are the attacker’s email address.
+Body: The first part is the victim’s device’s basic information, like current Time, User Name, Computer Name, OSFullName, CPU, and RAM.
+The rest data are the stolen credentials decribed in the previous sections of this report.
+Figure 15 is a screenshot of Wireshark, showing that the malware has submitted the stolen credentials over the SMTP protocol.
+After going through the code structure and workflow, I found that this new Tesla Agent variant has many feature switch variables that are used to enable or disable features, and that are set as “false” (disabled) by default.
+They would be set on the Agent Tesla generator by the attacker when they generate this variant.
+Let’s see what features have been switched off by the attacker.
+This variant is added into both the Startup folder in the Start Menu and in the auto-run group in the system registry.
+This enables Agent Tesla to run when the victim’s system starts.
+As mentioned in the previous section, the agent starts a thread.
+The thread function disabled many features designed to modify key values in the system registry.
+Disables Windows User Account Controls Disables the victim from opening Task Manager Disables the victim from opening the command prompt (cmd.exe) Removes the Control Panel, Run items from the Start menu.
+and the New Task from Task Manager Disables the victim’s ability to access the system registry Disables the victim’s ability to restore the Windows System Disables Folder Options from Windows Explorer Disables the victim from running Msconfig.exe
+Disables Windows User Account Controls
+Disables the victim from opening Task Manager
+Disables the victim from opening the command prompt (cmd.exe)
+Removes the Control Panel, Run items from the Start menu.
+and the New Task from Task Manager
+Disables the victim’s ability to access the system registry
+Disables the victim’s ability to restore the Windows System
+Disables Folder Options from Windows Explorer
+Disables the victim from running Msconfig.exe
+3.
+It uses a timer function to ask its server every 60 seconds if it should uninstall this malware from the victim’s system.
+4.
+It can restart the victim’s Windows by executing "Shutdown -r -t 5".
+5.
+It starts a thread to capture and keep a screenshot of the victim’s screen into a jpeg image.
+It then submits this screenshot as an email attachment to the attacker’s email address with the subject, “SC_ user-name/computer-name”.
+6.
+It starts its keylogger function by setting a keyboard hook function (by calling the API SetWindowsHookEx(13, hook_fun, …)).
+This enables the hook function to collect the victim’s input from the keyboard, along with the name of the software it was input to.
+It then sends the collected keylogger data as an email body to the attacker’s email box with the subject, “KL_ user-name/computer-name”.
+In this post, we performed a deep analysis of this new variant of Agent Tesla – from the phishing email to the AutoIT script abused by malware attackers, and to the real Agent Tesla payload running in the “RegSvcs.exe” process.
+This variant of Agent Tesla steals the saved credentials of more than 60 software applications on the victims’ Windows system.
+Finally, it submits all of this stolen information via an email to the attacker’s email box over the SMTP protocol.
+Part of the credentials sold on the Dark Web are from information stealer malware such as this.
+Fortinet already has solutions in place to protect customers from this malware using FortiGuard’s AntiVirus, FortiMail and IPS services, as follows:
+This Phishing email is labeled as SPAM by FortiMail.
+The Phishing email attachment file (*** Delivery Report.exe) is detected as “AutoIt/Injector.FDH!tr” and blocked by the FortiGuard AntiVirus service.
+The SMTP traffic that submits the stolen info is detected by the FortiGuard IPS signature “Spyware.Agent.Tesla”.
+Sample SHA-256
+[Phishing email attachment file or *** Delivery Report.exe]
+1ABF66AB839C550BC77D97D1644C1225935A86B9591E9A95BCD606EBEC6BBC19
+https://www.fortinet.com/blog/threat-research/analysis-of-new-agent-tesla-spyware-variant.html https://www.fortinet.com/blog/threat-research/in-depth-analysis-of-net-malware-javaupdtr.html
+Learn more about FortiGuard Labs threat research and the FortiGuard Security Subscriptions and Services portfolio.
+Sign up for the weekly Threat Brief from FortiGuard Labs.
+Learn more about Fortinet’s free cybersecurity training initiative or about the Fortinet Network Security Expert program, Network Security Academy program, and FortiVet program.

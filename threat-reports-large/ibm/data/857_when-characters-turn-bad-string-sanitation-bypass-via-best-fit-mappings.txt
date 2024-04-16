@@ -1,0 +1,29 @@
+If you’re working on software that converts strings from one character set to another, such as when performing UNICODE to ANSI string conversions, you may have probably heard about best-fit mapping conversions.
+One interesting aspect about best-fit mapping conversions is that they can be used to bypass string sanitation routines as there may be instances where a sanitization code will fail to sanitize certain characters which may become potentially dangerous if converted to another character set.
+Here’s a sample illustration:
+An example of such sanitation bypass is CVE-2012-3342, a bug in Oracle Java Web Start (JWS) which we reported and was patched by Oracle earlier this year and which I will be discussing in this blog post.
+A best-fit mapping conversion occurs when a character cannot be represented in another character set.
+In such cases, a “best-fit” character which is usually how the character looks like in the target character set will be used to represent the original character instead.
+For example, the best-fit mapping for the UNICODE characters U+02BA (MODIFIER LETTER DOUBLE PRIME) and U+030E (COMBINING DOUBLE VERTICAL LINE ABOVE) in the Windows-1252 character set is the quotation mark character (0x22).
+As illustrated below, you’ll notice the similar appearance of the characters and their subtle differences:
+Let’s use CVE-2012-3342 as a concrete example of how best-fit mapping conversions can be leveraged to bypass a string sanitation routine.
+The vulnerability exists in the command line argument sanitation code of the Java Web Start Launcher (JWS launcher), javaws.exe.
+The argument sanitization code is used by the JWS launcher when sanitizing the arguments that it will pass to javaw.exe.
+Because the arguments that the JWS launcher passes to javaw.exe may contain attacker-controllable strings, the argument sanitation code is there to prevent arbitrary arguments from being passed to javaw.exe.
+The argument sanitation code in the JWS launcher (in JRE 7u6 and above) operates on wide character strings and one sanitation method used involves quoting the whole argument and escaping all quotation mark and backslash characters that are found in the string.
+Consider the following simplified command line in which an attacker attempts to inject three malicious arguments to javaw.exe via an attacker-controllable string (in red):
+javaw.exe -arg=Str” maliciousArg1 maliciousArg2 “maliciousArg3
+Because of the sanitation process, the argument injection will be thwarted:
+javaw.exe “-arg=Str\” maliciousArg1 maliciousArg2 \”maliciousArg3″
+However, consider if the attacker uses the UNICODE character U+02BA instead of the quotation mark character to perform the argument injection:
+javaw.exe -arg=Str[U+02BA] maliciousArg1 maliciousArg2 [U+02BA]maliciousArg3
+Because the sanitation code specifically looks for the quotation mark (0x22) and the backslash (0x5C) character, the UNICODE character U+02BA will be untouched in the sanitation process:
+javaw.exe “-arg=Str[U+02BA] maliciousArg1 maliciousArg2 [U+02BA]maliciousArg3“
+The above command line would not pose an issue if javaw.exe uses the wide character version of its command line, but unfortunately, javaw.exe uses the ANSI version (internally via GetCommandLineA()) of its command line.
+Because best-fit mapping is used in the conversion of the command line, the following ANSI version of the command line is used by javaw.exe:
+javaw.exe “-arg=Str” maliciousArg1 maliciousArg2 “maliciousArg3”
+Notice that instead of one argument, the conversion process resulted into four arguments, with the second, third and the fourth arguments being controlled by the attacker.
+If you are developing software that uses different character sets, remember to perform the string sanitation after the string conversion, not before.
+Additionally, when converting strings used in security-sensitive operations, use documented options which prevent the use of best-fit mappings.
+An example is passing the WC_NO_BEST_FIT_CHARS flag to the WideCharToMultiByte() API.
+Taking advantage of best-fit mapping conversion is just one way for an attacker to bypass string sanitization routines, so always test and look at them with an attacker’s mindset by trying as many attack scenarios you can think of.

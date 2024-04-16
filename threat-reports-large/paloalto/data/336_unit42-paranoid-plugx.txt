@@ -1,0 +1,131 @@
+The PlugX malware has a long and extensive history of being used in intrusions as part of targeted attacks.
+PlugX is still popular today and its longevity is remarkable.
+The malware itself is well documented, with multiple excellent papers covering most aspects of its functionality.
+Some of the best write-ups on the malware are cited below:
+TR-12 – Analysis of a PlugX malware variant used for targeted attacks.
+(Circl)
+Analysis of a Recent PlugX Variant – “P2P PlugX” (JPCert)
+PlugX some uncovered points (Airbus)
+PlugX – The Next Generation (Sophos)
+Given this wealth of information in the public domain, PlugX receives a lot of attention from security vendors who put efforts into providing detection mechanisms for it.
+Despite this, it remains a tool of choice for many attackers today, meaning that if attackers are to be successful in using the malware, they must innovate in the delivery and installation of the malware if they are to successfully infect their targets.
+This article discusses a group of PlugX samples which we believe are all used by the same attacker(s), and the measures they have taken to attempt to bypass security mechanisms.
+The targets of these attacks appear to primarily be companies in the video games industry, although other targets may exist outside of our telemetry.
+Specifically, we discovered a series of samples using interesting techniques with respect to:
+Resolution of an initial C2 address
+Combining PlugX with open source tools to initially load the malware
+Avoiding detection on disk
+Palo Alto Networks defends our customers against the samples discussed in this blog in the following ways:
+Wildfire identifies all files mentioned in this article as Malicious.
+Traps 4.0 can be configured to protect the processes that are cited as being abused in this blog from loading malicious code.
+Palo Alto Networks’ AutoFocus customers can track samples related to this blog via the tag:
+ParanoidPlugX
+Related IOCs are provided in Appendix A of this blog.
+Our journey begins with an RTF file named “New Salary Structure 2017.doc”, which exploits CVE-2017-0199.
+The mechanics of this exploit are already well covered, and as such do not require further discussion here.
+The document reaches out to download its initial payload from the following URL:
+hxxp://172.104.65.97/Office.rtf
+This is a downloader script which attempts to download and execute two payloads, the code is shown below:
+The first payload is a Windows Installer (MSI) file, and dynamic analysis of this file piqued out interest.
+We could see the malware was PlugX from its actions, yet the C2 address was a pastebin.com URL.
+Looking at the Pastebin post we expected to immediately identify a block of text which would later decode to a C2 address, but glancing at the returned content we were unable to immediately identify the C2.
+The second file is a PowerShell script which appears to be based on a Rapid7 Ruby Exploitation script that loads arbitrary shellcode.
+In this case, the shellcode is a copy of PlugX and is the same shellcode contained in the MSI file that we will dissect below.
+The main payload is delivered in a Microsoft .NET Framework file within previously mentioned MSI file.
+When executed, the .NET Framework wrapper will first check if VMware tools is running in background, this is done via a simple process check, searching for any process named “vmtoolsd.” Provided there are no matching processes running, the malware continues execution, creating a registry entry with the name ‘MSASCuiLTasks’ in HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce for persistence.
+This registry key causes the malware to run again each time the system reboots.
+Next, it will copy the first stage shellcode in memory and create a new thread with the shellcode running in it, the code responsible for this execution is shown in Figure 1.
+The shellcode is not encrypted but is obfuscated.
+Figure 1 – The main code from the .NET wrapper, with the Shellcode array being created and executed in a new thread.
+The first shellcode decrypts a further shellcode block.
+This second shellcode block in turn, will unpack the main PlugX DLL in memory using RtlDecompressBuffer.
+As is typical for PlugX, the header of the final DLL is missing its magic DOS and NT image headers, which are replaced with XV instead of MZ and PE as shown in Figure 2.
+Figure 2 – The decoded DLL payload using the wrong header, XV instead of MZ/PE.
+Finally, the second shellcode block will resolve the imports and relocations and jump to the entry point of the DLL.
+The configuration information for the malware, including the C2 information are encrypted in the first shellcode blob and are passed as an argument to the DllMain function of the main PlugX DLL.
+This DLL itself also contains a default configuration to connect to the localhost on port 12345.
+This means if you extract the DLL manually and execute it then it will connect to localhost:12345 rather than the real C2 server, which was passed as an initial argument to the DLL by the first shellcode.
+Decrypting the Configuration
+As previously mentioned, the real configuration data is stored in the first stage shellcode but it is not stored in cleartext, but encrypted and compressed.
+The configuration data is encrypted with the same algorithm described previously by JPCert but using a different XOR value.
+The versions discussed in the JPCert blog post used 20140918, 353 while the versions we examined use XOR values of 20141118, 8389.
+The same decryption routine is also used for any other string obfuscation or file encryption as required by this sample of PlugX.
+After decrypting the strings, they must be further decompressed using LZNT1.
+For that we can use a Python script, included in Appendix B – Python Scripts.
+After decrypting and decompressing the strings, we can trivially identify aspects of the PlugX configuration.
+For example, we can see it will inject itself to one these three processes:
+%ProgramFiles(x86)%\Sophos\AutoUpdate\ALUpdate.exe
+%ProgramFiles(x86)%\Common Files\Java\Java Update\jusched.exe
+%ProgramFiles(x86)%\Common Files\Adobe\ARM\1.0\armsvc.exe
+The attempt to inject itself into a process belonging to antivirus product suite is particularly bold.
+In addition to this, the malware queries four PasteBin links to extract the C2 addresses from these links:
+https://pastebin.com/eSsjmhBG
+https://pastebin.com/PSxQd6qw
+https://pastebin.com/CzjM9qwi
+https://pastebin.com/xHDSxxMD
+A full list of the extracted strings from the configuration is given in Appendix D – Extracted PlugX Strings.
+PlugX has a feature to extract encrypted C2 configurations from a given URL.
+In this case, the attackers were creative in hiding the string in a seemingly legitimate block of text.
+An example of the content retrieved from Pastebin is given below:
+At first glanced we missed it, but the paste uses the same technique discussed in this Airbus post.
+It parses the “RSA key” looking for magic values “DZKS” and “DZJS”.
+It then reads and decrypts the content between these values to yield an IP address as shown below:
+A Python script to decode strings encrypted with this technique is given in Appendix B – Python Scripts.
+An overview of the whole execution flow for this sample is given in Figure 3.
+Figure 3 – An overview of the execution flow for this sample.
+In all, the attackers have chained together many disparate pieces of code both custom and open source, all in order to load PlugX.
+Given the number of components, this would have taken a reasonable amount of time and indicates their dedication to evading detection whilst continuing to use the same malware.
+Pivoting to other PlugX samples
+Based on our findings above, we identified other examples of interesting PlugX samples.
+These other examples were identified based on similar samples that were sent to the targeted organizations, infrastructure used by the attackers, as well as unique delivery mechanisms for samples.
+Paranoid PlugX
+One related series of PlugX samples we examined appeared to be particularly “paranoid” about being detected on disk and so taking specific anti-forensics steps to defeat being detected on the disk.
+One example of these samples is given below:
+SHA256:6500636c29eba70efd3eb3be1d094dfda4ec6cca52ace23d50e98e6b63308fdb
+The file is a self-extracting RAR, which is a common delivery mechanism for PlugX particularly when the eventual payload will be sideloaded by a legitimate executable.
+In that respect this case is no different, as the eventual payload executed by a legitimate signed Microsoft binary which loads the DLL “BlackBox.dll”.
+However, in order to kick off the execution of the malware the attacker uses a batch script which executes the malware, but the batch script does more than simply initiate execution of the malware.
+After running the malware, the batch script goes on to cleans up all signs of its existence on the system, this includes:
+Deletion of all initial files created during installation, as well as all associated files required on disk during initial execution.
+Deletion of all registry keys associated with the extraction of the SFX RAR
+Deletion of the User Assist Key entries related to applications that have been recently executed
+Deletion of all registry keys relating to services that have recently run
+Clearly the attacker using this PlugX is paranoid about it being detected on disk, both in the registry and the file system.
+To top this off the script runs most of the deletion commands more than once.
+The result is that there should be no evidence that the malware was ever executed on the disk, making it harder for forensics teams to identify how the malware got there, and meaning that memory or network based detection would be required to identify the intrusion.
+The full contents of the batch script are given in Appendix C – a.bat.
+The power of open source & PlugX
+In the first half of 2017, we saw attackers begin to improve upon this “Paranoid” version of PlugX – it wasn’t enough to be in memory-only after getting infecting the system, the attackers also wanted to bypass application allowlisting techniques in use by network defenders.
+To this end, they began incorporating open source techniques, in particular those that have been assembled in a list authored by the GitHub user SubTee.
+For example, the following sample loads the malware as shellcode within a .NET Framework project using msbuild.exe, effectively bypassing application allowlisting techniques:
+SHA256: 822b313315138a69fc3e3f270f427c02c4215088c214dfaf8ecb460a5418c5f3
+This sample approximately follows the GIST published here, but has additional code which appears to be custom to our attacker which acts as a helper to load the shellcode.
+The shellcode is, as in our first example, another PlugX payload.
+In another case the attackers use another code snippet borrowed from the SubTee GitHub project, this time filling in a fully templated .NET application allowlist bypass file:
+SHA256: 3e9136f95fa55852993cd15b82fe6ec54f78f34584f7689b512a46f0a22907f2:
+This time the attacker didn’t have to write any of their own code, instead they were simply able to paste their shellcode directly into a template, in order to launch PlugX as a child process of a trusted application.
+Conclusions & Mitigations
+While PlugX has been well understood by the security community for years, attackers continue to use the malware.
+Some possible reasons for this continued use include:
+The operators of the malware are familiar and comfortable with the existing malware, meaning they are reluctant to change.
+Though competent at packaging PlugX in different ways, the attackers would struggle to write a fully featured malware like PlugX.
+The effort required to rebuild a malware as complex as PlugX is not worth the effort when they can bypass defenses without doing so.
+In all likelihood, a combination of these three factors is behind the continued prevalence of the malware.
+Many PlugX attackers continue to use relatively mundane techniques to load the malware, making it easy for defenders to identify and prevent execution of the malware, but others continue to apply new and interesting techniques to evade detection.
+In particular, this set of attackers have made good use of open source tools to package the malware, and show some skill in writing their own wrapper applications to execute payloads.
+Many in the security industry would be quick to recommend application whitelisting as one of the most effective way to reduce the success rate of attacks, however by applying publicly available techniques it is possible to bypass these controls.
+For organizations relying on Application Whitelisting, SubTee’s blog makes a series of recommendations which help prevent these bypass techniques.
+In addition to these mitigations, the Traps 4.0 can be configured to protect the .NET processes which can be abused in this manner.
+Appendix A – Related IoCs
+Directly related:
+45.248.84.7 172.104.65.97
+https://pastebin.com/eSsjmhBG https://pastebin.com/PSxQd6qw https://pastebin.com/CzjM9qwi https://pastebin.com/xHDSxxMD
+Inferred relation via similar targeting
+Domains:
+kbklxpb.imshop.in serupdate.wicp.net msfcnsoft.com micros0ff.com msfcnsoft.com microsoff.net msffncsi.com A781195.gicp.net upgradsource.com B781195.vicp.net kbklxp.eicp.net
+Appendix B – Python Scripts
+LZNT1 decrypt script, only works with Windows.
+Decoding the PlugX configuration:
+Decoding the C2 addresses from Pastebin:
+Appendix C – a.bat
+Appendix D – PlugX Extracted strings

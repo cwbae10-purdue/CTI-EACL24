@@ -1,0 +1,79 @@
+In October 2013 and March 2014, I had the opportunity to present my IE 10 Enhanced Protected Mode sandbox research at the Hack in the Box 2013 and the Black Hat Asia 2014 security conferences.
+This blog post summarizes my findings, discusses the most important points and directs you to related resources in case you want to find out more about the subject.
+You can get the slides of my talk here and the whitepaper here.
+The whitepaper was also published in HITB Magazine Issue 10.
+In 2006, Protected Mode was introduced in Internet Explorer (IE) 7 with the goals of preventing an attack from modifying data and of preventing installation of persistent malicious code in the system.
+Using the integrity mechanism introduced in Windows Vista, Protected Mode runs the sandboxed IE process at low integrity, which greatly limits what it can write to.
+Fast forward to 2012.
+Enhanced Protected Mode (EPM) was introduced in IE 10.
+One of the goals of EPM was to address a limitation of the original Protected Mode — namely, the ability of the sandboxed IE process to still read most resources that can lead to potentially sensitive or personal information being stolen.
+With EPM, the sandboxed IE process runs in an AppContainer, a process isolation mechanism introduced in Windows 8 that restricts both read and write access of a sandboxed process and also prevents the sandboxed process from performing certain operations.
+You can think of AppContainers as boxes in which applications run and that in turn limit what the applications can access and what operations they can perform.
+In addition to IE EPM, AppContainer is the sandboxing mechanism used by Windows Store Apps.
+AppContainers are explicitly given a set of capabilities so that processes running in them can access a given set of resources and to allow them to perform a specific set of operations that are otherwise denied to AppContainer processes by default.
+By default, when visiting Internet and public network sites, the AppContainer in which IE runs is assigned the following capabilities: internetExplorer, internetClient, sharedUserCertificates, location, microphone and webcam.
+These capabilities, except for the internetExplorer capability, are documented here.
+The illustration below shows the AppContainer in which the sandboxed IE process runs and the assigned capabilities:
+Among other things, the internetExplorer capability (SID: S-1-15-3-4096) is used by the sandboxed IE process to access browser-related resources located outside the AppContainer-specific locations (locations in the registry and file system that are readable/writable to processes running in a particular AppContainer for data storage).
+So how does EPM, with the use of AppContainer, help in preventing access to potentially sensitive or personal information?
+In my opinion, the following are two of the most important AppContainer features that do just that:
+In order for an AppContainer process to access securable objects, such as files and registry keys, the securable object needs to have an additional access control entry (ACE) for any of the following:
+The AppContainer — An example of resources that have an AppContainer ACE are the AppContainer-specific locations that need to be readable and writable to processes running in a particular AppContainer.
+The illustration below shows the access control list of IE’s AppContainer-specific folder.
+The highlighted entry is the IE AppContainer ACE that grants full access to processes running in IE’s AppContainer:
+ALL APPLICATION PACKAGES — This essentially means that any AppContainer process running in any AppContainer can access the resource.
+An example of resources that have an ALL APPLICATION PACKAGES ACE are common/system locations (e.g.
+Windows folder, subkeys of HKEY_LOCAL_MACHINE etc.)
+that contain resources to which AppContainer processes need access in order to properly launch or operate.
+A capability that matches one of the AppContainer’s capabilities — An example of resources that have a capability ACE are browser-related resources that have an internetExplorer capability ACE in order to allow access from processes running in IE’s AppContainer.
+The illustration below shows an internetExplorer capability ACE in the “%UserProfile%\Favorites” folder:
+Because of this AppContainer feature, personal user files such as those stored in the user’s Documents, Pictures and Videos folder (i.e.C:\Users\%UserName%\Documents,Pictures,Videos) will not be directly accessible to the sandboxed IE process because those folders do not have an access control entry for any of the above.
+Another AppContainer feature that helps EPM in preventing the sandboxed IE process from accessing resources that might be stored in trusted home and corporate networks is network isolation.
+With network isolation, the AppContainer needs to have specific capabilities in order for an AppContainer process to connect to Internet and public network endpoints (internetClient), connect to and receive connections from Internet and public network endpoints (internetClientServer) and connect to and receive connections from private (trusted intranet) network endpoints (privateNetworkClientServer).
+By default, when visiting Internet and public network sites, IE’s AppContainer has only the internetClient capability, which means that the sandboxed IE process can connect only to Internet and public network endpoints.
+Connections to private network endpoints such as those that are part of trusted home and corporate intranets are blocked.
+There are other restriction/isolation schemes provided by AppContainer that further help in sandboxing AppContainer processes, some of which are described in my talk.
+But since the internals of AppContainer are still largely undocumented/unexplored, there are certainly more AppContainer restriction/isolation schemes that need to be researched and documented, which makes AppContainer an interesting research topic.
+After understanding the EPM restrictions in place, two important questions need to be answered: Is there any other potentially sensitive or personal information that a malicious code running in the EPM sandbox can still access?
+And can a malicious code running in the EPM sandbox still perform some malicious activities (e.g., phoning home, screen scraping etc.)
+while inside the EPM sandbox?
+The answer to both questions is “Yes.” My talk described the limitations/weaknesses that I observed, and here are some that are worth noting:
+There are user-specific locations such as a few folders under the %UserProfile% folder and some subkeys under HKEY_CURRENT_USER that can still be accessed by the sandboxed IE process.
+Resources in these locations will likely contain potentially sensitive or personal information owned by a specific user.
+Examples of potentially sensitive files that can be directly accessed by code running in the EPM sandbox process are the EPM cache files and EPM cookies because they are stored under the AppContainer-specific folder (%UserProfile%\AppData\Local\Packages\%AppContainerName%\AC\InetCache, InetCookies), so accessing them does not require mediation from the higher-privileged broker process.
+Additionally, some registry keys and folders containing potentially sensitive or personal information are also accessible to code running in the EPM sandbox either due to the ALL APPLICATION PACKAGES ACE or the internetExplorer capability ACE.
+Examples of these are:
+%UserProfile%\Favorites (Favorites)
+HKCU\Software\Microsoft\Internet Explorer\TypedURLs (Typed URLs in IE)
+HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU (Run command MRU)
+HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\RecentDocs (Recent items list)
+Compared to other sandbox implementations, such as the Google Chrome sandbox, there are still well-known restriction or isolation mechanisms that EPM does not apply.
+Examples of these unapplied restriction/isolation mechanisms are restricted tokens, job object restrictions, window station isolation and desktop isolation.
+Without these restriction/isolation mechanisms in place, attacks such as screen scraping, screen capture and stealing/modifying of the clipboard contents are still possible.
+Finally, IE’s AppContainer has the internetClient capability, which means that malicious code running in the EPM sandbox will still be able to connect to Internet and public network endpoints, which in turn allows a sandboxed malicious code to phone home or send any stolen information to a remote attacker.
+As mentioned in my talk, the most likely reason for the existence of some of these limitations/weaknesses is either compatibility issues or that addressing them would require significant development effort.
+The fun part of every sandbox research effort is when you are analyzing and documenting a sandbox implementation and finding sandbox escape bugs along the way.
+In my talk, I demonstrated a sandbox escape leveraging CVE-2013-4015, a bug I found while looking at the EPM sandbox.
+But before discussing the bug, let me first enumerate the most likely ways a code will escape the EPM sandbox:
+This involves exploiting local EoPs, especially those that result in arbitrary code execution in the kernel.
+A recent example is when attackers used an NDProxy vulnerability (CVE-2013-5065) to escape the Adobe Reader sandbox.
+Another example is when Jon Butler and Nils used a Win32k vulnerability (CVE-2013-1300) to escape the Google Chrome sandbox in Pwn2Own 2013.
+This involves taking advantage of permissive sandbox policies or resource permissions (such as permissive ACLs) in order to control the behavior of a higher-privileged process.
+An example is the IE elevation policy vulnerability (CVE-2013-3186) discovered by Fermin Serna that allowed the execution of arbitrary scripts in medium integrity because a program with a default “run in medium without prompt” elevation policy can be passed a particular argument to run a user-controlled script.
+This involves finding ways to evade the policy checking logic.
+An example is the vulnerability (CVE-2011-1353) that my colleague Paul Sabanal and I discovered (also independently discovered by Zhenhua Liu) in the policy engine of the Adobe Reader sandbox.
+The vulnerability allowed the evasion of a registry policy check via the use of additional backslashes in a registry resource name; the vulnerability could in turn be used by an attack to disable the Adobe Reader sandbox by modifying a critical sandbox configuration entry in the registry.
+This involves exploiting vulnerabilities in the services exposed by the higher-privileged broker process.
+A notable example is the buffer overflow vulnerability (CVE-2013-0641) in an Adobe Reader sandbox broker service that was used by an attack to escape the Adobe Reader sandbox.
+Going back to the discussion of CVE-2013-4015, the bug is an example of a policy check vulnerability that allowed execution of any executable in medium integrity without prompt.
+By delimiting an application name and arguments with a tab character instead of a space, the vulnerable function (ieframe!GetSanitizedParametersFromNonQuotedCmdLine()) used by the broker will be misled to extract an incorrect application name from a command line.
+Consider the following command line:
+C:\Windows\System32\cmd.exe\t\..\notepad.exe /c calc.exe
+In the above case, the vulnerable function will treat the string “C:\Windows\System32\cmd.exe\t\..\notepad.exe” (normalized to “C:\Windows\System32\notepad.exe“) as the application name and the string “/c calc.exe” as the argument.
+Because of a default elevation policy, the executable “C:\Windows\System32\notepad.exe” is allowed to execute in medium integrity without prompt; thus, the application name will pass the elevation policy check.
+However, when the command line is passed to kernel32!WinExec() by the broker, cmd.exe will be executed instead!
+We immediately reported the bug to Microsoft.
+It was patched in July 2013.
+Enhanced Protected Mode is a welcome incremental step done by Microsoft in improving IE’s sandbox.
+Its use of the new AppContainer process isolation mechanism will certainly help in preventing theft of personal user files and corporate assets from the network.
+However, there are still some limitations or weaknesses in the EPM sandbox that can lead to the exfiltration of some other types of potentially sensitive or personal information, and there are still some improvements that can be made to prevent the attacks that I described in my talk.

@@ -1,0 +1,59 @@
+In this blog, we will review how to inspect the received Mach messages by setting up a kernel inline hooking for function mach_msg_receive_results().
+In part I of this blog, we discussed how to inspect the sending of Mach messages in kernel-mode perspective.
+In part II, I will continue to define how to inspect received Mach messages by setting up a kernel inline hook.
+Let’s get started!
+Receiving Mach messages
+As mentioned in Part I, in the section “Messaging Implementation”, the functions mach_msg() and mach_msg_overwrite() can also both be used to receive Mach message.
+Let’s take a look at their execution flow:
+You can read the source code of the function mach_msg_overwrite_trap(), which is implemented in xnu-4570.71.2/osfmk/ipc/mach_msg.c.
+The function mach_msg_overwrite_trap() can invoke the function mach_msg_receive_results() to receive a Mach message.
+The following is a code snippet that handles received messages in the function mach_msg_overwrite_trap():
+The definition of the function mach_msg_receive_results() is shown below:
+We can see that this function first invokes the function current_thread(), which returns a pointer to the thread structure.
+The thread structure is defined in xnu-4570.71.2/osfmk/kern/thread.h.
+It contains many fields, so we need to find the field that stores the received message.
+We can see here that the field saved.receive.kmsg of the thread structure stores the received message.
+The following are some macro definitions related to the received message in xnu-4570.71.2/osfmk/kern/thread.h:
+Going back to Figure 3, the code “self->ith_kmsg” is used to get a pointer to the ipc_kmsg structure that stores the received Mach message.
+So we need to implement an inline hook on the function mach_msg_receive_results(),get a reference of the ipc_kmsg structure, and then record the received Mach message.
+Kernel Inline Hooking
+Let’s go into the assembly world of the function mach_msg_receive_results():
+We can see that the function starts with a prologue.
+Here I used the following inline hook with a length of 12 bytes.
+Let’s look at the assembly instructions of the hooked mach_msg_receive_results().
+It is able to jump to the memory address 0xFFFFFF7F9BE6B100, which is actually the address of its trampoline.
+So far, we have picked the opcode instructions for inline hooking.
+We next need to construct the trampolines.
+The following is the trampoline of hooking mach_msg_receive_results().
+The first 12 bytes of instructions are copied from the prologue of the function mach_msg_receive_results().
+In this trampoline, it first executes the prologue of the target function, and it then invokes its handler that is used to log the received Mach messages.
+Finally, it jumps back to the target function to execute the remaining instructions.
+Let’s calculate the indirect jumping address:
+We can see that the trampoline finally jumps to 0xffffff801816f07c(mach_msg_receive_results+12) to execute its instructions.
+Next, let’s dive into the handler(mach_msg_receive_results_prologue_handler).
+The following is a snippet of the function mach_msg_receive_results_prologue_handler().
+It first gets a pointer to the current thread structure from gs:0x8.
+The field saved.receive.kmsg in the thread structure is located at offset 0x2E0.
+The field saved.receive.state in the thread structure is located at offset 0x2B0.
+This information allows us to get the pointer to the ipc_kmsg structure and the received state via their corresponding offsets.
+Once we get the ipc_kmsg structure, we can parse and record the received Mach messages.
+The variable recv_state represents the state of receiving a Mach message.
+So far, we defined how to sniff the received Mach messages by implementing an inline hook of the function mach_msg_receive_results().
+Finally, the following picture depicts the workflow of the kernel inline hooking.
+Sniffing the Mach Messages
+In the previous sections, I detailed the implementation of inline hooking for the function mach_msg_receive_results().
+In this section, I will present the sniffed received Mach message.
+It can record a detailed structure of Mach messages sent by a specific process.
+Some screenshots are shown below:
+Conclusion
+In this blog, I presented how to sniff the received Mach message by setting up a kernel inline hook for the function mach_msg_receive_results().
+It’s able to record all fields of the ipc_kmsg structure and every field of a Mach message.
+Implementing some kernel inline hooks on kernel APIs is a very interesting project.
+You can do a ton of fascinating things by setting up some inline hooks on specific kernel APIs, depending on your interests.
+The only limit is your imagination!
+Note: All hooks were set up in macOS High Sierra 10.13.6 (17G65).
+For the latest OS version, macOS Mojave 10.14, you might need to tweak some hard-coded offsets.
+It’s easy to get the correct offsets through some reverse engineering.
+Download our latest Fortinet Global Threat Landscape Report to find out more detail about recent threat landscape trends.
+Sign up for our weekly FortiGuard Threat Brief.
+Know your vulnerabilities – get the facts about your network security.

@@ -1,0 +1,88 @@
+As depicted in earlier FireEye blogs, advanced cyber attacks are no strangers to the Asia Pacific region.
+In this blog, we take a deeper look at some of the advanced persistent threat (APT) malware that have significant presence in the APAC region, starting with PlugX (we detect it as Backdoor.APT.Kaba).
+The PlugX / Kaba malware is a well-known remote access tool (RAT) believed to have been around for several years that continues to evolve itself in new attack campaigns.
+It is often seen used in APT campaigns alongside two other infamous RATs – PoisonIvy and Taidoor.
+For this blog, FireEye Labs has investigated PlugX samples discovered throughout 2013 as well as recent variants detected between January and June 2014.
+Countries on both sides of the Pacific incuding the United States as well as Northeast Asian countries such as South Korea, Hong Kong, Japan and Taiwan were most hit by this malware, with attacks spanning multiple industry verticals.
+The top 5 most targeted verticals include Technology, Aerospace / Defense, Entertainment / Media, Telecommunications and Government (Federal).
+[caption id="attachment_6004" align="alignnone" width="638"] Figure 1: PlugX / Kaba Detections (by Country)[/caption]
+[caption id="attachment_6005" align="alignnone" width="652"] Table 1: Top 5 Affected Verticals[/caption]
+Delivering the Attacks
+PlugX is most commonly distributed via an exploit, but may also be delivered using a RAR self-extracting executable.
+Amanda Stewart has written an excellent blog and paper about the common components of the PlugX / Kaba RAT and how it capitalizes on the DLL side-loading technique.
+In general, the RAT consists of DLL components that are injected into the process memory of svchost.exe.
+To deliver the DLL components, a “dropper” must first be executed through the use of an exploit, or via social-engineering tactics over e-mail or web to entice the victims to load an executable file.
+[caption id="attachment_6006" align="alignnone" width="552"] Figure 2: Primary PlugX “Dropper” File Types[/caption]
+While RTF files exploiting CVE-2012-0158 are nothing new, they are still most frequently used in the delivery of PlugX to its targets.
+The same vulnerability has also been exploited through Excel spreadsheets and Word document files.
+More recently, a Flash zero-day vulnerability has been exploited to deliver a PlugX payload.
+Where an exploit is not used, RAR self-extracting executable (SFX) files were commonly used throughout 2013.
+These files often appear to have a Word or PDF icon and launch a decoy document that is displayed to the victim.
+The PlugX RAT is then loaded in the background without the user's knowledge.
+While we have noticed a decrease in the use of this vector to deliver PlugX in 2014, it continues to be an effective technique for PlugX and other malware, so we do not expect its use to disappear entirely.
+In the below example, the RAR SFX contains a script that loads the RAT (config.exe) and the decoy document (notice.doc).
+[caption id="attachment_6007" align="alignnone" width="679"] Figure 3: RAR SFX Script and Files[/caption]
+Command and Control
+We have found two dominant variants, SideBar and RasTLS, using 4 of the top 10 domains associated with the PlugX / Kaba command and control (C2) infrastructure.
+In fact, the 4 domains resolved to the same IP range based in Hong Kong likely operated by the same threat group(s).
+[caption id="attachment_6008" align="alignnone" width="679"] Table 2: Top Domains used in PlugX / Kaba Callbacks[/caption]
+The SideBar variant is delivered through RTF, Word and Excel files.
+Upon successfully exploitation, it drops “dw20.dll” to the %TEMP% folder.
+This “dw20.dll” continues to install the following files:
+%ALLUSERS%\WS\Gadget.exe (MD5: 6b97b3cd2fcfb4b74985143230441463)
+%ALLUSERS%\WS\SideBar.dll (MD5: 123e1841cc596c1f40e2e6693ea7dcac)
+%ALLUSERS%\WS\SideBar.dll.doc (MD5: a0c93bdc089e1338cc392108a0e57f2f)
+A service registry key is created to start “Gadget.exe” upon reboot of the infected system.
+"Gadget.exe" is part of a benign “TENCENT Sidebar” application digitally signed by “Tencent Technology(Shenzhen) Company Limited “.
+Using the DLL-side loading method, a malicious version of“SideBar.dll” is loaded and executes the exported function “Main”.
+“SideBar.dll” is a loader for “SideBar.dll.doc”, executing code at offset 0.
+“SideBar.dll.doc” decodes a part of its own data and is responsible for deflating a backdoor component.
+It spawns a new svchost.exe process and injects the backdoor into memory.
+This backdoor component remains only in memory, and is never saved to disk.
+[caption id="attachment_6009" align="alignnone" width="609"] Figure 4: Decompressing Encoded Data[/caption]
+Version information can often be found in PlugX’s process memory.
+In SideBar, a DWORD value storing the internal version number was 0x20120123.
+The path names found in the deflated backdoor’s process memory indicating that this PlugX variant is version 6.0:
+The variant connects to fast.bacguarp.com and bbs.zuesinfo.com over port 8080.
+While the RasTls variant is also dropped by document exploits, the dropped files are different.
+RasTls does not use the DLL side-loading method found in older variants [3].
+The DWORD used to store the internal version number of RasTls was 0x20130810.
+“RasTls.exe” spawns “svchost.exe” and injects a deflated backdoor component into memory.
+The deflated backdoor component in memory contains a “XV” marker, instead of “MZ” and “PE” as found in regular Windows portal executable (PE) files.
+This is because “RasTls.exe” manually loads each section of deflated file into memory, so the file does not have to be a complete PE image.
+[caption id="attachment_6010" align="alignnone" width="451"] Figure 5: Backdoor Component with “XV” maker instead of “MZ” and “PE”[/caption]
+The variant doesn’t contain strings implying version.
+The variant accept commands like as “ST1”, “ST2”, “TT1”,”TT2” which are different from version 6.
+In memory space in the “svchost.exe”, we can see the decoded configuration information:
+[caption id="attachment_6011" align="alignnone" width="488"] Figure 6: Decoded Configuration Information[/caption]
+All RasTls variants have largely identical configuration and connects to scqf.bacguarp.com and scqf.zuesinfo.com over port 443.
+The “My_Name” mutex is also common to all RasTls variants.
+PlugX Encryption Algorithm
+PlugX has a variety of encryption algorithms used to encrypt its data across variants.
+However, the encryption style is largely similar as depicted in Figure 7.
+[caption id="attachment_6012" align="alignnone" width="661"] Figure 7: PlugX Decryption Algorithm[/caption]
+In RasTls, the DWORD decryption key was found in the first four bytes of the encrypted string.
+It was also less aggressive in encrypting and hiding its data.
+In older variants such as "win3dx.DLL" (MD5: 7ADAE0335C9D6C9F3826CDE9747438B7), most API names were decrypted before loading and nullified after use.
+This makes understanding the malware slightly more difficult for malware analysts.
+The supported functionalities are largely similar where it uses the identical command code.
+Below is a list of PlugX commands for file system manipulation:
+Some improvements were made by its developers.
+For example, the key logger function was updated to utilize the GetRawInputData API to collect keystrokes.
+“RegisterRawInputDevices” and “GetRawInputData” were two of the few API names that remain encrypted in RasTls.
+[caption id="attachment_6013" align="alignnone" width="353"] Figure 8: Updated Key Logging Component[/caption]
+PlugX / Kaba Trending
+Figure 9 shows the trending of total PlugX / Kaba infections and their variants: SideBar and RasTLS.
+The spike in September 2013 was caused by SideBar.
+In 2014, we see SideBar and RasTLS on an inverse trend, with the latter on a steady increase.
+[caption id="attachment_6014" align="alignnone" width="735"] Figure 9: Trending of Overall PlugX / Kaba , SideBar, RasTLS Infections[/caption]
+Figure 10 shows the distribution of SideBar/RasTls variants by country.
+The C2 servers are located in Hong Kong, where much of the attacks have occurred.
+We also find a variety of countries targeted by these variants.
+In some of the exploit documents delivering these variants, the content revolves around the theme of NGOs and socio-political events in China and Japan.
+These are content that would likely be of interest to the victims who would be opening the documents.
+[caption id="attachment_6015" align="alignnone" width="728"] Figure 10: Distribution of SideBar/RasTls Variants by Country[/caption]
+The Asia Pacific region remains a highly attractive target of advanced cyber-attacks.
+Many threat groups have a particular in interest in this region, and are likely continue to launch new attacks against targets here.
+We recommend that users in this region block access to the above C2 servers.
+FireEye Labs will continue to monitor and report on new PlugX / Kaba developments.

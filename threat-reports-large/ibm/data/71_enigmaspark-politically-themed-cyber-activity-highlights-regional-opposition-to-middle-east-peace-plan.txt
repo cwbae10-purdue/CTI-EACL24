@@ -1,0 +1,121 @@
+In recent analysis of malicious activity likely targeting entities based in the Middle East, IBM X-Force Incident Response and Intelligence Services (IRIS) discovered backdoor malware packed with the legitimate Enigma Protector software.
+We named this malware “EnigmaSpark” per the Enigma Protector and the string “Spark4.2” from a .pdb file path, and published our findings to the X-Force IRIS Enterprise Intelligence Management platform on TruSTAR in early February 2020.
+This discovery likely represents politically motivated attempts to target the network environments of entities or organizations that maintain a significant interest in or support of a new Middle East peace plan.
+The files IBM X-Force IRIS uncovered suggest that attackers crafted detailed and politically charged documents, taking advantage of geopolitical developments in the Middle East.
+The recipients of these emails are lured into opening malicious attachments, enabling the actor to compromise victim environments with the potential to exfiltrate data of interest or gain the ability to take other actions in compromised environments.
+The observed EnigmaSpark campaign appears related to opposition to the recent Middle East peace plan.
+Based on the contents of the uncovered files and surrounding political events, it’s highly likely the EnigmaSpark activity targets Arabic speakers interested in Palestine’s potential acceptance of the peace plan.
+Adversaries using EnigmaSpark likely relied on recipients’ significant interest in regional events or anticipated fear prompted by the spoofed content, illustrating how adversaries may exploit ongoing geopolitical events to enable malicious cyber activity.
+The EnigmaSpark activity discovered by IRIS also closely aligns with “The Spark Campaign” reported by the Cybereason ‘Nocturnus’ Team, and the Spark Backdoor reported by Palo Alto’s Unit 42.
+It further coincides with the January 2020 JhoneRAT espionage campaign that targeted Arabic-speaking entities in the Middle East.
+Based on its similarities in tactics, techniques and procedures (TTPs), malware capabilities, and overlaps in geostrategic context and targeting, we believe that the activity is likely related to the Molerats group.
+In late January 2020, X-Force IRIS began looking into a suspicious Microsoft Word downloader file: “a.docx”.
+The file is displayed as a document written in Arabic with a note to enable editing written in English.
+When translated, the document reads:
+A presidential announcement expected to dissolve the authority
+Note: Please enable editing to view the content
+A member of the Central Committee of the Fatah Movement, Chairman of the Secretary of the Executive Committee and Head of the Negotiations Affairs Department confirmed
+In the Palestinian Liberation Organization, President Mahmoud Abbas Abu Mazen told him in the past few days of his intention to announce Dissolution of the Palestinian Authority, and that ……………………
+Note: Sign up
+Figure 1: Untranslated file “a.docx”
+Once a.docx is executed, it downloads a malicious Word template from a Google Drive link, subsequently downloading the payload runawy.exe and sending encrypted victim information to an actor-controlled command-and-control (C&C) server.
+Unit 42 reported on a separate delivery document: “attachment.doc”.
+See Appendix A for a full list of IoCs and descriptions.
+The following diagram illustrates the malware execution flow:
+Figure 2: Malware execution flow
+The document a.docx downloads a Microsoft Office template containing a password-protected macro.
+Figure 3: Google Drive template location
+The macro attempts to download and decode a Base64-encoded payload from a Google Drive location and execute it.
+Figure 4: Google Drive location of downloaded payload
+The macro contains the bin file, vbaProject.bin and the downloaded payload which is an AutoIT dropper.
+(AutoIT is a freeware BASIC-like scripting language designed for automating the Windows GUI and general scripting.)
+The AutoIT executable drops the final payload named runawy.exe in this case, saving it to C:\users%username%\.
+It copies the payload to the Windows startup folder and creates a scheduled task for persistence by calling: SCHTASTS /Create /f /SC minute/TN “runawy” /mo 5 /tr “%user%runawy.exe.
+Figure 5: Decompiled AutoIt executable file
+Runawy.exe is an Enigma-packed (the Enigma Protector is a legitimate software protection tool used typically to license and protect executable files from copying, modification, hacking and analysis) sample that sends the infected machine’s information to the C&C nysura.com using an HTTP POST request.
+Runawy.exe is able to receive and decrypt commands sent from the server.
+This file functions as a backdoor and executes commands by using the Windows API functions CreatePipe and CreateProcess.
+However, in the HTTP POST request, the host header refers to cnet.com, which is a legitimate news website.
+The unpacked version of runawy.exe is the same as that of another file named blaster.exe, which we describe in more detail in the following section.
+While examining the file runawy.exe, our analysis revealed the unique string “S4.4P”, along with the cryptographic X.509 signer tg1678A4 with the thumbprint 2E082DDDC31343DB767295F48858BDC22E879B50.
+(An X.509 certificate contains a public key and an identity — a hostname, an organization or an individual — and is either signed by a certificate authority or self-signed.)
+The string “S4.4P” prompted additional research, which led IRIS researchers to discover four additional files:
+Wordeditor.exe
+Blaster.exe
+HelpPane.exe
+taskmanager.exe
+HelpPane.exe (dropper unknown) and taskmanager.exe (dropped by a file named لقاء ابو مازن و كوشنير.exe, which translates to the words “Abu Mazen and Kouchner meeting“) are also Enigma-packed files featuring the same HTTP POST request as runawy.exe with the C&C being nysura.com and host header referring to cnet.com.
+Blaster.exe is a binary file that is downloaded by Wordeditor.exe, which is packed by the legitimate protection tool Themida and displayed as a Microsoft Office word document editor.
+Once opened, a document written in Arabic is shown, and when translated reads with the title, “Instant information report”.
+The Wordeditor.exe document has the compile date/time of 2015-12-27 08:58:16 and is presumed to be fake based on the content.
+The report reads as a military field report.
+Figure 6: Untranslated image showing the content of file “Wordeditor.exe”
+Wordeditor.exe tries to drop the binary Blaster.exe to C:\users\[username]\AppData\Roaming\Blaster.exe, which is the unpacked version of Runawy.exe.
+Blaster.exe creates the mutex “S4.4P” if it does not already exist on that machine.
+The payload will then attempt to examine the victim’s keyboard layout; if not in Arabic, the malware will terminate.
+If the layout is confirmed to be Arabic, Blaster.exe will try to collect the victim’s machine information, such as username and host name, by running the following commands:
+Blaster.exe also uses WMI to obtain information on the processor, firewall and antivirus software that may be running on that machine:
+Figure 7: Querying for anti-virus product
+The information gathered from the victim’s system is then AES-encrypted and Base64-encoded.
+The encrypted data is sent to the C&C domain webtutorialz.com using an HTTP POST request.
+However, in the HTTP POST request, the host header refers to the legitimate news site cnet.com.
+Figure 8: HTTP POST header shows cnet.com but sends data to webtutorialz.com
+The Blaster.exe file contains the path “W:\Visual Studio 2017\Spark4.2\Release\Spark4.2.pdb” and is able to receive and decrypt commands sent from the server.
+This file functions as a backdoor and executes commands by using the functions CreatePipe and CreateProcess.
+The sample will build formatted data in the HTTP POST request using a built-in keyword list, each mapping to a function.
+The keywords are:
+Figure 9: List of built-in keywords used by Blaster.exe to build a formatted request
+Further analysis was conducted, and a third downloader was identified.
+The original final name is “REG.exe” and was created by a product named “Wrod Online” likely impersonating the legitimate Microsoft World Online application.
+The sample’s icon impersonates a Microsoft Office Word document.
+REG.exe has the same X.509 Signer and thumbprint as the Runawy.exe payload and is a .NET binary, which will drop and execute another binary, soundcloud.exe.
+Soundcloud.exe, which pretends to be a music app, is also packed with the Enigma protector and its unpacked version is identical to the Blaster.exe payload.
+Figure 10: Soundcloud.exe payload music file icon
+The following sections shed light on the context of the various documents that were distributed in this activity.
+X-Force IRIS researchers believe that the text contained in the a.docx file alludes to the potential dissolution of the Palestinian Authority.
+The file Wordeditor.exe appears to be a fake document reporting that several Iranian-backed regional proxies are placed on “maximum alert status.”
+Given the compile date of February 9, 2020, and the translated file name, the document likely alludes to a potential meeting between Palestinian Authority leadership and U.S. officials.
+Based on language and context, the intended recipients of the lure would likely include Arabic speakers who maintain an interest in Palestine’s potential acceptance of the peace plan.
+The EnigmaSpark initiating dropper file, a.docx, shares the exact same compile date/time (2020-01-14 07:54:00) as previously discovered documents that delivered the JhoneRAT malware.
+This remote access Trojan (RAT) downloads new payloads on cloud providers to get a final RAT written in Python and was most recently detected in attacks in January 2020, targeting entities in the Middle East.
+The JhoneRAT documents appear to originate from several Middle East States’ Ministry of Foreign Affairs (MoFA), including the Kingdom of Bahrain, the Kingdom of Saudi Arabia and the United Arab Emirates, and feature official ministry emblems, along with the blurred image of what appears to be an official portrait.
+Figure 11: Sample document distributing the JhoneRAT
+Based on X-Force IRIS’s research, it is highly likely that the obscured image included in the spoofed JhoneRAT documents is that of a fictional Russian Admiral, Marko Ramius, from the 1990 film “The Hunt for Red October,” played by actor Sean Connery.
+Four Middle East states sent diplomatic representation to the January 28, 2020 unveiling of a new Middle East peace plan.
+The JhoneRAT campaign included files spoofing each of those nations’ ministries, except for Oman’s.
+It is highly likely a similar file impersonates the Omani MoFA, however, a similar file has not been uncovered at this time.
+Given the same compile timestamps of the decoy files, the content of the decoy files in relation to world news and Iranian political signaling, it is likely that the JhoneRAT campaign and the EnigmaSpark documents share a common nexus targeting Middle East states supporting and/or exhibiting public support for the peace plan.
+A threat actor group known as Molerats has been active since at least 2012 and has since been attributed several politically motivated campaigns targeting the Middle East with a special focus surrounding Palestinian interests.
+First, this campaign used similar TTPs that Kaspersky Lab highlighted in Operation Parliament in 2018.
+X-Force IRIS observed EnigmaSpark malware using a built-in keyword list comprised of apparent first names.
+A second connection, in January 2020, reports about the JhoneRAT campaign detailed the use of Office documents located on Google Drive and containing a macro that subsequently downloaded and executed a malicious payload.
+In addition, the malware is configured to only execute depending on the detected victim’s keyboard layout, in these instances, an Arabic layout.
+JhoneRAT campaigns also identified the use of a delivery document translated to “Urgent.docx”, which suggests a similar sense of urgency to EnigmaSpark’s downloader titled “Instant information report”.
+Given these similarities, it is possible that the EnigmaSpark activity is related to JhoneRAT.
+Based on the overall TTPs, malware overlaps and targeting, it is likely that both EnigmaSpark and JhoneRAT are attributed to the Molerats group.
+During EnigmaSpark research conducted by X-Force IRIS, we observed two downloaders and their accompanying payloads sharing overlaps with EnigmaSpark.
+The two downloaders came in files titled “Abu Mazen and Chosnir.exe” and “تعميم داخلي بخصوص الانتخابات.exe” (translated to “Circular internal election”), and drop TeamViewer.exe and MSPAINT.exe, respectively.
+Although these files do not contain the strings Spark4.2, SPARK42, or S4.4P with Enigma Protector, they do contain the string “sTkM7Ar”, which IRIS did not find present in files other than EnigmaSpark.
+In addition, these two payloads are also signed by the X.509 Signer tg167A8A4 and verify the keyboard language layout using System\CurrentControlSet\Control\Keyboard Layouts\%.8x before executing on the target environment.
+Furthermore, the downloader connects to C&C sognostudio.com, which shows connections to the C&C smartweb9.com reported by Unit 42, including resolution to IP address 185.244.39.165, the registrar NameCheap, Inc and autonomous system number AS64425.
+These IoC overlaps point to a possible connection to EnigmaSpark and associated Molerats activity.
+Document 4: الانتخابات.exe (Circular internal elections)
+The uncovered downloader “Circular internal election” was compiled on October 15, 2019.
+This file is likely related to Hamas’s endorsement regarding Palestinian elections to be held in 2020.
+Document 5:اعلان مرتقب لصفقة القرن و ابو مازن يوافق بشرط واحد.exe
+The uncovered file which translates to “A prospective announcement for the deal of the century and Abu Mazen agrees with one condition” was compiled the next day, December 17, 2019, just days after Lebanese media published a draft peace plan.
+Given the title, date and language, intended recipients would include an Arabic-speaking audience with an interest in the prospective Palestinian acceptance of the peace plan.
+Based on the shared technical attributes and the similar targeting nexus surrounding Palestinian affairs to the EnigmaSpark artifacts, it is highly likely that these additional files are associated with Molerats activity.
+URLs:
+hxxps://drive.google.com/uc?export=download&id=1NbCEnL-jA89PWBEhLWwHmBM5nmUKNRS8
+hxxps://drive.google.com/uc?export=download&id=1yiDnuLRfQTBdak6S8gKnJLEzMk3yvepH
+Domains:
+nysura.com
+webtutorialz.com
+Domains:
+Sognostudio.com
+smartweb9.com
+itkevents.com
+IP Addresses:
+78.128.114].
+[76

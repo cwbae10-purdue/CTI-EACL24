@@ -1,0 +1,88 @@
+Last week we issued Part 1 of this blog in the lead up to a live workshop session we held on 9.24.15.
+You can read Part 1 of the blog here and you can catch the on-demand recording of the workshop session here.
+As promised, we're release Part 2 of the blog today.
+With a little preamble dropped from the first blog below to give you context.
+This part of the blog is delivered with thanks to Brad Duncan.
+Brad penned this portion of the blog and we're thankful to him for his help here and for his collaboration.
+For those of you that don't know Brad, he is a Security Researcher at Rackspace.
+He also runs the blog www.malware-traffic-analysis.net, and he is also a handler at the Internet Storm Center (isc.sans.edu).
+As part of our normal course of operations as a cyber threat intelligence provider, we monitor the cyber crime underground and the world of cyber espionage.
+We provide analysis to our clients on new and emerging threats as well as help them analyze artifacts found on their networks.
+As you can imagine, we naturally run into large quantities of malware on a daily basis, conduct a great deal of reverse engineering and aide from time to time in incident response.
+Every once in awhile, we try to share details on what we find and how we find it to the public in the interest of informing the community around new threats and providing actionable analysis to support the hunt and kill missions.
+We recently were asked to help one of our clients determine whether or not the root cause of an exploit kit exposure was related to a compromised website or an attack through malvertising.
+We decided to put together this blog to help you in this investigative process.
+Should you have any questions about the details in this blog, please do not hesitate to drop us a line and we will work to get you the answers that you need.
+The below blog represents part 2 - looking at the malvertising angle.
+Part 1 took a look at strategic web compromise.
+Analyzing an exploit kit involved in a malicious advertising works exactly the same way as with one involved in a website compromise.
+The only significant differences are the following:
+Exploit kit exposures caused by malicious advertisements may be more likely to use a traffic distribution system (TDS) or other mechanisms that may result in a longer redirect chain
+Mechanisms to hide the source of the malicious advertisement creative may make identifying the code causing the initial redirection more difficult.
+Both of these factors can make analyzing a kit that uses malicious advertising more difficult.
+As a good example of common Malvertising techniques, we'll use a pcap from Barracuda Labs' Threatglass.com dated 2015-08-23.
+Our primary analysis toolbox for this walkthrough will be the Security Onion Linux distribution.
+How can you find the EK traffic within this packet capture (pcap)?
+Download the pcap to a virtual machine (VM) running the Security Onion distribution and use the tcpreplay utility to replay it.
+My Security Onion VM is configured to use Suricata with the EmergingThreats (ET) signature set.
+We use tcpreplay on the pcap as shown in the screenshot below:
+Using Sguil, a graphical front-end for the monitoring tools within Security Onion, we find alerts for Angler EK on 92.63.102.211 as shown below:
+Let's look at the traffic in Wireshark.
+First, if you do not already have an individual preference for Wireshark column configuration, you may find it helpful to set up the column display as described in my tutorial at: http://malware-traffic-analysis.net/tutorials/wireshark/index.html.
+In this example, the Angler EK domain is can.berryelectricalusa.org on 92.63.102.211.
+For malvertizing, we'll need to work our way back from the landing page.
+We know that Angler EK is on 92.63.102.211, so use Wireshark to filter on that traffic.
+The below filter will display only HTTP requests (http.request) with a source or destination IP address of 92.63.102.211 (ip.addr eq 92.63.102.211); these filters can be combined as follows:
+http.request and ip.addr eq 92.63.102.211
+The first HTTP request should be the landing page.
+If the Angler EK landing page shows a referrer, you'll find it by following that TCP stream.
+This should be TCP stream 113 (viewable directly with the filter 'tcp.stream eq 113', as below) from that pcap, and within that stream, you'll see a referrer listed as: http://dvdjcdjcd.eu/ming/index.php.
+Next, I want to double-check to make sure there's no step between the Angler EK landing page and the referrer.
+To do this, I used the following filter in Wireshark:
+ip contains can.berryelectricalusa.org
+This searches any IP traffic for the string can.berryelectricalusa.org.
+This should display any frames with that domain name (from DNS, HTTP, etc) from the pcap.
+The results show three HTTP GET requests to the EK domain and one 200 OK before that.
+Select that frame and follow the TCP stream.
+This confirms the HTTP GET request to dvdjcdjcd.eu returned an iframe to the Angler EK landing page, with no other domains between the two.
+So what caused the HTTP GET request to dvdjcdjcd.eu?
+Looking at the TCP stream, the referrer line shows: http://rbigames.net/.
+Again, we want to confirm there are no other URILs in the chain between the referrer (http://rbigames.net/) and this http GET request to dvdjcdjcd.eu.
+To do that, I used the following filter in Wireshark:
+ip contains dvdjcdjcd.eu
+As you see, there are three frames show up in the results.
+The first frame shows [TCP segment of a reassembled PDU], so we follow that TCP stream.
+The TCP stream shows the HTTP GET request to rbigames.net, and we see the malicious iframe to dvdjcdjcd.eu in the HTML returned after the 200 OK.
+The referrer shows http://www.youradexchange.com/a/display.php?
+followed by a long string of characters as part of the URL.
+This type of long URL We've found our ad traffic.
+Our next step would be to use the Wireshark filter "ip contains rbigames.net", but the results don't show anything prior to the DNS query for rbigames.net.
+After trying a few searches, I used the following filter:
+ip contains www.youradexchange.com
+The first frame shows a 302 Moved Temporarily.
+Follow the TCP stream for that frame, and you'll find an HTTP GET request to ui1.njaja.com with a referrer URL starting with: http://adservingsolutionsinc.adk2x.com/
+The filter "ip contains adservingsolutionsinc.adk2x.com" displays a TCP stream that shows yllix.com as a referrer.
+It gets trickier from there to find the origin, but there appear to be several steps before that.
+The full chain of HTTP GET requests isn't necessary, because we've already determined this is ad traffic, hence malvertizing.
+If you do want to walk down the original advertisement, in Wireshark, set "ip contains yllix.com" as your filter and select the first frame, then following its TCP stream.
+We see referrer as "indofeed.com".
+Next we investigate using the filter "ip contains indofeed.com".
+The first two frames are redirections, and the 3rd frame is an HTML page.
+Following the TCP stream shows that the data is GZIP encoded.
+By going to File > Export Objects > HTTP, exporting Packet 32, and then viewing this HTML file in a text editor, we can see the advertisement (it's on line 89).
+Use the following process in Wireshark to export this file"
+File -> Export Objects -> HTTP; and export Packet number 32.
+When decoded, this file contains the following script:
+<script type="text/javascript" src="http://yllix.com/banner.php?pub=788465&section=General&format=728×90&ga=g"></script>
+Finally, we are at the source of the compromise.
+The numeric ID following the string "pub" (788465) is probably the creative ID for the relevant advertisement.
+From an investigative perspective, Malvertizing is often more convoluted than instances of web compromise.
+Most often, it is difficult to determine the full chain of HTTP GET requests that led to the EK landing page.
+However, you can easily figure out if this is ad traffic by tracing back the HTTP GET requests.
+In some cases, this is quite difficult.
+Angler EK caused by malvertizing sometimes will not have any referrers listed in headers for the HTTP GET request to the landing page.
+I've often been frustrated when investigating EK traffic caused by malvertizing.
+We hope that you find the information above useful in your efforts to better secure your organization.
+If there are lingering questions, please do not hesitate to drop us a line and we will work to answer them for you.
+Check out the great work that Brad does over at www.malware-traffic-analysis.net - he has some awesome tutorials and other great guides for making your very difficult jobs that much easier.
+Keep fighting the good fight - we're with you in the trenches - we're up 24/7/365 all over the world...because someone should do something!

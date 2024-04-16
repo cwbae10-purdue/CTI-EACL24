@@ -1,0 +1,280 @@
+FortiGuard Labs Threat Analysis Report
+Affected Platforms: Windows Impacted Users: Any organization Threat Severity: High
+FortiGuard Labs, leveraging the FortiEDR endpoint protection platform and the FortiResponder managed detection and response service, recently detected and blocked a new variant of Ryuk ransomware.
+Ryuk ransomware has been targeting large organizations, and is thought to be tailored by each operator to the unique configurations and network designs of the victim organization.
+Ryuk is a well-known ransomware variant, and different versions have been reviewed in the past.
+However, due to its targeted and ever-evolving nature, it is interesting to see what the latest variants hold in store.
+In this blog post, we will analyze the tactics, techniques, and procedures (TTPs) used by this recently discovered Ryuk variant, review similarities to past variants, and highlight the methods it uses to maximize the damage it can cause to the networks of targeted organizations.
+Reviewing these TTPs will allow you to test the current security controls within your network to ensure you are able to detect, and ultimately protect against them.
+We have also provided a mapping of the TTPs to the Mitre ATT&CK knowledgebase.
+The sample starts by unpacking its actual payload in-memory.
+Once the unpacking process is done, the sample creates a copy of itself that it names with a 7-letter random name, and then places it in the same directory from which it was executed.
+It then invokes the new executable using “8 LAN” as the command line argument.
+The initial execution of the sample focuses on encrypting files on the local machine and mapped drives, while the second invocation focuses on the encryption of network drives.
+This second invocation also attempts to wake machines on the network.
+Both invocations carry out the same steps as part of the attack, except that the original invocation also injects itself into multiple legitimate processes to run the encryption process in order to increase the chances of a successful attack.
+Note that all executions, including injected payloads, attempt to encrypt network drives.
+More on this later.
+Here is a high-level breakdown of the steps taken by this Ryuk sample:
+Injection into legitimate processes (local encryption only)
+Process and service termination - Attempts to terminate processes and services that may interfere with its operation
+Deleting shadow copies and changing system configuration
+Establish persistency on the machine
+Wake-up network devices (Network encryption only)
+File encryption (Mapped drives are not encrypted by the network encryption instance)
+The last step is executed forever, as Ryuk will continuously attempts to discover new victims on the network and encrypt them.
+We will now do deep-dive into each of these steps.
+In order to hide its malicious activity, the sample tries to inject code into any 32-bit process it can access other than itself, the previously copied file, or any of the following: “csrss.exe”, “explorer.exe”, “lsaas.exe”.
+Note that “lsaas.exe” contains a typo, it should be “lsass.exe”, which may cause the ransomware to malfunction on 32-bit systems.
+Interestingly, some previous Ryuk samples using similar methods had a typo in the “csrss.exe” string, so this may be intentional, though we do not know why.
+The injection method used by this Ryuk sample is both simple and similar to methods used by previous variants of Ryuk:
+Enumerate processes.
+Get access to the target process using the OpenProcess API.
+Get the current address of the payload in memory using the GetModuleHandleA API
+Allocate a chunk of memory that fits the size of the payload using VirtualAllocEx at the same address the code is running in the injection process.
+This way there is no need to fix relocations when copying the payload.
+Write the payload to the target process using the WriteProcessMemory API.
+Execute the payload using the CreateRemoteThread API.
+(Note, that this API will fail for 64-bit processes, which is OK since the payload is 32-bit.)
+The next steps taken by the injected payload are the same steps taken by the initial Ryuk ransomware invocation.
+Prior to starting the actual encryption process, the ransomware uses a pre-defined list of strings to identify and terminate running processes and services matching any of the strings.
+It does this by initiating a thread that iterates over the running processes and services looking for matches.
+The list of strings contains 41 processes (Appendix C - Terminated Processes) and 64 services (Appendix D - Terminated Services).
+Some of these belong to AV products, while others might be using files which the ransomware targets – for example a Word document, which it might not be able to encrypt while it is being used by the Word process.
+Since a partial process name match is enough to terminate a target process, this action might cause unintentional behavior.
+For example, we can see in Figure 1 that it inadvertently stops the “audioendpointbuilder” service, which is clearly not targeted by the Ryuk authors since it contains the “endpoint” string.
+In the next step of its execution, the ransomware attempts to delete any shadow copies to prevent them from being restored.
+A shadow copy is a Microsoft service which creates backups and/or snapshots of computer files or volumes.
+Shadow copy deletion is done by executing the following commands:
+cmd /c "WMIC.exe shadowcopy delet"
+vssadmin.exe Delete Shadows /all /quiet
+It is interesting to see that there is yet another typo, this one is in the first command that prevents the command from running successfully (the letter ‘e’ is missing in the word “delete”).
+Other commands it executes during this step include:
+Disable the windows automatic repair option using: bcdedit /set {default} recoveryenabled No & bcdedit /set {default}
+Disable the windows error recovery screen that appears during boot in case Windows was shut down improperly using: bootstatuspolicy ignoreallfailures
+The sample uses a known and simple persistence method.
+It sets the following registry key using cmd.exe, which in turn invokes reg.exe to set the registry key:
+cmd.exe /C REG ADD “HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\Run“ /v "svchos" /t REG_SZ /d "<Current Folder>\<executable name>" /f
+If executed on a 64 bit system, it will append the string by adding “/reg:64” to the command.
+This exact persistence method was used by previous samples as well.
+In order to increase the opportunity to influct maximum damage to the target organization, Ryuk also tries to wake machines on the network before it starts to encrypt network drives.
+This step is executed by the process which is invoked with the “8 LAN” command line argument.
+Note that this step is executed in a different thread, while the calling thread sleeps for the reminder of (“time since system startup”/10000) + 25000 milliseconds, as can be seen in Figure 3:
+In order to remotely wake machines inside the LAN, Ryuk leverages a feature called Wake-on-LAN.
+It is done by sending a “magic packet” to the target host, and in-turn, the target host will awake.
+To get a list of target hosts, the sample reads the hosts’ addresses from the ARP table entries on the local machine and then it sends these addresses the magic packet over the UDP protocol on port 7.
+The magic packet starts with FF FF FF FF FF FF and contains the host’s MAC address.
+The responsible function for sending the Wake-on-LAN packets can be seen in Figure 4:
+As mentioned earlier, the malware tries to encrypt both local and network drives.
+The ransomware iterates over each file on the drive and checks its full path, the name of the file, and the extension of the file in order to determine if it should be encrypted.
+It first check to see if the current path includes one of the following strings:
+Ahnlab
+Chrome
+Mozilla
+Windows
+$Recycle.bin
+If the file path includes one of the above strings, it will skip to the next file.
+After validating the directory, it checks the name of the current file with a hardcoded list of strings (see Appendix B - Skipped file names).
+If one of those strings is contained in the file name, it will skip to the next file.
+The code can be seen in Figure 5.
+Note, that some of these files are common Linux/Unix operating system directories.
+That’s because it tries to encrypt any network devices that potentially run Linux/Unix operating systems:
+After the filename is validated, it checks the extension of the current file against a hardcoded list, and again, it will skip to the next file if there is a match.
+This is a list of the skipped extensions:
+dll
+hrmlog
+exe
+.ini
+.lnk
+bootmgr
+boot
+The encryption of local and mapped drives is done in 6 rounds.
+On each of these rounds, Ryuk will enumerate all the drives from A: to Z: and will then encrypt drives based on their types, which it gets using the GetDriveTypeA API.
+These are the drive types which will be encrypted on each round:
+Regular drives (type is DRIVE_FIXED).
+Removable drives such as thumb drives (type is DRIVE_REMOVABLE).
+Mapped network drives (type is DRIVE_REMOTE).
+Drives with unknown types (type is DRIVE_UNKNOWN).
+Drives with an invalid root path (type is DRIVE_NO_ROOT_DIR).
+Ramdisk drives (type is DRIVE_RAMDISK).
+It is interesting to note the injected payloads will iterate the drives in reverse order, from Z: to A:.
+We estimate that the goal is that the main process and the injected payloads will have less chance to encrypt the same drive at the same time.
+As mentioned earlier, Ryuk authors put a lot of effort into encrypting network drives.
+It does so by constantly scanning the network using ping scan in order to discover new hosts.
+For each of the hosts, Ryuk attempts to run the encryption algorithm.
+The goal of this step is to encrypt both Windows and non-Windows machines with network drives that were not mapped to the local machine.
+This step is executed continuously as the samples wait for new potential victims to show up on the network.
+Host Discovery
+The host discovery algorithm works in two stages.
+First, the sample attempts to discover which subnets the machine is connected to, and during the second stage it scans the subnet.
+In order to find the local subnets, the sample leverages the GetAdaptersAddresses API, as can be seen in Figure 6:
+Next, it will iterate over the IPs of each of the adapters while also looking for private IPs that belong to one of the following subnets: 10.
+/ 172.16.
+/ 192.168. .
+This check is done using the strstr function, which is equivalent to the “contains” operation, and as such can inadvertently match other subnets, such as if the IP is 191.192.168.1.
+This can be seen in figure 7:
+If the subnet is one of the above, it will send ICMP ping packets to the hosts under the subnet.
+Any host that responds is considered a potential victim – which it will later try to encrypt.
+Discovered Hosts Encryption
+Once new hosts are discovered, Ryuk attempts to encrypt them using a similar method to the one used for local and mapped drives, by building a UNC path in the following format for each driver letter, from A to Z:
+\\<host>\<drive letter>$
+Then it tries to access the following UNC path as well and encrypt it:
+\\<host>
+This can be seen in Figure 8:
+Unused Functionality
+During our analysis of this Ryuk sample, we noticed two other host discovery methods that never executed.
+The first one leverages the GetIpNetTable API to extract hosts from the ARP table.
+The second method enumerates network resources by leveraging the “WNetOpenEnumW” and “WNetEnumResourceW” API functions.
+The code is never executed because this Ryuk sample continually attempts to ping hosts on the LAN.
+The ransomware drops a simple html file containing the ransom note, Figure 9 , leaving no instruction but an email address.
+This note is very similar to the note used in other Ryuk variants.
+In this blog, we presented a deep dive analysis of one of the most menacing and wide-spread ransomware variants in-the-wild.
+We also showed the techniques it uses to increase the damage it imposes on the organizations it targets by trying to reach and encrypt as many machines in the network as possible.
+Given the success Ryuk ransomware has had over the past few years, we estimate it will keep evolving and inventing new methods to attack organizations.
+As a result, it is important to know the Ryuk ransomware modus operandi and tactics in order to develop better methods to protect against it.
+FortiEDR detects and blocks Ryuk ransomware out-of-the-box without any prior knowledge or special configuration.
+It uses both its AI-based AV and post-execution prevention engines, as can be seen in Figure 10:
+FortiClient AV detects this sample as W32/Kryptik.HAJB!tr.
+In addition, as part of our membership in the Cyber Threat Alliance, details of this threat were shared in real time with other Alliance members to help create better protections for customers.
+SHA256 -
+BDDAF6020F8DF169E1901C709701240F1A810D0E0FCEC7D4479D5354360E1795
+Registry:
+HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
+T1059 - Command-Line Interface
+T1106 - Execution Through API
+T1060 - Registry Run Keys / Startup Folder
+T1140 - Deobfuscate / Decode Files or Information
+T1045 - Software Packing
+T1055 - Process Injection
+T1135 - Network Share Discovery
+T1018 - Remote System Discovery
+T1486 - Data Encrypted for Impact
+T1490 - Inhibit System Recovery
+T1083 - File and Directory Discovery
+T1082 - System Information Discovery
+RyukReadMe.html
+UNIQUE_ID_DO_NOT_REMOVE
+boot
+PUBLIC
+PRIVATE
+\Windows\
+sysvol
+netlogon
+bin
+Boot
+dev
+etc
+lib
+initrd
+sbin
+sys
+vmlinux
+run
+var
+virtual
+vmcomp
+vmwp
+veeam
+backup
+Backup
+xchange
+sql
+dbeng
+sofos
+calc
+ekrn
+zoolz
+encsvc
+excel
+firefoxconfig
+infopath
+msaccess
+mspub
+mydesktop
+ocautoupds
+ocomm
+ocssd
+onenote
+oracle
+outlook
+powerpnt
+sqbcoreservice
+steam
+synctime
+tbirdconfig
+thebat
+thunderbirdvisio
+word
+xfssvccon
+tmlisten
+PccNTMon
+CNTAoSMgr
+Ntrtscan
+mbamtray
+vmcomp
+vmwp
+veeam
+Back
+xchange
+ackup
+acronis
+sql
+Enterprise
+Sophos
+Veeam
+AcrSch
+Antivirus
+Antivirus
+bedbg
+DCAgent
+EPSecurity
+EPUpdate
+Eraser
+EsgShKernel
+FA_Scheduler
+IISAdmin
+IMAP4
+MBAM
+Endpoint
+Afee
+McShield
+task
+mfemms
+mfevtp
+mms
+MsDts
+Exchange
+ntrt
+PDVF
+POP3
+Report
+RESvc
+sacsvr
+SAVAdmin
+SamS
+SDRSVC
+SepMaster
+Monitor
+Smcinst
+SmcService
+SMTP
+SNAC
+swi_
+CCSF
+TrueKey
+tmlisten
+UI0Detect
+W3S
+WRSVC
+NetMsmq
+ekrn
+EhttpSrv
+ESHASRV
+AVP
+klnagent
+wbengine
+KAVF
+mfefire
+Learn more about FortiGuard Labs threat research and the FortiGuard Security Subscriptions and Services portfolio.
+Sign up for the weekly Threat Brief from FortiGuard Labs.
+Learn more about Fortinet’s free cybersecurity training initiative or about the Fortinet Network Security Expert program, Network Security Academy program, and FortiVet program.

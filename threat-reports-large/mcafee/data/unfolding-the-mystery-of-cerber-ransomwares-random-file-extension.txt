@@ -1,0 +1,69 @@
+This blog post was written by Sudhanshu Dubey.
+In an earlier blog, we discussed the evolution of the popular Cerber ransomware from Version 1 to 2.
+Recently we came across two newer versions of Cerber (we’ll call them Versions 3 and X).
+Cerber 3 has few changes but Version X has some new behavior that caught our attention.
+(We call this version X, not 4, because this version does not follow Cerber’s usual encryption extension prototype, .cerberN, and instead uses a random extension.)
+In this post, we will dig into this new version and will uncover the mystery behind the random extension.
+Cerber infects systems via social media tricks such as spam email with malicious links or documents, malvertising campaigns, exploits of vulnerable websites, and it also takes advantage of exploit kits such as Angler, Nuclear, and others.
+Machine infected with Cerber X.
+Extensions of files encrypted by Cerber Versions 2, 3, and X:
+Analysis of Cerber X
+In contrast to Version 2, Cerber X uses the Nullsoft Scriptable Install System (NSIS) to hide itself.
+The installer contains the encrypted Cerber executable (.ch) and a shellcode file (.caz) that contains code to decrypt the Cerber file.
+A component of NSIS follows:
+The file .ch is the encrypted Cerber file.
+The first DWORD of the file is the file size of the Cerber core file followed by encrypted data.
+A snippet of the encrypted core file follows:
+The file .caz contains shellcode used to decrypt itself as well as the encrypted Cerber file (.ch) and execute it.
+A snippet of the shellcode file:
+Configuration file of Cerber 2 versus X
+We observed few changes in the configuration files of Versions 2, 3, and X.
+They are related in Base64 encoding, self-deletion, encryption message file, and other elements.
+Here are some of the changes.
+Base64 encoding: In Version 2, the configuration file has all contents in plaintext format.
+Version X has some fields encoded with Base64-like encryption messages.
+This change might be used to reduce the in-memory detection of the file because encryption messages have many suspicious strings that help analysts catch the malware in memory.
+So this will reduce the time suspicious strings spend in memory.
+Encryption message file: In contrast to previous versions in which Cerber drops files such as # DECRYPT MY FILES .htm#, this version drops only one, README.hta (an HTML application) file.
+Similar to its predecessors, the name and content of the message file are kept in the configuration file but with Base64 encoding.
+bytes_skip tag: Skips a number of bytes from the start of file during encryption.
+self_deleting tag: Deletes itself after encryption.
+remove_shadows tag: Removes shadow copy backups.
+How Cerber gets its random extension
+This version has unique behavior from its predecessors.
+It does not follow the .cerberN (where N is a number) extension rule but rather uses system information to get an encrypted file extension.
+This version also has different component filenames and locations that are also derived using system information.
+Cerber X uses the following registry entry to get its component filename and extension for an encrypted file.
+HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography\MachineGuid
+MachineGuid has the following format:
+XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+This code snippet shows Cerber accessing the preceding registry key:
+Cerber X tokenizes the Guid using a hyphen and other elements:
+Part 1 (8 characters): Used as a folder name for the Cerber component in %TEMP% directory.
+Part 2, Part 3 (4 characters each): Used as filenames for Cerber’s component files.
+Part 4 (4 characters): Used as the extension of the encrypted file.
+So the mystery behind the random extensions is MachineGUID, whose fourth token becomes the extension for the encrypted file.
+We can use this behavior of getting file and folder names from MachineGUID as a heuristic detection for Cerber X because only after dropping the components does the malware start its encryption process.
+Thus if we could detect this behavior of using MachineGUID, we could prevent the encryption of a victim’s files.
+Network communications
+Network communications are basically similar in all versions.
+But this version has some minor changes in gathering data to send.
+Server information is kept in configuration file:
+Cerber uses the sendto API to send info to the IP address mentioned in the server tag of the configuration file.
+The initial information sent to server is 9 bytes, and the data prototype is stored in the knock tag of configuration file with Base64 encoding.
+The format of data:
+hi{PARTNER_ID}
+PARTNER_ID is generated at runtime.
+In this version the method to get it is different.
+PARTNER_ID, which is 7 characters long, is generated in two parts.
+The first part has 5 characters and second part has 2.
+In Version 2, the first part is generated with the help of a checksum of the file; in Version X it is taken from a hardcoded address in the .data section of the file.
+Code snippets from both versions:
+Anti-VM blooper
+As we mentioned in our previous blog, irrespective of the version Cerber is one of the most comprehensive malware.
+Cerber exhibits anti–virtual machine techniques that detect popular VMs including Parallel, QEMU, VMware, and VBox.
+While analyzing we observed a curious thing: In one of the anti-VM techniques, Cerber accesses the following registry key:
+HKEY_LOCAL_MACHINE\HARDWARE\DESCRIPTION\System\SystemBiosVersion
+After accessing the key, it tries to locate the substring “WMWare” instead of “VMWare” in the value, as shown:
+Looks like even ransomware developers have trouble with typos.
+McAfee products detect Cerber as NSIS/Ransom-Cerber.a

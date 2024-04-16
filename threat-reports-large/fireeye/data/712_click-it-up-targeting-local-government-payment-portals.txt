@@ -1,0 +1,96 @@
+FireEye has been tracking a campaign this year targeting web payment portals that involves on-premise installations of Click2Gov.
+Click2Gov is a web-based, interactive self-service bill-pay software solution developed by Superion.
+It includes various modules that allow users to pay bills associated with various local government services such as utilities, building permits, and business licenses.
+In October 2017, Superion released a statement confirming suspicious activity had affected a small number of customers.
+In mid-June 2018, numerous media reports referenced at least seven Click2Gov customers that were possibly affected by this campaign.
+Since June 2018, additional victims have been identified in public reporting.
+A review of public statements by these organizations appear to confirm compromises associated with Click2Gov.
+On June 15, 2018, Superion released a statement describing their proactive notification to affected customers, work with a third-party forensic firm (not Mandiant), and deployment of patches to Click2Gov software and a related third-party component.
+Superion then concluded that there was no evidence that it is unsafe to make payments utilizing Click2Gov on hosted or secure on-premise networks with recommended patches and configurations.
+Mandiant forensically analyzed compromised systems and recovered malware associated with this campaign, which provided insight into the capabilities of this new attacker.
+As of this publication, the discussed malware families have very low detection rates by antivirus solutions, as reported by VirusTotal.
+The first stage of the campaign typically started with the attacker uploading a SJavaWebManage webshell to facilitate interaction with the compromised Click2Gov webserver.
+Through interaction with the webshell, the attacker enabled debug mode in a Click2Gov configuration file causing the application to write payment card information to plaintext log files.
+The attacker then uploaded a tool, which FireEye refers to as FIREALARM, to the webserver to parse these log files, retrieve the payment card information, and remove all log entries not containing error messages.
+Additionally, the attacker used another tool, SPOTLIGHT, to intercept payment card information from HTTP network traffic.
+The remainder of this blog post dives into the details of the attacker's tactics, techniques, and procedures (TTPs).
+It is not known how the attacker compromised the Click2Gov webservers, but they likely employed an exploit targeting Oracle Web Logic such as CVE-2017-3248, CVE-2017-3506, or CVE-2017-10271, which would provide the capability to upload arbitrary files or achieve remote access.
+After exploiting the vulnerability, the attacker uploaded a variant of the publicly available JavaServer Pages (JSP) webshell SJavaWebManage to maintain persistence on the webserver.
+SJavaWebManage requires authentication to access four specific pages, as depicted in Figure 1, and will execute commands in the context of the Tomcat service, by default the Local System account.
+Figure 1: Sample SJavaWebManage interface
+EnvsInfo: Displays information about the Java runtime, Tomcat version, and other information about the environment.
+FileManager: Provides the ability to browse, upload, download (original or compressed), edit, delete, and timestomp files.
+CMDS: Executes a command using cmd.exe (or /bin/sh if on a non-Windows system) and returns the response.
+DBManage: Interacts with a database by connecting, displaying database metadata, and executing SQL commands.
+The differences between the publicly available webshell and this variant include variable names that were changed to possibly inhibit detection, Chinese characters that were changed to English, references to SjavaWebManage that were deleted, and code to handle updates to the webshell being removed.
+Additionally, the variant identified during the campaign investigation included the ability to manipulate file timestamps on the server.
+This functionality is not present in the public version.
+The SJavaWebManage webshell provided the attacker a sufficient interface to easily interact with and manipulate the compromised hosts.
+The attacker would then restart a module in DEBUG mode using the SJavaWebManage CMDS page after editing a Click2Gov XML configuration file.
+With the DEBUG logging option enabled, the Click2Gov module would log plaintext payment card data to the Click2Gov log files with naming convention Click2GovCX.logYYYY-MM-DD.
+Using interactive commands within the webshell, the attacker uploaded and executed a datamining utility FireEye tracks as FIREALARM, which parses through Click2Gov log files to retrieve payment card data, format the data, and print it to the console.
+FIREALARM is a command line tool written in C/C++ that accepts three numbers as arguments; Year, Month, and Day, represented in a sample command line as: evil.exe 2018 09 01.
+From this example, FIREALARM would attempt to open and parse logs starting on 2018-09-01 until the present day.
+If the log files exists, FIREALARM copies the MAC (Modified, Accessed, Created) times to later timestomp the corresponding file back to original times.
+Each log file is then read line by line and parsed.
+FIREALARM searches each line for the following contents and parses the data:
+This data is formatted and printed to the console.
+The malware also searches for lines that contain the text ERROR -.
+If this string is found, the utility stores the contents in a temporary file named %WINDIR%\temp\THN1080.tmp.
+After searching every line in the Click2GovCX log file, the temporary file THN1080.tmp is copied to replace the respective Click2GovCX log file and the timestamps are replaced to the original, copied timestamps.
+The result is that FIREALARM prints payment card information to the console and removes the payment card data from each Click2GovCX log file, leaving only the error messages.
+Finally, the THN1080.tmp temporary file is deleted.
+This process is depicted in Figure 2.
+Figure 2: FIREALARM workflow
+Attacker traverses Tor or other proxy and authenticates to SjavaWebManage.
+Attacker launches cmd prompt via webshell.
+Attacker runs FIREALARM with parameters.
+FIREALARM verifies and iterates through log files, copies MAC times, parses and prints payment card data to the console, copies error messages to THN1080.tmp, overwrites the original log file and timestomps with orginal times.
+THN1080.tmp is deleted.
+Later, during attacker access to the compromised system, the attacker used the webshell to upload a network sniffer FireEye tracks as SPOTLIGHT.
+This tool offered the attacker better persistence to the host and continuous collection of payment card data, ensuring the mined data would not be lost if Click2GovCX log files were deleted by an administrator.
+SPOTLIGHT is also written in C/C++ and may be installed by command line arguments or run as a service.
+When run as a service, its tasks include ensuring that two JSP files exist, and monitoring and logging network traffic for specific HTTP POST request contents.
+SPOTLIGHT accepts two command line arguments:
+gplcsvc.exe -i Creates a new service named gplcsvc with the display name Group Policy Service
+gplcsvc.exe -u Stops and deletes the service named gplcsvc
+Upon installation, SPOTLIGHT will monitor two paths on the infected host every hour:
+If either file does not exist, the malware Base64 decodes an embedded SJavaWebManage webshell and writes the same file to either path.
+This is the same webshell installed by the attacker during the initial compromise.
+Additionally, SPOTLIGHT starts a socket listener to inspect IPv4 TCP traffic on port 80 and 7101.
+According to a Superion installation checklist, TCP port 7101 is used for application resolution from the internal network to the Click2Gov webserver.
+As long as the connection contents do not begin with GET /, the malware begins saving a buffer of received packets.
+The malware continues saving packet contents to an internal buffer until one of two conditions occurs – the buffer exceeds the size 102399 or the packet contents begin with the string POST /OnePoint/services/OnePointService.
+If either of these two conditions occur, the internal buffer data is searched for the following tags:
+The contents between the tags are extracted and formatted with a `|`, which is used as a separator character.
+The formatted data is then Base64 encoded and appended to a log file at the hard-coded file path: c:\windows\temp\opt.log.
+The attacker then used SJavaWebManage to exfiltrate the Base64 encoded log file containing payment card data.
+FireEye has not identified any manipulation of a compromised host’s SSL configuration settings or redirection of SSL traffic to an unencrypted port.
+This process is depicted in Figure 3.
+Figure 3: SPOTLIGHT workflow
+SPOTLIGHT verifies webshell file on an hourly basis, writing SJavaWebManage if missing.
+SPOTLIGHT inspects IPv4 TCP traffic on port 80 or 7101, saving a buffer of received packets.
+A user accesses Click2Gov module to make a payment.
+SPOTLIGHT parses packets for payment card data, Base64 encodes and writes to opt.log.
+Attacker traverses Tor or other proxy and authenticates to SJavaWebManage and launches File Manager.
+Attacker exfiltrates opt.log file.
+Based on the available campaign information, the attacker doesn’t align with any financially motivated threat groups currently tracked by FireEye.
+The attacker’s understanding of the Click2Gov host requirements, process logging details, payment card fields, and internal communications protocols demonstrates an advanced knowledge of the Click2Gov application.
+Given the manner in which underground forums and marketplaces function, it is possible that tool development could have been contracted to third parties and remote access to compromised systems could have been achieved by one entity and sold to another.
+There is much left to be uncovered about this attacker.
+While it is also possible the attack was conducted by a single individual, FireEye assesses, with moderate confidence, that a team was likely involved in this campaign based on the following requisite skillsets:
+Ability to locate Click2Gov installations and identify exploitable vulnerabilities.
+Ability to craft or reuse an exploit to penetrate the target organization’s network environment.
+Basic JSP programming skills.
+Advanced knowledge of Click2Gov payment processes and software sufficient to develop moderately sophisticated malware.
+Proficient C/C++ programming skills.
+General awareness of operational security.
+Ability to monetize stolen payment card information.
+In addition to a regimented patch management program, FireEye recommends that organizations consider implementing a file integrity monitoring solution to monitor the static content and code that generates dynamic content on e-commerce webservers for unexpected modifications.
+Another best practice is to ensure any web service accounts run at least privilege.
+Although the TTPs observed in the attack lifecycle are generally consistent with other financially motivated attack groups tracked by FireEye, this attacker demonstrated ingenuity in crafting malware exploiting Click2Gov installations, achieving moderate success.
+Although it may transpire in a new form, FireEye anticipates this threat actor will continue to conduct interactive and financially motivated attacks.
+FireEye’s Adversary Pursuit Team from Technical Operations & Reverse Engineering – Advanced Practices works jointly with Mandiant Consulting and FireEye Labs Advanced Reverse Engineering (FLARE) during investigations assessed as directly supporting a nation-state or financial gains intrusions targeting organizations and involving interactive and focused efforts.
+The synergy of this relationship allows FireEye to rapidly identify new activity associated with currently tracked threat groups, as well as new threat actors, advanced malware, or TTPs leveraged by threat groups, and quickly mitigate them across the FireEye enterprise.
+FireEye detects the malware documented in this blog post as the following:
+cc155b8cd261a6ed33f264e710ce300e (Publicly available version)

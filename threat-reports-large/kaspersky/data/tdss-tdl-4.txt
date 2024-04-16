@@ -1,0 +1,102 @@
+We recently published an analysis of the TDSS rootkit, and just as we expected, TDSS continues to evolve.
+A new variant of the rootkit, TDL-4, which can infect both 32-bit and 64-bit operating systems, appeared sometime between July and August, 2010.
+In this article, we describe a new loading method used by the rootkit and examine how the rootkit bypasses PatchGuard and the Windows code integrity mechanism, the protection system built into 64-bit Windows operating systems.
+Importantly, TDL-4 has a different set of components to TDL-3.
+Here is a list of the components included in TDL-4:
+bckfg.tmp cfg.ini cmd.dll cmd64.dll drv32 drv64 ldr16 ldr32 ldr64 mbr
+Like the previous variant, the rootkit uses its own file system that is encrypted using the RC4 algorithm.
+It stores all of its files in the last sectors of the physical drive.
+Structures of the rootkit’s file system after decryption
+As with previous versions, the rootkit makes use of a configuration file.
+Sample data in a TDL-4 configuration file
+The TDL-4 configuration file is slightly different from that of TDL-3, the main difference being the rootkit version number (version=0.02).
+It can be seen from the list of components above that file names include the numbers 32 and 64.
+This demonstrates that the rootkit should work both on 32-bit and 64-bit operating systems.
+This time, a different and already proven method of infection has been chosen for TDSS.
+Like another notorious rootkit, the bootkit, TDL-4 infects the Master Boot Record (MBR).
+This enables it to load before the operating system, right at the beginning of the computer’s boot-up sequence.
+The code in the MBR uses an unsophisticated encryption algorithm, but even small modifications to the algorithm are sufficient to evade signature-based detection by most antivirus products.
+Infected and encrypted MBR code
+Decrypted MBR code with the ldr16 string shown
+The main function of the MBR loader, which is small in size, is to search the rootkit’s encrypted partition for the ldr16 component, load it into RAM and pass control to it.
+Searching for ldr16, loading it into RAM and passing control to it
+Once loaded, ldr16 hooks BIOS interrupt 13h, which is used for disk input/output.
+Next, it finds a copy of the original, uninfected MBR, which was saved to the rootkit’s encrypted partition during infection, and copies it to memory over the infected MBR.
+Then it passes control to the original boot record.
+The original MBR reads the operating system’s boot loader from the hard drive and passes control to it.
+The boot loader then reads the system kernel and the relevant dependencies.
+Interrupt 13h, already hooked by the rootkit, is used to read data from the disk.
+Hooked BIOS 13h interrupt
+Every time that the BIOS 13h interrupt is called, the hook installed by the rootkit is also called.
+It then waits for certain files to be read into memory.
+To continue loading, the rootkit requires the kdcom.dll component – a system driver used in the early stages of the operating system kernel’s initialization.
+Windows debugger component
+To find a copy of kdcom.dll which was read into memory, the interrupt hook function scans each sector that was read, looking for a signature matching the file.
+Signature-based search for kdcom.dll
+When ldr16 finds a matching signature, it searches the rootkit’s encrypted partition for the ldr32 or ldr64 component, depending on whether the operating system is 32-bit or 64-bit, reads the relevant file from the hard drive and replaces the original kdcom.dll in memory with the contents of that file.
+As a result, a malicious component of TDL-4 is loaded into memory instead of the legitimate system component.
+The ldr16 component has one more feature: a procedure for changing the Boot Configuration Data (BCD) in memory.
+BCD is a registry hive that is used by the Windows Boot Manager and is supported by Windows Vista and later operating systems.
+It replaces the now outdated mechanism which used to use the boot.ini file.
+Searching for values and replacing them in BCD
+The TDL-4 rootkit searches the BCD for the BcdLibraryBoolean_EmsEnabled key, which has the signature “16000020”, and then replaces it with the “26000022” – BcdOsLoaderBoolean_WinPEMode key, thereby enabling WinPE system mode.
+There is no code integrity control in WinPE mode and the system does not check the kdcom.dll malicious component for a digital signature.
+Enabling this mode for a limited period of time is sufficient to avoid a check.
+After the malicious component is successfully loaded, the mode is disabled by changing the /MININT parameter to an invalid value.
+To ensure successful initialization of the system, the ldr32/64 malicious component needs to support the kdcom.dll system library’s functionality.
+Functions exported by ldr64
+The list of exported functions is the same for both ldr32/64, and the original kdcom.dll, but in the rootkit component, only one of these functions – KdDebuggerInitialize1 – actually does anything.
+All the other functions are ‘dummies’ that return the successful result of an operation every time.
+In this unsophisticated manner, the rootkit kills two birds with one stone: it continues its own initialization and inhibits the system debugger.
+In the early stages of the kernel’s initialization, the Phase1Initialization function calls the KdDebuggerInitialize1 function, which continues the rootkit’s initialization.
+Kernel initialization and KdDebuggerInitialize1 call
+The code used for ldr32 and ldr64 is virtually identical, since both components are built from the same source code.
+Below is a brief description of the rootkit’s further initialization after calling KdDebuggerInitialize1:
+It sets notification of the image being loaded into memory with the help of the PsSetLoadImageNotifyRoutine function.
+It creates a driver object using the undocumented function IoCreateDriver.
+In order to create a driver object, the initialization function is called, which is passed as a parameter to the IoCreateDriver function.
+Another notification is set in the initialization function, this time using the IoRegisterPlugPlayNotification system function.
+When the PnP notification is called, the encrypted partition of TDL-4 is read and searched for the main rootkit driver, drv32 or drv64, depending on whether the operating system is 32-bit or 64-bit.
+The driver is then read from the disk and loaded into memory.
+After the necessary configuration, the main rootkit driver’s entry point is called.
+It creates a driver object using the undocumented function IoCreateDriver.
+In order to create a driver object, the initialization function is called, which is passed as a parameter to the IoCreateDriver function.
+Another notification is set in the initialization function, this time using the IoRegisterPlugPlayNotification system function.
+When the PnP notification is called, the encrypted partition of TDL-4 is read and searched for the main rootkit driver, drv32 or drv64, depending on whether the operating system is 32-bit or 64-bit.
+The driver is then read from the disk and loaded into memory.
+After the necessary configuration, the main rootkit driver’s entry point is called.
+Another notification is set in the initialization function, this time using the IoRegisterPlugPlayNotification system function.
+When the PnP notification is called, the encrypted partition of TDL-4 is read and searched for the main rootkit driver, drv32 or drv64, depending on whether the operating system is 32-bit or 64-bit.
+The driver is then read from the disk and loaded into memory.
+After the necessary configuration, the main rootkit driver’s entry point is called.
+When the PnP notification is called, the encrypted partition of TDL-4 is read and searched for the main rootkit driver, drv32 or drv64, depending on whether the operating system is 32-bit or 64-bit.
+The driver is then read from the disk and loaded into memory.
+After the necessary configuration, the main rootkit driver’s entry point is called.
+Once LDR32/64 is successfully initialized, the rootkit’s main component, which is responsible for concealing the fact that the operating system is infected, is loaded into memory.
+To achieve this, whenever disk sectors containing the rootkit’s critical components are accessed, fake content is returned.
+TDL-4 sets hooks using the same technique as the previous variant, TDL-3.
+This technique effectively bypasses PatchGuard – the kernel patch protection used in 64-bit versions of Windows.
+The following screenshots are from a 64-bit Windows 7 operating system.
+Disk device stack
+The last device object in the stack and its driver
+Rootkit driver and hook functions
+In addition to all of the above, this rootkit component uses a watchdog thread that checks that system objects are hooked and that the MBR contains an infected copy of the sector.
+In the event that any differences are found, the MBR is re-infected.
+Virus writers try hard to meet the current demands of the cybercriminal market.
+In our forecast for 2010, we predicted that malware would become even more sophisticated and dangerous.
+“At present, there are threats in existence which use modern file-infecting techniques and rootkit functionality,” writes Alexander Gostev.
+“Many antivirus solutions are unable to disinfect systems infected by such malware.
+On the one hand, antivirus technologies will develop in such a way as to prevent threats from penetrating a system in the first place; whilst on the other hand, the threats which are able to evade security solutions will be almost invulnerable.”
+According to our forecast, the number of threats targeting 64-bit platforms will increase during 2011.
+Research shows that 64-bit operating systems are gaining in popularity.
+In part, this is due to the fact that original equipment manufacturers often preinstall these operating systems on their devices.
+As the number of users increases, so the cybercriminals’ demand for malware that supports the new operating systems does too.
+The cybercriminals behind TDSS are developing their program in line with the latest malware development trends.
+The TDSS family is evolving towards greater sophistication, with TDL-4, unlike its predecessors, being able to infect 64-bit operating systems.
+However, 64-bit platforms present a more challenging environment for kernel-mode rootkits.
+This was one of the factors that determined the method used to infect victim computers – in this case, by infecting the MBR.
+Another factor is that most contemporary antivirus, and specifically anti-rootkit, technologies are no match for threats targeting 64-bit platforms, which makes the average malware writer’s life much easier.
+There is no doubt that TDL-4 is ‘armed to the teeth’ and poses a very serious threat to users.
+Even worse, it continues to evolve.
+Antivirus vendors must urgently upgrade their anti-rootkit components, because if ordinary users’ computers succumb to infection by this rootkit, there is very little that those users can do.
+For those who need to detect and remove TDL-4, both on 32-bit and 64-bit platforms, Kaspersky Lab has a range of personal products available, including Kaspersky Anti-Virus and Kaspersky Internet Security, as well as a dedicated utility, TDSSKiller, which detects not only the latest variant of the malware, but its previous versions as well.

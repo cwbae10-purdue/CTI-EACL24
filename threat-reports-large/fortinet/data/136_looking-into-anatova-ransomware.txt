@@ -1,0 +1,94 @@
+FortiGuard Labs Threat Analysis
+This blog is part of a series that is looking into new and older ransomwares to provide in-depth technical analysis details not mentioned in previous sources.
+For example, in this piece on the Anatova ransomware I include a wide range of technical information unavailable elsewhere.
+This includes the actual instructions Anatova uses for deleting the shadows copy; the list of all the names of processes it tries to terminate; all the folders, files, and extension names that it avoids to infect; how it terminates a process; and how it removes itself from memory when a known user is detected.
+The hope is that this information will assist other researchers analyze this and similar ransomware malware they may encounter in the future.
+This article is a walkthrough on how Anatova ransomware works.
+Anatova ransomware is a 64-bit malware that is currently running in the wild.
+It is very seldom that the researchers here at FortiGuard Labs get to see pure 64-bit ransomware, due to the fact that there are still lots of 32-bit machines that are in operation.
+Once Anatova ransomware executes, it drops a copy of the “ANATOVA.TXT” file—that contains the ransom note with the DASH address for payment—into every infected folder.
+Figure 1 shows a snapshot of the ransom note.
+Unlike other ransomware, where victims know immediately that they have been infected due to their flashing and shiny ransom images, unless you have seen the ANATOVA.TXT file, or you’ve noticed that some of your data files are already encrypted, you will not be able to tell that you have been infected with the Anatova ransomware.
+Not showing visible symptoms is a new kind of trick for ransomware.
+It is also worth noting that it asks for DASH crypto coin, instead of the more usual monero or bitcoin.
+Let’s begin the walkthrough to figure out if this ransomware is complicated, or if it is as simple as it looks.
+Just as with any typical malware, Anatova tries to hide its API names to avoid antivirus scanners that still depend heavily on string detections.
+To resolve an API address, the malware decrypts the API name, taken from an array of encrypted names, and calls GetProcAddress API.
+The malware then uses a simple XOR instruction to decrypt the API names.
+It uses a single byte key to decrypt each character byte in the names, and the single byte key is different for each API.
+Figure 2 shows some API names with their equivalent decrypted strings.
+The list shows the kernel32 APis that have been resolved.
+The malware also resolves CryptAcquireContextW, CryptGenRandom, CryptReleaseContext, CryptGenKey, CryptExportKey, CryptDestroyKey, CryptImportKey, GetUserNameW, CryptEncrypt, CryptBinaryToStringA, and ShellExecuteW APIs.
+While in the middle of resolving these names, the malware created]s a mutex named “6a8c9937zFIwHPZ309UZMZYVnwScPB2pR2MEx5SY7B1xgbruoO” after resolving all of the APIs that it needs from kernel32.dll.
+Anatova tries to skip infecting some computer systems that use some specific user names.
+The list of names includes the following:
+LaVirulera tester Tester analyst Analyst lab Lab malware Malware
+If a username is matched from the list, Anatova terminates its execution.
+As we can observe from the list, these are common usernames utilized by machines that are most likely used for analysis or in honeypots.
+The names are also encrypted within the malware body, and the malware uses the same decryption technique used in resolving the APIs.
+A few further steps are performed before it finally seizes execution.
+Initially, Anatova zeroes out the memory locations that contain the resolved APIs, and clears out the memory location that has the mutex name.
+Next, it changes the memory protection of a portion of the .text section to PAGE_EXECUTE_READWRITE using VirtualProtect API, and then zeroes it out.
+It then changes the memory protection back to PAGE_EXECUTE_READ.
+Anatova avoids clearing out the currently executing code by only zeroing out the upper portion of the executable code.
+Afterward, Anatova changes the protection of the memory that contains the current code to PAGE_EXECUTE_READWRITE.
+It then calls the memset function to clear out the memory location of the current code, effectively removing itself from memory.
+Figure 3 shows the code before and after the malware clears out the APIs and the portion of the code section.
+The left side still contains the upper portion of the malware code, while the other side has already been cleared.
+Most malware discontinues its malicious execution once a certain marker—like a username—is found by simply terminating itself.
+And they also normally leave artifacts in memory.
+But Anatova wants to make sure that nothing is left behind by clearing out memory locations before it terminates itself.
+Anatova terminates any processes that match any names previously listed.
+And even when the matched process has already been terminated, the malware continually checks the terminated process’ name against the rest of the process names.
+Initially, the malware calls CreateToolhelp32Snapshot API to open a handle to get a snapshot of the processes in the system.
+It is followed by a call to Process32FirstW API to get information on the first process.
+It then starts decrypting a list of process names and checks each one of them if it matches the current process’s name.
+If a match is found, Anatova opens the process by calling the OpenProcess API, then tries to terminate it using the TerminateProcess API (See Figure 3).
+And once again, even though the process has been successfully terminated, the malware keeps checking it against the remaining process names in the list.
+The malware finally checks all the processes in the system by making a subsequent call to the Process32NextW API for the rest of the processes.
+Figure 4 shows that the current process being checked is “onenote.exe” that matches one of the process names listed below:
+msftesql.exe sqlagent.exe sqlbrowser.exe sqlwriter.exe oracle.exe ocssd.exe dbsnmp.exe synctime.exe agntsvc.exeisqlplussvc.exe xfssvccon.exe sqlservr.exe mydesktopservice.exe ocautoupds.exe agntsvc.exeagntsvc.exe agntsvc.exeencsvc.exe firefoxconfig.exe tbirdconfig.exe mydesktopqos.exe ocomm.exe mysqld.exe mysqld-nt.exe mysqld-opt.exe dbeng50.exe sqbcoreservice.exe excel.exe infopath.exe msaccess.exe mspub.exe onenote.exe outlook.exe powerpnt.exe steam.exe thebat.exe thebat64.exe thunderbird.exe visio.exe winword.exe wordpad.exe
+Anatova skips infecting the following directories:
+Program Files Program Files (x86) Windows ProgramData Tor Browser Local Settings IETldCache Boot All Users
+It also avoids encrypting the following files:
+bootinit desktop.ini thumbs.db hiberfil.sys pagefile.sys swapfile.sys autorun.inf boot.ini Bootfont.bin bootsect.bak iconcache.db NTDETECT.COM ntldr ntuser.dat ntuser.dat.lo ANATOVA.TXT
+It also skips the encryption routine if a file has an extension name that matches one of the following: ani, bat, cab, cmd, cpl, cur, diagcab, diagpkg, dll, drv, exe, hlp, icl, icns, ico , ics, idx, key, ldf, lnk, mod, mpa, msc, msp, msstyles, msu, nomedia, ocx, prf, rom, rtp, scr, shs, spl, sys, theme, and themepack.
+If a file passes all the filters and checks, the malware opens it using the CreateFileW API.
+It then it reads the file’s contents to a memory buffer and encrypts it.
+After encryption, it writes the encrypted bytes back to the file using WriteFile API.
+After a successful file encryption, Anatova drops a copy of ANATOVA.TXT to the current directory.
+After every successful file encryption, the malware will try to drop a copy of the ANATOVA.TXT file in order to make sure that there is always a copy in the infected folder.
+Some malware has a unique identity beyond just its the visible infection marker or the signatures placed within the malware code.
+Anatova is somehow unique in its own way as well.
+Whenever it processes a string, to decrypt or copy, it allocates a memory space using VirtualAlloc API; then after processing the string, it deallocates the new memory space using a call to VirtualFree API.
+For example, to resolve an API as discussed above, it calls the VirtualAlloc API to allocate new virtual memory.
+Then it copies the string, decrypts it, and resolves the API.
+Afterward, it frees up the memory space by calling the VirtualFree API.
+The malware uses the same technique when it compares a username against a list of names to avoid.
+It does this again when it checks for a process name, and when it compares the files for infection.
+Most malware only calls VirtualAlloc API a couple of times.
+It then just uses and re-uses the same allocated memory when it needs to process strings.
+For Anatova, thousands of VirtualAlloc and VirtualFree APIs are called during the entire malware execution.
+It may look like it is not very relevant, but chances are at that might be a form of an anti-emulation technique that beats some security software with a limit on memory allocation.
+We can restore a file or a folder to its previous state using a shadow copy, which is a snapshot of the system at a given time.
+If you deleted or accidentally altered a file, you can restore it if you have a shadow copy that contains the required file.
+Most ransomware tries to avoid this from happening.
+Some of the malicious action of a ransomware is to delete these shadow copies in order to prevent the restoration of the encrypted files.
+Anatova tries to delete the shadow copies by running the command below ten times using ShellExecuteW API (see figure 5):
+C:\Windows\system32\cmd.exe /c vssadmin delete shadows /all /quiet
+Once shadow copies are deleted, the encrypted files are now at the mercy of the ransomware author.
+After encrypting all possible files, the malware will delete itself from the system by calling another ShellExecuteW API, and this time removing itself with the following command:
+C:\Windows\system32\cmd.exe /c timeout -c 9 & del "C:\Users\username\Desktop\malware.exe" /f /q
+Anatova is a fairly new ransomware.
+It avoids infecting computers that are used in analysis and research labs.
+It systematically avoids infecting files and folders that are important to the stability of the computer system it is infecting.
+Another noticeable difference of Anatova from other ransomware is that it does not change the extension names of encrypted files.
+Although it does not have a very loud visible ransom note, it is getting attention on the choices of the running process that it wants to terminate.
+Terminating the processes in its list can trigger suspicion in the part of the user.
+The thing that sets this particular ransomware apart is that it is wise enough to clean its trails and remove any possible restoration of the system.
+MD5SUM: 596ebe227dcd03863e0a740b6c605924 Detection: W64/Encoder.BHU!tr.ransom
+View the latest Fortinet Threat Landscape Indices for botnets, malware, and exploits.
+Learn more about FortiGuard Labs and the FortiGuard Security Services portfolio.
+Sign up for the weekly FortiGuard Threat Intelligence Briefs.
+Learn more about the FortiGuard Security Rating Service, which provides security audits and best practices.
+Read more about our Network Security Expert program, Network Security Academy program or our FortiVets program.

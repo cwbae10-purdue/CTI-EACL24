@@ -1,0 +1,147 @@
+Fortinet has discovered a potential attack surface for Microsoft office via EXD file.
+After a malformed or specifically crafted EXD file was placed in an expected location, it could trigger a remote code execution when a document with ActiveX is opened with office applications.
+A type library (described as TypeLib by MSDN) is not uncommon for people who often deal with COM or ActiveX components development as it always associated with these components.
+As quoted from MSDN, TypeLib are binary files that include information about types and objects exposed by an ActiveX component and typically using TLB as file name extension.
+Using type library, an application can determine which interfaces an object supports, and invoke an object's interface methods.
+Before the application communicates with the ActiveX component, the ActiveX component needs to be registered on a Windows installation first.
+After it was registered, the application can programmatically import the type library associated with the ActiveX component in order to get information and description of the objects, methods and other properties that can be manipulated directly within the application.
+The information retrieval will be handled by OLEAUT32.dll.
+If there is arbitrary code execution vulnerability exists in OLEAUT32.dll due to a malformed type library, the damage is limited to the application itself.
+In theory, this is not an issue because the application can execute arbitrary code in the first place.
+While an extender type library (described as EXD by MSDN) is a cached version of the control type library.
+It caches information about the ActiveX control inside a file name extension EXD.
+The EXD file will be dropped to the local hard disk when a control is inserted into a Microsoft office document.
+Both TLB and EXD share the same binary format, so they have same data structures but using different file name extension.
+In addition, it is important to note that EXD file will be reused whenever it was found by office applications that required it from a predictable location in the local hard drive as documented here.
+It is also vital to know that this EXD file will never be deleted unless it was removed manually as documented by Microsoft.
+Generally, the type library is constructed via an Interface Definition Language (IDL) and compiled by Microsoft Interface Definition Language (midl.exe).
+OLE Object Viewer (oleview.exe) can conveniently convert the binary form of a type library to high level IDL as shown in Figure 1.
+As we can see, the IDL file only contains the definition of the objects, classes, methods and properties but not the actual implementation.
+When we inspect deeper the given TestCOM.tlb type library using 010 Editor, we can tell that it consists of 3 TypeInfo information defined in the MSFT header as shown in Figure 2 and these TypeInfo comprise:
+Class TestCOM
+Interface IDTestCOM
+Interface IUTestCOM
+Figure 1: Example of TypeLib inspected under Oleview.exe
+The root cause of the vulnerability that leads to remote code execution resides in processing the Dispatch or Interface TypeInfo structure in OLEAUT32.dll.
+While discussing binary file format, we normally dissects the structure of the binary to better understand the vulnerability.
+However there is no official MSFT specification from Microsoft so the best reference is ReactOS’s typelib.h header file.
+According to the comments in the header file, the affected field is still unknown yet to the original author.
+However, through reverse engineering, we believe that TypeInfo structure allows a user-defined Interface or Dispatch pointer to be specified within its data structure which could lead to arbitrary pointer dereference.
+Unfortunately we can’t go any deeper into the details as per Microsoft’s vulnerability disclosure policy.
+Figure 2: Number of TypeInfo of a type library
+Hopefully, the following debugger’s output could demonstrate how the vulnerability was invoked in action when processing the crafted EXD file feed to office application.
+The breakpoints with output will only be hit when there is at least one Dispatch or Interface definition found in the type library:
+TKIND_DISPATCH or TKIND_INTERFACE (#1)
+=================================
+Allocated new CTypeInfo: 0x16e25298
+Return existing CTypeInfo pointer: 0x16e25298.
+Actual ppTInfo: 0x16e2529c
+dps poi(ppTInfo):
+76050c00 76051722 OLEAUT32!CTypeInfo2::QueryInterface
+76050c04 76050f6b OLEAUT32!CTypeInfo2::AddRef
+76050c08 76050d41 OLEAUT32!CTypeInfo2::Release
+76050c0c 7605151c OLEAUT32!CTypeInfo2::GetTypeAttr
+76050c10 760baf6a OLEAUT32!CTypeInfo2::GetTypeComp
+OLEAUT32!<censored_funcname>+0x5d6: Calling ppTInfo+0xc: 0x7605151c
+TKIND_DISPATCH or TKIND_INTERFACE (#2)
+=================================
+Allocated new CTypeInfo: 0x16e252c4
+Return existing CTypeInfo pointer: 0x16e252c4.
+Actual ppTInfo: 0x16e252c8
+dps poi(ppTInfo):
+76050c00 76051722 OLEAUT32!CTypeInfo2::QueryInterface
+76050c04 76050f6b OLEAUT32!CTypeInfo2::AddRef
+76050c08 76050d41 OLEAUT32!CTypeInfo2::Release
+76050c0c 7605151c OLEAUT32!CTypeInfo2::GetTypeAttr
+76050c10 760baf6a OLEAUT32!CTypeInfo2::GetTypeComp
+OLEAUT32!<censored_funcname>+0x5d6: Calling ppTInfo+0xc: 0x7605151c
+TKIND_DISPATCH or TKIND_INTERFACE (#3)
+=================================
+Got user defined CTypeInfo: 0x41414141
+(c34.b84): Access violation - code c0000005 (first chance)
+First chance exceptions are reported before any exception handling.
+This exception may be expected and handled.
+eax=00000004 ebx=16e19df8 ecx=41414141 edx=00000000 esi=41414141 edi=41414141
+eip=76051312 esp=00311538 ebp=00311554 iopl=0 nv up ei pl nz na pe nc
+cs=001b ss=0023 ds=0023 es=0023 fs=003b gs=0000 efl=00010206
+OLEAUT32!CTypeInfo2::InternalAddRef+0x5:
+76051312 8b461c mov eax,dword ptr [esi+1Ch] ds:0023:4141415d=???????
+?
+There are three hits as shown in the breakpoint output above since there are one CoClass and two Interfaces defined in the sample file (see Figure 1), while an access violation to 0x41414141 triggered on the second Interface object.
+As one can expect, if the address 0x41414141 is mapped accordingly the program will continue execution and eventually arrive at the call instruction located at OLEAUT32!<censored_funcname>+0x5d6.
+Remote code exploitation of this vulnerability becomes trivial when one has control over a pointer address.
+The most straightforward way to exploit this vulnerability under office application is by using heap spray via ActiveX control, and the result looks like:
+0:000> r
+eax=41414145 ebx=00000000 ecx=90909090 edx=002515bc esi=00000000 edi=1e950df8
+eip=759f2728 esp=00251554 ebp=002518c4 iopl=0 nv up ei pl zr na pe nc
+cs=001b ss=0023 ds=0023 es=0023 fs=003b gs=0000 efl=00010246
+OLEAUT32!<censored_funcname>+0x5d6:
+759f2728 ff510c call dword ptr [ecx+0Ch] ds:0023:9090909c=???????
+?
+0:000> !heap -p -a 41414141
+address 41414141 found in
+_DPH_HEAP_ROOT @ 1261000
+in busy allocation ( DPH_HEAP_BLOCK: UserAddr UserSize - VirtAddr VirtSize)
+3efc2888: 412e0800 200800 - 412e0000 202000
+6f4b8e89 verifier!AVrfDebugPageHeapAllocate+0x00000229
+6f4b92b2 verifier!AVrfDebugPageHeapReAllocate+0x000001a2
+7776691b ntdll!RtlDebugReAllocateHeap+0x00000033
+7772e8ac ntdll!RtlReAllocateHeap+0x00000054
+770af471 kernel32!GlobalReAlloc+0x0000017f
+774d2f2a ole32!CMemBytes::SetSize+0x0000002a
+77509c30 ole32!CMemBytes::WriteAt+0x00000054
+675ce94d mso!Ordinal345+0x000010b5
+675d0575 mso!Ordinal345+0x00002cdd
+675d0b7e mso!Ordinal345+0x000032e6
+675d0e29 mso!Ordinal345+0x00003591
+66b1a9de mso!Ordinal8752+0x00000076
+66af02ef mso!Ordinal2600+0x00000553
+68cc832f msxml5!DllCanUnloadNow+0x0006ff49
+68cca2a8 msxml5!DllCanUnloadNow+0x00071ec2
+68cca4e1 msxml5!DllCanUnloadNow+0x000720fb
+68cd7050 msxml5!DllCanUnloadNow+0x0007ec6a
+66aeebbc mso!Ordinal3199+0x0000051f
+66b1a12a mso!Ordinal896+0x000003ec
+675d10e9 mso!Ordinal10008+0x0000019c
+675d113c mso!Ordinal9433+0x00000016
+6804c3e4 wwlib!wdCommandDispatch+0x00158543
+67dfe943 wwlib!DllGetLCID+0x0016301d
+67a9e2dd wwlib!FMain+0x00039d26
+66b1a9de mso!Ordinal8752+0x00000076
+66af02ef mso!Ordinal2600+0x00000553
+68cc832f msxml5!DllCanUnloadNow+0x0006ff49
+68cc822e msxml5!DllCanUnloadNow+0x0006fe48
+68cc822e msxml5!DllCanUnloadNow+0x0006fe48
+68cc822e msxml5!DllCanUnloadNow+0x0006fe48
+68cc822e msxml5!DllCanUnloadNow+0x0006fe48
+68cc822e msxml5!DllCanUnloadNow+0x0006fe48
+0:000> dc 41414141
+41414141 90909090 90909090 90909090 90909090 ................
+41414151 90909090 90909090 90909090 90909090 ................
+41414161 90909090 90909090 90909091 90909090 ................
+41414171 90909090 90909090 90909090 90909090 ................
+41414181 90909090 90909090 90909090 90909090 ................
+41414191 90909090 90909090 90909090 90909090 ................
+414141a1 90909090 90909090 90909090 90909090 ................
+414141b1 90909090 90909090 90909090 90909090 ................
+As per our testing, this vulnerability currently affects the latest version of OLEAUT32.dll, 6.1.7601.1914 on Windows 7 x86 released on March 2016.
+As recommended by Microsoft, this attack surface can be blocked via Applocker but we haven’t verified it.
+Additionally, this can also be blocked by restricting ActiveX setting in Microsoft office and we strongly believe, at the moment, this is the most effective way to prevent this type of attack.
+We have released the IPS signature, Microsoft.Windows.Ole.Remote.Code.Execution, which covers this specific vulnerability.
+2015-12-22 – Initial vulnerability report sends to Microsoft Security Response Center
+2015-12-24 – MSRC acknowledges receipt and opens a case for the report
+2016-01-13 – MSRC confirms the issue and describes some of the existing solutions to mitigate the issue
+2016-01-14 – FortiGuard Labs replies to clarify how prevalent is the attack and asks MSRC to reconsider fixing the vulnerability
+2016-02-18 – MSRC notifies they are investigating the issue
+2016-02-29 – FortiGuard Labs requests status update
+2016-03-02 – MSRC remains their stance of not fixing the vulnerability and further explains the attack vector described in the report does not meet the bar of their service criteria
+2016-03-02 – FortiGuard Labs asks if MSRC would like to review this advisory prior releasing it to public
+2016-03-05 – MSRC requests to review this advisory whenever it is ready
+2016-03-09 – FortiGuard Labs sends the advisory to MSRC for review
+2016-03-11 – FortiGuard Labs requests status update regarding the status of the advisory review
+2016-03-19 – MSRC acknowledges receipt of the advisory and will provide feedback on 21 March 2016
+2016-03-21 – FortiGuard Labs informs MSRC that this advisory will be set to release on 24 March 2016 and agrees to postpone the publication date if there is feedback from MSRC that requires FortiGuard Labs to fix the content of the advisory
+2016-03-22 – MSRC acknowledges the deadline and says the team is currently reviewing the content
+2016-03-31 – MSRC replies that they have done reviewing the advisory
+2016-04-01 – Release advisory
+-= FortiGuard Lion Team =-

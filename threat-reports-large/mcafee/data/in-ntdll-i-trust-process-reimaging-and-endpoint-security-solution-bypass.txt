@@ -1,0 +1,157 @@
+The Windows Operating System has inconsistencies in how it determines process image FILE_OBJECT locations, which impacts non-EDR (Endpoint Detection and Response) Endpoint Security Solution’s (such as Microsoft Defender Realtime Protection), ability to detect the correct binaries loaded in malicious processes.
+This inconsistency has led McAfee’s Advanced Threat Research to develop a new post-exploitation evasion technique we call “Process Reimaging”.
+This technique is equivalent in impact to Process Hollowing or Process Doppelganging within the Mitre Attack Defense Evasion Category; however, it is , much easier to execute as it requires no code injection.
+While this bypass has been successfully tested against current versions of Microsoft Windows and Defender, it is highly likely that the bypass will work on any endpoint security vendor or product implementing the APIs discussed below.
+The Windows Kernel, ntoskrnl.exe, exposes functionality through NTDLL.dll APIs to support User-mode components such as Endpoint Security Solution (ESS) services and processes.
+One such API is K32GetProcessImageFileName, which allows ESSs to verify a process attribute to determine whether it contains malicious binaries and whether it can be trusted to call into its infrastructure.
+The Windows Kernel APIs return stale and inconsistent FILE_OBJECT paths, which enable an adversary to bypass Windows operating system process attribute verification.
+We have developed a proof-of-concept which exploits this FILE_OBJECT location inconsistency by hiding the physical location of a process EXE.
+The PoC allowed us to persist a malicious process (post exploitation) which does not get detected by Windows Defender.
+The Process Reimaging technique cannot be detected by Windows Defender until it has a signature for the malicious file and blocks it on disk before process creation or performs a full scan on suspect machine post compromise to detect file on disk.
+In addition to Process Reimaging Weaponization and Protection recommendations, this blog includes a technical deep dive on reversing the Windows Kernel APIs for process attribute verification and Process Reimaging attack vectors.
+We use the SynAck Ransomware as a case study to illustrate Process Reimaging impact relative to Process Hollowing and Doppelganging; this illustration does not relate to Windows Defender ability to detect Process Hollowing or Doppelganging but the subverting of trust for process attribute verification.
+When an Antivirus scanner is active on a system, it will protect against infection by detecting running code which contains malicious content, and by detecting a malicious file at write time or load time.
+The actual sequence for loading an image is as follows:
+FileCreate – the file is opened to be able to be mapped into memory.
+Section Create – the file is mapped into memory.
+Cleanup – the file handle is closed, leaving a kernel object which is used for PAGING_IO.
+ImageLoad – the file is loaded.
+CloseFile – the file is closed.
+If the Antivirus scanner is active at the point of load, it can use any one of the above steps (1,2 and 4) to protect the operating system against malicious code.
+If the virus scanner is not active when the image is loaded, or it does not contain definitions for the loaded file, it can query the operating system for information about which files make up the process and scan those files.
+Process Reimaging is a mechanism which circumvents virus scanning at step 4, or when the virus scanner either misses the launch of a process or has inadequate virus definitions at the point of loading.
+There is currently no documented method to securely identify the underlying file associated with a running process on windows.
+This is due to Windows’ inability to retrieve the correct image filepath from the NTDLL APIs.
+This can be shown to evade Defender (MpMsEng.exe/MpEngine.dll) where the file being executed is a “Potentially Unwanted Program” such as mimikatz.exe.
+If Defender is enabled during the launch of mimikatz, it detects at phase 1 or 2 correctly.
+If Defender is not enabled, or if the launched program is not recognized by its current signature files, then the file is allowed to launch.
+Once Defender is enabled, or the signatures are updated to include detection, then Defender uses K32GetProcessImageFileName to identify the underlying file.
+If the process has been created using our Process Reimaging technique, then the running malware is no longer detected.
+Therefore, any security service auditing running programs will fail to identify the files associated with the running process.
+The Mitre ATT&CK model specifies post-exploitation tactics and techniques used by adversaries, based on real-world observations for Windows, Linux and macOS Endpoints per figure 1 below.
+Figure 1 – Mitre Enterprise ATT&CK
+Once an adversary gains code execution on an endpoint, before lateral movement, they will seek to gain persistence, privilege escalation and defense evasion capabilities.
+They can achieve defense evasion using process manipulation techniques to get code executing in a trusted process.
+Process manipulation techniques have existed for a long time and evolved from Process Injection to Hollowing and Doppelganging with the objective of impersonating trusted processes.
+There are other Process manipulation techniques as documented by Mitre ATT&CK and Unprotect Project, but we will focus on Process Hollowing and Process Doppelganging.
+Process manipulation techniques exploit legitimate features of the Windows Operating System to impersonate trusted process executable binaries and generally require code injection.
+ESSs place inherent trust in the Windows Operating System for capabilities such as digital signature validation and process attribute verification.
+As demonstrated by Specter Ops, ESSs’ trust in the Windows Operating system could be subverted for digital signature validation.
+Similarly, Process Reimaging subverts an ESSs’ trust in the Windows Operating System for process attribute verification.
+When a process is trusted by an ESS, it is perceived to contain no malicious code and may also be trusted to call into the ESS trusted infrastructure.
+McAfee ATR uses the Mitre ATT&CK framework to map adversarial techniques, such as defense evasion, with associated campaigns.
+This insight helps organizations understand adversaries’ behavior and evolution so that they can assess their security posture and respond appropriately to contain and eradicate attacks.
+McAfee ATR creates and shares Yara rules based on threat analysis to be consumed for protect and detect capabilities.
+McAfee Advanced Threat Research analyzed SynAck ransomware in 2018 and discovered it used Process Doppelganging with Process Hollowing as its fallback defense evasion technique.
+We use this malware to explain the Process Hollowing and Process Doppelganging techniques, so that they can be compared to Process Reimaging based on a real-world observation.
+Process Manipulation defense evasion techniques continue to evolve.
+Process Doppelganging was publicly announced in 2017, requiring advancements in ESSs for protection and detection capabilities.
+Because process manipulation techniques generally exploit legitimate features of the Windows Operating system they can be difficult to defend against if the Antivirus scanner does not block prior to process launch.
+“Process hollowing occurs when a process is created in a suspended state then its memory is unmapped and replaced with malicious code.
+Execution of the malicious code is masked under a legitimate process and may evade defenses and detection analysis” (see figure 2 below)
+Figure 2 – SynAck Ransomware Defense Evasion with Process Hollowing
+“Process Doppelgänging involves replacing the memory of a legitimate process, enabling the veiled execution of malicious code that may evade defenses and detection.
+Process Doppelgänging’s use of Windows Transactional NTFS (TxF) also avoids the use of highly-monitored API functions such as NtUnmapViewOfSection, VirtualProtectEx, and SetThreadContext” (see figure 3 below)
+Figure 3 – SynAck Ransomware Defense Evasion with Doppleganging
+The Windows Kernel APIs return stale and inconsistent FILE_OBJECT paths which enable an adversary to bypass windows operating system process attribute verification.
+This allows an adversary to persist a malicious process (post exploitation) by hiding the physical location of a process EXE (see figure 4 below).
+Figure 4 – SynAck Ransomware Defense Evasion with Process Reimaging
+NtQueryInformationProcess retrieves all process information from EPROCESS structure fields in the kernel and NtQueryVirtualMemory retrieves information from the Virtual Address Descriptors (VADs) field in EPROCESS structure.
+The EPROCESS structure contains filename and path information at the following fields/offsets (see figure 5 below):
++0x3b8 SectionObject (filename and path)
++0x448 ImageFilePointer* (filename and path)
++0x450 ImageFileName (filename)
++0x468 SeAuditProcessCreationInfo (filename and path)
+* this field is only present in Windows 10
+Figure 5 – Code Complexity IDA Graph Displaying NtQueryInformationProcess Filename APIs within NTDLL
+Kernel API NtQueryInformationProcess is consumed by following the kernelbase/NTDLL APIs:
+K32GetModuleFileNameEx
+K32GetProcessImageFileName
+QueryFullProcessImageImageFileName
+The VADs hold a pointer to FILE_OBJECT for all mapped images in the process, which contains the filename and filepath (see figure 6 below).
+Kernel API NtQueryVirtualMemory is consumed by following the kernelbase/NTDLL API:
+GetMappedFileName
+Figure 6 – Code Complexity IDA Graph Displaying NtQueryVirtualMemory Filename API within NTDLL
+Windows fails to update any of the above kernel structure fields when a FILE_OBJECT filepath is modified post-process creation.
+Windows does update FILE_OBJECT filename changes, for some of the above fields.
+The VADs reflect any filename change for a loaded image after process creation, but they don’t reflect any rename of the filepath.
+The EPROCESS fields also fail to reflect any renaming of the process filepath and only the ImageFilePointer field reflects a filename change.
+As a result, the APIs exported by NtQueryInformationProcess and NtQueryVirtualMemory return incorrect process image file information when called by ESSs or other Applications (see Table 1 below).
+Table 1 OS/Kernel version and API Matrix
+Process Reimaging targets the post-exploitation phase, whereby a threat actor has already gained access to the target system.
+This is the same prerequisite of Process Hollowing or Doppelganging techniques within the Defense Evasion category of the Mitre ATT&CK framework.
+Simply renaming the filepath of an executing process results in Windows OS returning the incorrect image location information for all APIs (See figure 7 below).
+This impacts all Windows OS versions at the time of testing.
+Figure 7 FILE_OBJECT Filepath Changes – Filepath Changes Impact all Windows OS versions
+Filename Change >= Windows 10
+Simply renaming the filename of an executing process results in Windows OS returning the incorrect image information for K32GetProcessImageFileName API (See figure 8.1.1 below).
+This has been confirmed to impact Windows 10 only.
+Figure 8.1.1 FILE_OBJECT Filename Changes – Filename Changes impact Windows >= Windows 10
+Per figure 8.1.2 below, GetModuleFileNameEx and QueryFullProcessImageImageFileName will get the correct filename changes due to a new EPROCESS field ImageFilePointer at offset 448.
+The instruction there (mov r12, [rbx+448h]) references the ImageFilePointer from offset 448 into the EPROCESS structure.
+Figure 8.1.2 NtQueryInformationProcess (Windows 10) – Windows 10 RS1 x64 ntoskrnl version 10.0.14393.0
+Filename Change < Windows 10
+Simply renaming the filename of an executing process results in Windows OS returning the incorrect image information for K32GetProcessImageFileName, GetModuleFileNameEx and QueryFullProcessImageImageFileName APIs (See figure 8.2.1 below).
+This has been confirmed to impact Windows 7 and Windows 8.
+Figure 8.2.1 FILE_OBJECT Filename Changes – Filename Changes Impact Windows < Windows 10
+Per Figure8.2.2 below, GetModuleFileNameEx and QueryFullProcessImageImageFileName will get the incorrect filename (PsReferenceProcessFilePointer references EPROCESS offset 0x3b8 SectionObject).
+Figure 8.2.2 NtQueryInformationProcess (Windows 7 and 8) – Windows 7 SP1 x64 ntoskrnl version 6.1.7601.17514
+LoadLibrary FILE_OBJECT reuse leverages the fact that when a LoadLibrary or CreateProcess is called after a LoadLibrary and FreeLibrary on an EXE or DLL, the process reuses the existing image FILE_OBJECT in memory from the prior LoadLibrary.
+Exact Sequence is:
+LoadLibrary (path\filename)
+FreeLibrary (path\filename)
+LoadLibrary (renamed path\filename) or CreateProcess (renamed path\filename)
+This results in Windows creating a VAD entry in the process at step 3 above, which reuses the same FILE_OBJECT still in process memory, created from step 1 above.
+The VAD now has incorrect filepath information for the file on disk and therefore the GetMappedFileName API will return the incorrect location on disk for the image in question.
+The following prerequisites are required to evade detection successfully:
+The LoadLibrary or CreateProcess must use the exact same file on disk as the initial LoadLibrary
+Filepath must be renamed (dropping the same file into a newly created path will not work)
+The Process Reimaging technique can be used in two ways with LoadLibrary FILE_OBJECT reuse attack vector:
+LoadLibrary (see figure 9 below)
+When an ESS or Application calls the GetMappedFileName API to retrieve a memory-mapped image file, Process Reimaging will cause Windows OS to return the incorrect path.
+This impacts all Windows OS versions at the time of testing.
+When an ESS or Application calls the GetMappedFileName API to retrieve a memory-mapped image file, Process Reimaging will cause Windows OS to return the incorrect path.
+This impacts all Windows OS versions at the time of testing.
+Figure 9 LoadLibrary FILE_OBJECT Reuse (LoadLibrary) – Process Reimaging Technique Using LoadLibrary Impacts all Windows OS Versions
+2.
+CreateProcess (See figure 10 below)
+When an ESS or Application calls the GetMappedFileName API to retrieve the process image file, Process Reimaging will cause Windows OS to return the incorrect path.
+This impacts all Windows OS versions at the time of testing.
+When an ESS or Application calls the GetMappedFileName API to retrieve the process image file, Process Reimaging will cause Windows OS to return the incorrect path.
+This impacts all Windows OS versions at the time of testing.
+Figure 10 LoadLibrary FILE_OBJECT Reuse (CreateProcess) – Process Reimaging Technique using CreateProcess Impacts all Windows OS Versions
+This video simulates a zero-day malware being dropped (Mimikatz PUP sample) to disk and executed as the malicious process “phase1.exe”.
+Using the Process Reimaging Filepath attack vector we demonstrate that even if Defender is updated with a signature for the malware on disk it will not detect the running malicious process.
+Therefore, for non-EDR ESSs such as Defender Real-time Protection (used by Consumers and also Enterprises) the malicious process can dwell on a windows machine until a reboot or the machine receives a full scan post signature update.
+If a product uses any of the APIs listed in table 1 for the following use cases, then it is likely vulnerable:
+Process reputation of a remote process – any product using the APIs to determine if executing code is from a malicious file on disk
+CVSS score 5.0 (Medium) https://www.first.org/cvss/calculator/3.0#CVSS:3.0/AV:L/AC:L/PR:L/UI:R/S:U/C:N/I:H/A:N (same score as Doppelganging)
+Trust verification of a remote process – any product using the APIs to verify trust of a calling process
+CVSS score will be higher than 5.0; scoring specific to Endpoint Security Solution architecture
+McAfee Advanced Threat Research submitted Process Reimaging technique to Microsoft on June 5th, 2018.
+Microsoft released a partial mitigation to Defender in the June 2019 Cumulative update for the Process Reimaging FILE_OBJECT filename changes attack vector only.
+This update was only for Windows 10 and does not address the vulnerable APIs in Table 1 at the OS level; therefore, ESSs are still vulnerable to Process Reimaging.
+Defender also remains vulnerable to the FILE_OBJECT filepath changes attack vector executed in the bypass demo video, and this attack vector affects all Windows OS versions.
+New and existing Process Manipulation techniques which abuse legitimate Operating System features for defense evasion are difficult to prevent dynamically by monitoring specific API calls as it can lead to false positives such as preventing legitimate processes from executing.
+A process which has been manipulated by Process Reimaging will be trusted by the ESS unless it has been traced by EDR or a memory scan which may provide deeper insight.
+File System Synchronization (EPROCESS structures out of sync with the filesystem or File Control Block structure (FCB) Allow the EPROCESS structure fields to reflect filepath changes as is currently implemented for the filename in the VADs and EPROCESS ImageFilePointer fields.
+There are other EPROCESS fields which do not reflect changes to filenames and need to be updated, such as K32GetModuleFileNameEx on Windows 10 through the ImageFilePointer.
+Allow the EPROCESS structure fields to reflect filepath changes as is currently implemented for the filename in the VADs and EPROCESS ImageFilePointer fields.
+There are other EPROCESS fields which do not reflect changes to filenames and need to be updated, such as K32GetModuleFileNameEx on Windows 10 through the ImageFilePointer.
+API Usage (most returning file info for process creation time) Defender (MpEngine.dll) currently uses K32GetProcessImageFileName to get process image filename and path when it should be using K32GetModuleFileNameEx.
+Consolidate the duplicate APIs being exposed from NtQueryInformationProcess to provide easier management and guidance to consumers that require retrieving process filename information.
+For example, clearly state GetMappedFileName should only be used for DLLs and not EXE backing process).
+Differentiate in API description whether the API is only limited to retrieving the filename and path at process creation or real-time at time of request.
+Defender (MpEngine.dll) currently uses K32GetProcessImageFileName to get process image filename and path when it should be using K32GetModuleFileNameEx.
+Consolidate the duplicate APIs being exposed from NtQueryInformationProcess to provide easier management and guidance to consumers that require retrieving process filename information.
+For example, clearly state GetMappedFileName should only be used for DLLs and not EXE backing process).
+Differentiate in API description whether the API is only limited to retrieving the filename and path at process creation or real-time at time of request.
+Filepath Locking Lock filepath and name similar to lock file modification when a process is executing to prevent modification.
+Standard user at a minimum should not be able to rename binary paths for its associated executing process.
+Lock filepath and name similar to lock file modification when a process is executing to prevent modification.
+Standard user at a minimum should not be able to rename binary paths for its associated executing process.
+Reuse of existing FILE_OBJECT with LoadLibrary API (Prevent Process Reimaging) LoadLibrary should verify any existing FILE_OBJECT it reuses, has the most up to date Filepath at load time.
+LoadLibrary should verify any existing FILE_OBJECT it reuses, has the most up to date Filepath at load time.
+Short term mitigation is that Defender should at least flag that it found malicious process activity but couldn’t find associated malicious file on disk (right now it fails open, providing no notification as to any potential threats found in memory or disk).
+The FILE_OBJECT ID must be tracked from FileCreate as the process closes its handle for the filename by the time the image is loaded at ImageLoad.
+This ID must be managed by the Endpoint Security Vendor so that it can be leveraged to determine if a process has been reimaged when performing process attribute verification.

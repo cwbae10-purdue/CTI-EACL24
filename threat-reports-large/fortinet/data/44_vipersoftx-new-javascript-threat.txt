@@ -1,0 +1,102 @@
+FortiGuard Labs Threat Analysis
+Affected Platforms: Windows Impacted Users: Any Windows users Threat Severity: High – allows the attacker to gain remote access.
+Recently, FortiGuard Labs, leveraging the FortiEDR endpoint protection platform, detected and blocked a new and highly obfuscated malicious malware in a large OT environment.
+This newly discovered JavaScript-based Remote Access Trojan (RAT) and cryptocurrency stealer, which we have dubbed “ViperSoftX” (due to a hardcoded string used by its creator), became notably active towards the end of 2019, and remains so as of the time of this writing.
+In this blog post we will analyze the tactics, techniques, and procedures (TTPs) used by this new discovered threat along with details on the campaign we uncovered that uses this new malware.
+ViperSoftX unravels 8 layers of code obfuscation before executing its actual payload.
+There are 3 different types of obfuscation techniques being employed:
+AES Decryption: This is only used in the first layer.
+The author copy-pasted chunks of code that implements the AES algorithm from the widely used CryptoJS library.
+Every sample has a different hardcoded AES key.
+Converting Char Arrays: This method executes only once as well, usually at the third layer, and has the simple functionality of evaluating a hardcoded array of characters.
+UTF8 Decoding: This method is the most recurring deobfuscation layer.
+It contains code snippets most likely copied from the online Web Toolkit to perform UTF-8 decoding.
+Another effective method used to thwart the analysis of this malware is appending a non-ascii character at the end of the script, which results in encoding exceptions in most of the existing debuggers and basic deobfuscation methods.
+ViperSoftX starts by placing a copy of itself under %APPDATA%.
+The author attempts to disguise the malicious script by using seemingly legitimate names such as vpn_port.dll, reg.converter.sys, install.sig, and install.db.
+To establish persistency, the malware drops another script file under %APPDATA% and creates a shortcut in the startup directory to invoke it.
+The dropped script is a VBScript file, which in turn, executes ViperSoftX:
+Set WshShell = WScript.CreateObject(“””WScript.Shell”””)
+Obj = WshShell.Run(“””wscript.exe /E:jscript “””[PATH TO THE JS FILE]”””
+Set WshShell = Nothing
+Figure 1: Dropped VBScript
+After establishing persistency, ViperSoftX queries the C&C server to fetch a command for execution.
+It does so in an infinite loop, and following each command execution it sleeps for 3 seconds.
+The requests are sent in plain-text via HTTP PUT request to hxxp://seko.vipers.pw:8880/connect.
+ViperSoftX uses HTTP headers to pass the machine information to the C&C server.
+The X-Header field (a non-standard header) is set to the hardcoded version and the User-Agent header is set to the machine information that includes:
+The hardcoded version + “_” + includes the serial number of the machine, which is obtained using WMI’s win32_logicaldisk class and then extracting the VolumeSerialNumber.
+The ComputerName – an environment variable.
+The UserName – an environment variable.
+The operating system version from the Caption property of WMI’s win32_operatingsystem class.
+The CPU architecture from the AddressWidth property of WMI’s win32_processor class instance of ‘cpu0’.
+Installed Anti-Virus information obtained by querying WMI’s instances of the AntiVirusProduct class in the SecurityCenter and SecurityCenter2 namespaces.
+A boolean flag indicating whether Microsoft.NET\\Framework\\v2.0.50727\\vbc.exe exists on the machine.
+The hardcoded version string format is as follows:
+Vress = “viperSoftx_x.x.x.x”
+There are no differences between files with different versions.
+Since the version is being sent to the server, we assume it might act as tag for different operations or campaigns being carried out.
+The response received from the server is a string that is split into an array, which represents the command to be executed.
+Currently, the following commands implemented by ViperSoftX are:
+The output of the commands executed on the victim machines are not being returned to the server.
+It’s interesting to note that the Ex command indicates that the malware author aimed to continue operating with additional JavaScript-based payloads.
+This indicates that the developer feels more comfortable using JavaScript as his “go-to” programming language.
+During our research, we also noticed that the X-Powered-By header in the response was “Express”.
+This serves as another indication of the author’s affection for JavaScript since it suggests the server was built using the widely popular Express framework for NodeJS.
+One of the goals of ViperSoftX is to steal cryptocurrency.
+Thus, after every command execution, ViperSoftX checks the content of the clipboard using the following code:
+WScript.CreateObject(“htmlfile”).parentWindow.clipboardData.getData(“text”)
+It then checks to see if the content matches either of two regex patterns that aim to match either a Bitcoin or an Ethereum address.
+In case of a match, and if the addresses are different from the addresses hardcoded in ViperSoftX, it sets the clipboard data to its own addresses.
+Changing the clipboard data is done based on the OS version.
+On Windows 10 it uses PowerShell’s scp.
+Otherwise, it runs cmd as follows:
+Cmd.exe /c echo|set /p=[address to set]|clip
+After examining ViperSoftX’s Bitcoin and Ethereum addresses hardcoded in the malware, we can conclude the following:
+There’s a matching BCH address that had only 1 transaction on 2020-01-17.
+This address holds a total sum of 1.00962178 BCH, which is worth 379.51 USD.
+There’s a matching BTC address that has had 125 transactions, the most recent of which occurred on 2020-01-17, while the earliest occurred on 2019-06-20.
+The total balance of the wallet is 3.37562306 BTC, which translates to 31,085.29 USD.
+The matching Ethereum address holds a total sum of 7.436753340964695808 Ether, which is worth 1,394.18 USD.
+The current total sum of all of the above mentioned wallets stands at 32,858.98 USD.
+While this is not a significant amount, this is only one campaign of this newly discovered threat which has only operated for a short while, and may only be the start of bigger, more successful campaigns.
+Also, as this threat has RAT capabilities, we don’t know if this was the only goal of the threat actor.
+For example, the threat actor might also be selling stolen data.
+The following Ethereum activity graphs also indicate the campaign’s activity phases and reflect the steady growth of activity of ViperSoftX since late 2019, along with a stable increase of revenue since the first time it was detected in the wild:
+JavaScript-based malware are becoming more, and ViperSoftX is a good example of this trend.
+While its functionality is rather simple, its download and execute capabilities make it a threat that should be closely monitored by defenders in case its operators decide to use it as a platform for additional operations by leveraging its RAT functionality.
+It can potentially be used for any other type of functionality, such as execution of ransomware.
+It’s also possible that we are only seeing the first stages of ViperSoftX.
+If it is still in active development we might encounter more advanced and sophisticated versions of it in the future.
+FortiEDR detects and blocks ViperSoftX out-of-the-box without any prior knowledge or special configuration.
+FortiGuard IPS detects ViperSoftX as JS/ViperSoft.A!tr
+FortiGuard Web filtering categorizes the network IOC as Malicious Websites
+ViperSoftX can also be easily detected using a standard network monitoring mechanism.
+It’s plain-text communication, along with usage of non-standard headers, make it stand out from otherwise normal traffic.
+In addition, as part of our membership in the Cyber Threat Alliance, details of this threat were shared in real time with other Alliance members to help create better protections for customers.
+SHA256 -
+65cb35d1b09097aa64b89062a060b3bb680bc4c962ff116f32edf92735f401eb
+4bb342c21ff563454d2fdc25eb3e63731d06d20c1fca2522061ad1ef38a53c89
+391e4b6ffb90303547d20baaa5695f2c0191f5461bb20cb885e170dd019e017c
+9e63d2ac3dc280a25c27a126752fdde1c8c5a0c4b4990f479a44dd8441b22ab3
+C&C Server Domain Name -
+seko.vipers.pw
+Bitcoin address -
+1PRMMQgM65KDtMTryu9ccpeAgUmKqDrE9M
+Ethereum address -
+0x9d787053f9839966A664b0e14e9C26a3684F6E44
+T1059 - Command-Line Interface
+T1086 - PowerShell
+T1064 - Scripting
+T1047 - Windows Management Instrumentation
+T1060 - Startup Folder
+T1023 - Shortcut Modification
+T1140 - Deobfuscate/Decode Files or Information
+T1063 - Security Software Discovery
+T1082 - System Information Discovery
+T1033 - System Owner/User Discovery
+T1115 - Clipboard Data
+T1005 - Data from Local System
+Learn more about FortiGuard Labs threat research and the FortiGuard Security Subscriptions and Services portfolio.
+Sign up for the weekly Threat Brief from FortiGuard Labs.
+Learn more about Fortinet’s free cybersecurity training initiative or about the Fortinet Network Security Expert program, Network Security Academy program, and FortiVet program.

@@ -1,0 +1,115 @@
+As part of our normal course of operations as a cyber threat intelligence provider, we monitor the cyber crime underground and the world of cyber espionage.
+We provide analysis to our clients on new and emerging threats as well as help them analyze artifacts found on their networks.
+As you can imagine, we naturally run into large quantities of malware on a daily basis, conduct a great deal of reverse engineering and aide from time to time in incident response.
+Every once in awhile, we try to share details on what we find and how we find it to the public in the interest of informing the community around new threats and providing actionable analysis to support the hunt and kill missions.
+We recently were asked to help one of our clients determine whether or not the root cause of an exploit kit exposure was related to a compromised website or an attack through malvertising.
+We decided to put together this blog to help you in this investigative process.
+Hat-tip and thanks to Brad Duncan.
+Brad helped us with this analysis.
+He is a Security Researcher at Rackspace.
+He runs the blog www.malware-traffic-analysis.net, and he is also a handler at the Internet Storm Center (isc.sans.edu)
+Should you have any questions about the details in this blog, please do not hesitate to drop us a line and we will work to get you the answers that you need.
+We're also recording a webinar (today - 9.24.15) to discuss the same.Watch our FREE Online Workshop- Watering Holes & Malvertising: Uncovering the Root Cause of Compromise - for an informative how-to session.
+If you're reading this post the 9.24.15 session, no worries - the above link will get you to an on-demand version of the session.
+The below blog represents part 1 - looking at strategic web compromise.
+As this is a lot to write and consume, we will post part 2 tomorrow related to the malvertising angle.
+Drive-by exploitation is the process of intercepting a potential victim during their typical web browsing activities, utilizing malicious code and process manipulation to install malware on the victim machine, generally without user awareness or interaction.
+Drive-by exploitation is most commonly performed using exploit kits - malicious code (typically, thought not always expressed as web applications) that are designed to facilitate the automation of victim profiling, exploitation, and payload installation.
+Incidents involving exposure to an exploit kit are typically classified as "drive-by" exploitation, but can be sub-divided into two general categories based on the root cause of the incident.
+These categories divide kit interactions caused by website compromise from those caused by malicious advertising ("malvertising").
+Website Compromise: if an attacker has compromised a website or a third-party resource/content management system used consistently by that website and used this access to introduce foreign code designed to profile, redirect, or directly exploit potential victims directly into the page's source code then this incident can be categorized as website compromise.
+Malvertising: if an attacker has created malicious advertising content (a "creative") that is used by an advertising network, then the root cause is said to be malicious advertising.
+While malvertising does affect a third-party resource used by a website (making it a sub-category of website compromise), it is specifically differentiated from website compromise by its inherent randomness; since advertising servers generate unique, varied creative content, each exposure to a site hosting an advertisement has a probabilistic chance of displaying a malicious creative.
+It is also differentiated by the defensive mechanisms that can be taken, which differ from website compromise generally, and by which party that can best mitigate the attack.
+Determining the point of origin for an incident involving an exploit kit can help an organization or end-user design better defenses that may prevent similar activity from being successful on potential future exposure.
+Determining how a kit exposure happened enables proactive defensive action specific to the identified activity.
+Root-cause analysis can also help with the process of notifying entities capable of taking action to mitigate the threat.
+This can include notifying the owner/operator of compromised websites and/or identifying which components of the website may have caused the original exposure.
+It also may enable the identification of creative IDs, which generally link one-to-one with specific advertising content.
+These IDs may be used by advertising services that are willing to take action to prevent malicious abuse of their service to identify malicious advertisements and users generating related content.
+For this blog, we at iSIGHT Partners are working with Brad (known for operating Malware-traffic-analysis.net - a great site with resources for training).
+We've taken a variety of approaches and used a variety of tools to give perspective on different methods and means that can be used to tackle exploit kit traffic analysis.
+Feel free to check out some of the tools and processes we suggest here as well as to explore further (Fiddler is a good example of a tool we aren't using in this tutorial, but that is useful for this line of work).
+If you've got other tools that you use that aren't referenced here, leave a comment and start some discussion.
+We're always looking for new ways to tackle problems.
+Investigating exploit kit activity for root cause analysis generally requires a full packet capture of network traffic that includes the initial exposure.
+While some information can be determined without full packet capture, as a general rule you're going to need this level of detail in order to definitively determine the root cause.
+For this blog, we are going to be working through two case examples that demonstrate how to investigate exploit kits caused by website compromise (Case One) and another incident caused by malicious advertising (Case Two).
+For Case One, we will make use of CapTipper and Wireshark.
+Case Two makes use of ET/ET Pro, Suricata, Security Onion, and WireShark.
+Both cases explore Angler Exploit Kit variants.
+In this first example, we are examining an instance of an Angler Exploit Kit variant.
+This incident was recorded by Brad of malware-traffic-analysis.net, and the packet capture is available directly on his blog.
+To make analysis easier, we are going to make use of the tool CapTipper (GitHub: https://github.com/omriher/CapTipper; Documentation: https://captipper.readthedocs.org/en/latest/).
+CapTipper is described as a Python tool to analyze, explore, and revive HTTP malicious traffic.
+The tool sets up a web server that acts as the server in a given PCAP file.
+The utility provides a number of different resources to help with investigations, and is very useful for simplifying and examining exploit kit traffic.
+We've gone ahead and prepared an HTML version of a CapTipper report for this blog that you can use to follow along.
+We'll also supply some references to the packet capture itself in case you want to examine the traffic in WireShark (or another tool).
+The Flow View section of the capture provides some initial hints that can help us make an educated guess about which requests may be of concern.
+Notice in the image below that there is one redirection from www.educatory.com to another website, followed by requests without referrers to ipinfo.io (which does provide, as you might guess, geolocation data), followed by further requests for micropiso.cl (which a brief Google search suggests 'may be hacked'), and then requests for two very suspicious looking domains.
+We also see a request for startssl.com and windowsupdate.com - both of which are potential harbingers that we've got an exploit kit and subsequent malware installation on our hands.
+That said, this example is a bit contrived in that the sample we're examining only contains the activity associated with this one host interaction with an exploit kit.
+In a real-world example, there is going to be a lot of additional traffic from the network going on and, depending upon network instrumentation, the task may not be this simple.
+Examining this traffic flow against typical exploit kit behavior can provide us with some additional leads to investigate, particularly for cases where there is more activity going on.
+The diagram below is an example of typical TTPs we at iSIGHT Partners see in exploit kit interactions.
+Given this chain of events and the overall structure of the PCAP we're examining, we can now begin to look for known malicious activity.
+When investigating the root cause of an incident involving an exploit kit, it is important to start from the known-malicious activity and work backwards to the point of origin, which may otherwise be difficult to identify (since it will not necessarily cause signatures to fire, does not typically involve any unusual file types).
+Instead, it is typically easier to start with the noisier evidence of a compromise (a payload, exploit, or landing page) and then work backwards to determine root cause.
+This doesn't mean you have to start with analyzing the payload - but rather identifying the traffic associated with the payload or exploit may be easier.
+The second part of this tutorial, by Brad, features an example of how to locate these structures in network traffic if you'd like to explore this starting point further.
+CapTipper provides a menu for conversations that breaks down each set of requests according to its destination host.
+If you look towards the end of the provided HTML report you'll see the conversations that are most likely to contain command and control communication from any installed payload, prefaced by the payload delivery, prefaced by exploit delivery, the landing page, and so on.
+The last two conversations in the report are typical of some malware (that is, the use of windowsupdate.com and the use of startssl.com) - but neither can be considered unique to malware or particularly useful to our investigation.
+However, the conversation just previous to these requests may be more relevant (in WireShark, you can see similar requests by choosing the 'File' menu and selecting 'Export Objects' and then 'HTTP').
+A quick open-source search of the suspicious-looking pages "awoeinf832as.wo49i277rnw.com" and "qw2234duoiyu.h2fyr6785jhdhfg.com" is another indicator that we are on the right track (both are alleged by open-source reports to be associated with TeslaCrypt, which has been a relatively typical Angler Exploit Kit payload).
+If we backtrack one step further in the ordered conversations, we can see the conversation between the client and www.micropiso.cl (recall that this site was listed by Google as potentially compromised).
+Here we can see some very suspicious looking traffic.
+Clicking on the requests within the conversation tells us a bit more about this interaction.
+The phrase "---!!!INSERTED!!
+!---" certainly suggests TeslaCrypt and helps corroborate the open-source searching we noted earlier.
+While it's not enough information to give us definitive payload attribution, this phrase is an element of the Emerging Threats (ET) IDS rule sid:156662 used to detect TeslaCrypt - and it may explain why this file is being labeled as such in the open-source.
+alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"ET TROJAN W32/TeslaCrypt.Ransomware CnC Server Response"; flow:established,to_client; file_data; content:"---!!!INSERTED!!
+!---"; within:20; classtype:trojan-activity; reference:url,blogs.cisco.com/security/talos/teslacrypt; sid:156662; rev:1;)
+The ET rule referenced above also further classifies this activity as a "ransomware cnc server response" - which certainly matches with the right step in the compromise chain for what we're seeing in this sample capture!
+Continuing to walk backwards through the report gives us a geolocation check, and then what appears to be the exploit kit's exploit code.
+Examine the ninth request in CapTipper (in Wireshark's HTTP object export display, you'll see this conversation displayed, packets 254, 259, 289, 335, and 704).
+Let's zoom in on this series of requests.
+This is the ninth conversation.
+CapTipper informs us that the content is a binary file (which appears to be encrypted - perhaps XTEA given the common use of XTEA for Angler shellcode).
+For the purpose of this tutorial we can probably guess that this is shellcode used by the exploit kit, but we will not be analyzing it directly (since we're concerned with determining the origination point and not kit operational TTPs).
+The eighth request contains a compressed Flash File, and there is a good chance this contains one or more exploits within it.
+This is another area we could explore further, but it will again not assist us in determining root cause.
+The seventh request is a bit more subtle.
+What could this request be?
+Its referrer matches the prior requests (go check!)
+- so it looks like the landing page has initiated this request as well.
+The content looks like it could be base64 - and a quick check suggests that that is most likely the case.
+The string provided in the Response Peek above, when decoded from base64 format, corresponds to:
+This data is something relatively specific to the Angler Exploit Kit.
+It's part of Angler's implementation of Diffie-Helman cryptographic protocol.
+Kaspersky provided a great write-up on the kit's use of this key exchange and the role it plays in the kit's exploitation of CVE-2015-2419 that is definitely worth your time and review if you have interest in the kit's defensive structure and attributes - but it goes a bit beyond the scope of our task for this blog.
+The sixth conversation really gives us a solid picture of what we're looking at.
+The quote, "marriage, the unceasing and ...", in CapTipper's Response Peek gives a solid hint that we're looking at Angler Exploit Kit or a variant.
+If you search for that quote in the open source (particularly "the unceasing and reasonable wonder among them all") you will find the quote is lifted from Jane Austen's Sense and Sensibility - an indicator historically associated with Angler and variant kits, which uses the book to bypass content filtration measures.
+You can view the entire page by downloading the file in CapTipper or in Wireshark by doing the following:
+Clear fall filters, if required
+Select the object from the HTTP export objects menu (described above)
+In the main view in WireShark, right click the highlighted packet
+Select 'Follow TCP Stream' from that menu
+View the TCP stream and save it to a file if needed (particularly in the encoding is making review difficult)
+From here we can finally meet our ultimate objective - determining the point of origin for the exploit kit exposure.
+Angler isn't always easy to tie back to a point of origin.
+The kit can use some interesting defensive mechanisms to help hide referrers.
+In addition, customers of the kit who make use of Traffic Distribution Services (TDSs) can further complicate the chain.
+In this case, though, we're lucky enough to have a pretty good view of the chain.
+If you look at the previous request above, we can see that the referrer for the landing page is www.educatory.com (as we guessed from the original flow diagram).
+A quick peek at the source code for that site at the time (available via the download option in CapTipper or by going through the same investigative process in WireShark as before, but aimed at packet 34) shows us the context the kit was called from on the landing page.
+Take a look!
+(Image of Compromised Landing Page iframe, http://malware-traffic-analysis.net/2015/08/24/index2.html)
+Seeing an iframe embedded in source code of the originating website without the other trappings expected of an advertisement is usually a good indication that the redirect is the result of a compromise.
+Let Us Know if We Can Help...
+We hope that you find the information above useful in your efforts to better secure your organization.
+If there are lingering questions, please do not hesitate to drop us a line and we will work to answer them for you.
+Part 2 of this blog can be found here.
+Keep fighting the good fight - we're with you in the trenches - we're up 24/7/365 all over the world...because someone should do something!

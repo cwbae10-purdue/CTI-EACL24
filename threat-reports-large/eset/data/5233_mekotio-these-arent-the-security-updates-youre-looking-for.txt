@@ -1,0 +1,131 @@
+Another in our occasional series demystifying Latin American banking trojans
+In this installment of our series, we introduce Mekotio, a Latin American banking trojan targeting mainly Brazil, Chile, Mexico, Spain, Peru and Portugal.
+The most notable feature of the newest variants of this malware family is using a SQL database as a C&C server.
+Figure 1.
+Countries affected by Mekotio
+As with many other Latin American banking trojans we have described earlier in this series, Mekotio has followed a rather chaotic development path, with its features being modified very often.
+Based on its internal versioning, we believe there are multiple variants being developed simultaneously.
+However, similar to Casbaneiro, these variants are practically impossible to separate from each other, so we will refer to them all as Mekotio.
+Mekotio is a typical Latin American banking trojan that has been active since at least 2015.
+As such, it attacks by displaying fake pop-up windows to its victims, trying to entice them to divulge sensitive information.
+These windows are carefully designed to target Latin American banks and other financial institutions.
+Mekotio collects the following information about its victims:
+Firewall configuration
+Whether the victim has administrative privileges
+Version of the installed Windows operating system
+Whether anti-fraud protection products (GAS Tecnologia Warsaw and IBM Trusteer[1]) are installed
+List of installed antimalware solutions
+Mekotio ensures persistence either by using a Run key or creating an LNK file in the startup folder.
+As is common for most Latin American banking trojans, Mekotio has several typical backdoor capabilities.
+It can take screenshots, manipulate windows, simulate mouse and keyboard actions, restart the machine, restrict access to various banking websites and update itself.
+Some variants are also able to steal bitcoins by replacing a bitcoin wallet in the clipboard and to exfiltrate credentials stored by the Google Chrome browser.
+Interestingly, one command is apparently intended to cripple the victim’s machine by trying to remove all files and folders in the C:\Windows tree.
+One way to identify Mekotio is a specific message box the trojan displays on several occasions (see Figure 2).
+Figure 2.
+Message box used by all Mekotio variants (translation: “We are currently performing security updates on the site!
+Please, try again later!
+New security measures are being adopted: (1) new security plugin and (2) new visual look of the site.
+Your system will be restarted to complete the operation.”)
+To ease stealing passwords with its keylogging feature, Mekotio disables the “AutoComplete” option in Internet Explorer.
+This feature, when enabled, saves time for Internet Explorer users by remembering inputs on various types of fields that have been filled in previously.
+Mekotio turns it off by changing the following Windows Registry values:
+HKCU\Software\Microsoft\windows\CurrentVersion\Explorer\AutoComplete\ AutoSuggest = “No”
+AutoSuggest = “No”
+HKCU\Software\Microsoft\Internet Explorer\Main\ Use FormSuggest = “No” FormSuggest Passwords = “No” FormSuggest PW Ask = “No”
+Use FormSuggest = “No”
+FormSuggest Passwords = “No”
+FormSuggest PW Ask = “No”
+For an in-depth analysis of one specific variant of Mekotio targeting Chile, refer to ESET’s recently published article (in Spanish).
+We believe the main distribution method for Mekotio is spam (see Figure 3 for an example).
+Since 2018, we have observed 38 different distribution chains used by this family.
+Most of these chains consist of several stages and end up downloading a ZIP archive, as is typical for Latin American banking trojans.
+We dissect the two most commonly used chains in the following sections.
+Figure 3.
+Example of a spam email distributing Mekotio (Translation: “Dear citizen, Your requested receipt: … Download receipt”)
+The first chain consists of four consecutive stages, as illustrated in Figure 4.
+A simple BAT dropper drops a VBScript downloader and executes it using two command line parameters – a custom HTTP verb[2] (“111SA”), and a URL from which to download the next stage.
+The downloader downloads the next stage (yet another downloader) from the provided URL while using a custom User-Agent value (“MyCustomUser” and its variations).
+The third stage downloads a PowerShell script, correcting the URL from which to download Mekotio inside the script’s body, before executing it.
+The PowerShell script then downloads Mekotio from the corrected URL and installs and executes it (the execution process is described in detail later).
+Figure 4.
+One distribution chain used by Mekotio that passes context between stages
+There are two interesting things about this chain.
+The first one is the usage of custom values for both User-Agent header and HTTP verb.
+These can be used to identify some of Mekotio’s network activity.
+The other interesting aspect is the passing of context (either as command line arguments or by modifying the body of the next stage).
+This is a simple, yet effective, form of anti-analysis technique, because if you have Downloader 1 without the matching Dropper, you will have neither the URL nor the custom HTTP verb needed to obtain the next stage of the malware.
+Likewise, having Downloader 3 without Downloader 2 is useless, because the URL is missing.
+This approach makes analysis harder without the knowledge of context.
+As with many other Latin American banking trojans: Mekotio utilizes MSI in some of its latest distribution chains.
+In this case, the chain is much shorter and less robust, as only a single JavaScript, serving as the final stage, is embedded in the MSI and executed.
+Compared to the PowerShell final stage from the previous chain, there are some visible similarities.
+The main one (shown in Figure 5) is the installation routine, called after downloading and extracting the ZIP archive, that renames the contents of the extracted ZIP archive according to file size.
+That is closely connected to the execution method described in the next section.
+Figure 5.
+Comparison of installation routine in JavaScript and PowerShell scripts used by Mekotio, highlighting the similarity in basing the decision on file size
+Mekotio is most commonly executed by abusing the legitimate AutoIt interpreter.
+In this scenario, the ZIP archive contains (besides the Mekotio banking trojan) a legitimate AutoIt interpreter and a small AutoIt loader or injector script.
+The final stage of the distribution chain executes the AutoIt interpreter and passes the loader or injector script to it to interpret.
+That script then executes the banking trojan.
+Figure 6 illustrates the whole process.
+Figure 6.
+The execution method most commonly used by Mekotio
+Mekotio is not the only Latin American banking trojan using this method, but it favors it significantly more than its competitors.
+The algorithm used to encrypt strings in Mekotio’s binaries is essentially the same one Casbaneiro uses.
+However, many variants of Mekotio modify how the data are processed before being decrypted.
+The first few bytes of the hardcoded decryption key may be ignored, as may some bytes of the encrypted string.
+Some variants further encode encrypted strings with base64.
+The specifics of these methods vary.
+Some variants of Mekotio base their network protocol on Delphi_Remote_Access_PC, as does Casbaneiro.
+When that is not the case, Mekotio utilizes a SQL database as a sort of C&C server.
+This technique is not unheard of in relation to Latin American banking trojans.
+Instead of a SELECT command, Mekotio seems to rely on executing SQL procedures.
+That way, it is not immediately clear what the underlying database looks like.
+However, the login string is still hardcoded in the binary.
+We have observed three different algorithms for how Mekotio obtains the address of its C&C server.
+We describe them below in the chronological order that we encountered them.
+Based on hardcoded lists of “fake domains”
+The first method relies on two hardcoded lists of domains – one for generating the C&C domain and the other one for the port.
+A random domain is chosen from both lists and resolved.
+The IP address is further modified.
+When generating the C&C domain, a hardcoded number is subtracted from the last octet of the resolved IP address.
+When generating the C&C port, the octets are joined together and treated like a number.
+For clarity, we have implemented both algorithms in Python, as seen in Figure 7.
+Notice that this approach is surprisingly similar to the one used by Casbaneiro (marked as method 5 in the hyperlinked analysis).
+Figure 7.
+Code for generating C&C domain and port from hardcoded lists of domains
+The second approach utilizes a Domain Generation Algorithm (DGA) based on current local time (therefore, victim’s time zone affects the result).
+The algorithm takes the current day of the week, day of the month and hour and uses them to generate a single string.
+It then calculates the MD5 of that string, represented as a hexadecimal string.
+The result joined with a hardcoded suffix is the C&C server domain (its port is hardcoded in the binary).
+Figure 8 shows our Python implementation of this algorithm.
+Figure 8.
+Code for generating C&C domain based on current hour
+The third algorithm is somewhat similar to the second one.
+It differs in the format of the string created from local time and the fact that it uses a different suffix each day.
+Additionally, it generates the C&C port in a similar manner.
+Once again, the Python re-implementation of the code is illustrated in Figure 9.
+Figure 9.
+Code for generating C&C domain and port based on current day
+We already mentioned that, similar to other Latin American banking trojans, Mekotio follows a rather chaotic development cycle.
+However, besides that, there are indicators that there are multiple variants of Mekotio being developed simultaneously.
+The two main indicators are internal versioning and the format of the string used for exfiltrating information about the victim’s machine collected by Mekotio.
+We have identified four different versioning schemes:
+Numbering (001, 002, 072, 39A, …)
+Version by date (01-07, 15-06, 17-10, 20-09, …)
+Version by full date (02_03_20, 13_03_20, 26_05_20, …)
+Numbering and date combined (103–30-09, 279–07-05, 293–25-05, …)
+Each of these schemes is associated with a specific format of the exfiltrated data string.
+Since we see multiple of these schemes simultaneously, we believe that there may be multiple threat actors using different variants of Mekotio.
+In this blog post, we have analyzed Mekotio, a Latin American banking trojan active since at least 2015.
+As in the other banking trojans described in this series, Mekotio shares common characteristics for this type of malware, such as being written in Delphi, using fake pop-up windows, containing backdoor functionality and targeting Spanish- and Portuguese-speaking countries.
+We have focused on the most interesting features of this banking trojan, such as its primary method of execution by abusing the legitimate AutoIt interpreter, using SQL database as a C&C server or the different methods Mekotio uses to generate the address of its C&C server.
+We have also mentioned several features that are surprisingly similar to Casbaneiro.
+For any inquiries, contact us at threatintel@eset.com.
+Indicators of Compromise can also be found in our GitHub repository.
+User-Agent: “MyCustomUser”, “4M5yC6u4stom5U8se3r” (and other variations)
+HTTP verb: “111SA”
+1PkVmYNiT6mobnDgq8M6YLXWqFraW2jdAk
+159cFxcSSpup2D4NSZiuBXgsGfgxWCHppv
+1H35EiMsXDeDJif2fTC98i81n4JBVFfru6
+Note: This table was built using version 7 of the MITRE ATT&CK framework.

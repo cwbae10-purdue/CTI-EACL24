@@ -1,0 +1,93 @@
+We look at malware delivered by a campaign that has infected thousands of websites around the world – and the various control flow obfuscation techniques that make its analysis as interesting as it is challenging.
+Last month, my colleague Sébastien Duquette detailed the home campaign, a long-lasting operation consisting of compromised web servers running a malicious Apache module named Darkleech (detected by ESET as Linux/Chapro) that redirects visitors to a Blackhole exploit kit.
+Sébastien stated that one of the final payloads dropped by this operation was the Win32/Nymaim downloader/ransomware family.
+In this blog post, we will look at the technical details of this particular malware and how it ends up getting installed on an end-user’s computer.
+We will also look at the various control flow obfuscation techniques that make its analysis as interesting as it is challenging.
+We know that the home campaign has successfully infected thousands of websites all over the world.
+While we don’t know exactly how many people got their computer compromised by this campaign, we can assume that their number is fairly large.
+A typical infection flow is shown below.
+When a user visits a Darkleech-compromised website, he eventually sees his computer locked by Win32/Nymaim.
+As seen in this figure, a malicious program called Pony Loader (detected by ESET as Win32/Fareit) is used to drop the first stage of Win32/Nymaim.
+During the course of our research, we collected several self-signed Pony Loader samples with the certificate shown below.
+We have collected hundreds of Pony Loader samples signed with this certificate.
+The fact that a self-signed certificate is used is most likely intended to make the file look less suspicious to some heuristic-based engines.
+By analyzing these samples, we were able to identify and monitor a static URL hosted on the domain catch-cdn.com used by one Pony Loader sample to fetch the payload to install.
+While the filename downloaded was always the same (6.exe), we saw that its content varied in nature.
+We have seen three different malware families on this URL: Win32/Sirefef (aka.
+ZeroAccess), Win32/Urausy (detected by ESET as Win32/LockScreen) and Win32/Nymaim’s first stage.
+The following figure shows a timeline of which malware families were downloaded from this static URL over the course of the summer.
+The algorithm behind the family rotation is still unclear.
+We can note that several Win32/Urausy samples were available from this URL, but only during the first fifteen days of July.
+Win32/Sirefef made its appearance in early August while Win32/Nymaim has been present throughout the monitoring period.
+The rest of the analysis will focus on Win32/Nymaim’s functionalities.
+The Win32/Nymaim infection is a two-stage process.
+The first stage is merely a downloader and does not stay active on the infected computer.
+It will try to download Win32/Nymaim’s second stage by contacting a list of hardcoded IP addresses.
+Once the second stage is downloaded, the first stage just renames itself to a random filename.
+In spite of this separation, both stages share several common techniques to hinder malware analysis and we will now take a look at some of them.
+During execution, call stack modifications are used extensively to hide the true relationships between functions.
+The following figure highlights two of the most common obfuscated control flow techniques.
+The first red square is hiding a simple register push.
+The next screenshot shows part of the function used to obfuscate this simple instruction.
+The constant that is pushed before calling the function above dictates which register gets pushed onto the stack.
+For example, if 0x34 is pushed as an argument to the function, the equivalent behavior would have been to replace the original “push” and “call” instructions by a simple “push ECX”.
+The second red square highlights a control flow obfuscation technique used to hide the true function call.
+The two constants pushed on the stack are used to derive the address of the function that needs to be called.
+One example of such a function is shown below.
+The function depicted above is XORing the two constants and then adding the result to the return value on the stack, but other functions will perform other mathematical operations on these two constants such as subtraction or addition.
+Since the return value on the stack is changed in this function, instead of returning to the caller, the “retn” opcode at the bottom of the screenshot will in fact jump to the beginning of another function.
+The return value of the original caller is stored on the stack so that when this function returns, it will go back to the first caller.
+The figure below illustrates this process more clearly.
+All calls to the standard Win32 APIs are obfuscated.
+When a specific function needs to be called, the base address of the DLL containing the function is fetched from the encrypted data section.
+Each function in its export table is then hashed and compared to the hash of the function name it wants to call.
+The following screenshot shows the function responsible for computing the function name hash used in the comparison.
+When the target function is found, its address is kept in memory and the code will then jump to this address.
+The return path is also obfuscated.
+Instead of returning from the API call directly to the malware code, the return address contains an address in ntdll.dll that executes
+Call EBX
+Before jumping into the API, the stack is modified to return to the correct address in ntdll.dll and EBX contains the true return address.
+This whole process is highlighted in the figure below.
+Not only is it hard to follow while single-stepping, but this will also impede the debugger “execute till return” functionality as there is no return that goes back to the user code.
+All strings in the binary are stored encrypted.
+The function to decrypt the strings can be found in the next figure.
+Each character is encrypted depending on its position in the data section.
+The decryption routine is called for each character and the strings are decrypted only when they are needed.
+Win32/Nymaim’s second stage uses the same obfuscation techniques as the first stage, but its functionalities are expanded to include persistence, dropper capabilities and a locking mechanism.
+Persistence is achieved by adding the executable path to the registry key “Software\Microsoft\Windows NT\CurrentVersion\Winlogon\shell”
+Our analysis revealed that occasionally, the second stage would download and install Win32/Sirefef on the machine.
+When this occurs, both Win32/Sirefef and Win32/Nymaim are persistent on the computer.
+Thus, additional malware can be downloaded at a future time by Win32/Nymaim.
+When Win32/Nymaim’s second stage does lock the computer, it will download the HTML locking screen, but will also customize it by gathering some information on the infected system, such as media files or active torrent clients.
+The resulting lock screen becomes much more believable to the user.
+More specifically, the malware searches the active processes for the following torrent clients:
+– Azureus
+– Utorrent
+– Mediaget
+– Bittorrent
+– Bitcomet
+It will also search for files with the following extensions: .doc, .xls, .psd, .bmp, .jpg, .mpg, .mov, .rtf, .fla and .mp3.
+The gathered information will be stored in a file called compdata.js that will be included by the locker HTML code.
+An example of a compdata.js file is shown below.
+The HTML code, scripts and images used to render the lockscreen are stored in the “Documents and Settings\[user_name]\Local Settings\Temp” folder on a Windows XP system.
+To lock the computer, the malicious code will create a window covering the whole screen.
+It will also spawn at least two threads.
+One will monitor the current running processes and will terminate taskmgr.exe (Task manager) if it is active.
+Another one will make sure that the current desktop is the one created by the malware, otherwise it will switch to that desktop.
+This behavior is very similar to the Urausy ransomware described by AVAST.
+The US lockscreen design (retrieved 2013/08/20) is shown in the screenshot below.
+As with most ransomware, the images are customized depending on the infected computer location.
+When the second stage is installed on a machine, it will communicate its bot ID to the server which will then decide what happens next.
+Throughout our research, we found that once a particular system has been locked, it is not possible to lock it again.
+The server seems to keep host information and will not send the HTML code required to lock the computer if it has already been served once to the requesting bot.
+After analysis, it appears that the computer ID is generated through the registry key “HKEY_LOCAL_MACHINE\Software\Microsoft\Cryptography\MachineGuid” and simply changing this value enables the same computer to be locked at will, regardless of the bot’s IP address.
+The home campaign has been delivering the Win32/Nymaim ransomware since at least March 2013.
+In this blog post, we saw that several malware families were dropped by this campaign.
+Our current understanding of the potential malware families delivered is shown in the next figure.
+Win32/Nymaim is a complex piece of malware that is used both as a downloader and a locker.
+It hinders malware analysis by implementing several control flow obfuscation techniques.
+For the end user though, the result is always the same: a thorough cleaning of their compromised computer is necessary.
+Stay tuned for the next blog post containing more information on this very interesting malware.
+Special thanks to Mathieu Lavoie for his contribution to this analysis.
+SHA1 hashes of analyzed files
+Pony Loader: ce6ae8bca368be676d6adae57d632f42187d762c

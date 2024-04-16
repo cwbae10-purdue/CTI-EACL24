@@ -1,0 +1,46 @@
+At McAfee Labs we recently received a low-profile ransomware called LeChiffre.
+Unlike ransomware that is distributed by a spam campaign or downloaded by other malware, this sample needs to be run manually on a victim’s machine to encrypt files.
+As we analyzed this ransomware, we found that we could unlock all LeChiffre-encrypted files without having to pay a ransom.
+We have two versions of this malware.
+Both variants use the Blowfish algorithm to encrypt files.
+The Blowfish key-generation technique is the same for both variants.
+It calculates two MD5s using a constant string, computer name, currently logged on user name, and current system date.
+The first MD5 is calculated on a string that is the concatenated output of a constant string, computer name, and system date.
+The second MD5 is retrieved from the user name and a constant string.
+These two MD5s are appended with the version string of the malware.
+Then the malware calculates the SHA1 on the resulted string and appends 12 bytes of FFh to the SHA1 value.
+The constant string for the first and the second versions:
+LXAi48XxK9ig6gD351BA0ACF3A661B3E3AA
+dDcLXlen2Dg0gpuV9XZ4hYBR6wrwe55izm24Id
+The algorithm follows: MD5_1 = MD5(constant string + computer name + current date) MD5_2 = MD5(user name + constant string) SHA1_key = SHA1(version string + MD5_1 + MD5_2) Blowfish_key = SHA1_key + (12 bytes of FFh)
+The malware uses this Blowfish_key value to initialize the Blowfish key sequence.
+It also initializes the initial vector of the Blowfish algorithm by encrypting a buffer of eight zero bytes.
+The encrypted value is kept as the initial vector for the entire encryption process.
+Then it encrypts this 32 bytes (SHA1 length is 20 bytes plus 12 bytes of FFh) and keeps it in what we’ll call the marker buffer.
+The encryption method differs based on the size of the file.
+If the file size is greater than 17,032 bytes, the method encrypts the first and last 2000h bytes.
+Otherwise it encrypts only the first 2000h bytes.
+If the entire file size is smaller than 2000h bytes, the method encrypts the complete file.
+After encryption the malware appends the marker buffer to the encrypted file and adds the extension “.LeChiffre” to the original extension, for example abcdef.jpg.Lechiffre.
+Because the malware appends this obvious extension to the encrypted file, it is easy to restore the original extension of the file.
+Our analysis also turned over an interesting aspect of the version string.
+The first version has a version string of “v2.5EN:”; the second has “V2.6.” The second version, however, appends the ISO code of the victim’s IP address to the string by querying http://api[dot]sypexgeo[dot]net/xml/, a legitimate website used by the malware to learn the ISO code of the country.
+The resulting version string is “V2.6[ISO CODE]:” If the malware fails to query the URL, it falls back to “EN” as the default ISO code.
+By reconstructing these findings, we have written a tool to restore files encrypted with this ransomware.
+The McAfee fix is a standalone command-line tool that needs to run on the infected machine.
+This tool will not delete encrypted files.
+For example, if the encrypted file name is MyPicture.jpg.LeChiffre, the file will be decrypted and named MyPicture.jpg.
+If there is a duplicate file in the same location, it will create MyPicture{random number}.jpg.
+This tool will connect to http://api[dot]sypexgeo[dot]net/xml/ to get the ISO code.
+Input to the tool is the directory or drive path.
+It will look into subdirectories to find encrypted files.
+Run the tool at command line without any input to see the usage.
+Usage To only decrypt the encrypted files without deleting the .LeChiffre files, use the following syntax:
+LeChiffreDecrypt.exe “directory_path”
+To decrypt the encrypted files and delete the .Lechiffre files, use the following syntax:
+LeChiffreDecrypt.exe /delete “directory_path”
+The log file LeChiffreDecryptionLog_{random number}.txt will be generated with the results of the decryption in the same directory where the tool has been run, or in the temp directory of the system if it has no write access in the current directory.
+The decryption tool can be downloaded here.
+Detection and removal of the parent malware is available in McAfee products.
+Theoretically any ransomware that uses a symmetric-key algorithm could be decrypted, but the complexity depends on the encryption approach taken by the actors.
+At McAfee we constantly strive to protect our customers from such attacks.

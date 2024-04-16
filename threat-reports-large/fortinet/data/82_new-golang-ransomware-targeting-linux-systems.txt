@@ -1,0 +1,52 @@
+A FortiGuard Labs Threat Analysis Report
+During the past two months, I have been working on reverse engineering malware written in Golang.
+Go, also known as Golang, is a statically typed, compiled programming language designed at Google that is becoming more popular within the malware development community.
+In this blog, I will analyze a newly found Golang ransomware targeting Linux systems.
+The sample being analyzed is a stripped ELF executable.
+A stripped executable can make reversing harder because you need to do extra work to restore symbols in the stripped binary.
+Thankfully, the redress tool can help us with this.
+Redress software is a tool for analyzing stripped Go binaries compiled with the Go compiler.
+It extracts data from the binary, then uses it to reconstruct symbols and perform analysis.
+The following is the output of analyzing this sample with the parameter “-src”.
+As shown in Figure 1, we can see the malware’s source code includes three Go files, all implemented functions, as well as their code line numbers.
+From the name of some functions, we can guess this malware should be ransomware.
+However, the number of lines in the source code is just over 300.
+So this ransomware isn’t complicated and might be in its initial development stage.
+Next, let’s start dynamic debugging in debugger.
+Here, I use Radare2 as the debugger.
+Radare2 is able to analyze stripped Go binary and restore symbols by issuing an analysis command – which is why I chose Radare2 as the debugger for this project instead of GDB in Linux.
+I issued the command “aaa” in Radare2 to perform an automatic analysis, and in Figure 2 we can see that Radare2 restores and recognizes the function names and symbols names very well.
+It really helped me debug the Go binary more efficiently.
+As we can see, the function init() is executed before the main function.
+The function check() is called in the function init().
+In function check(), the malware first obtains the location information of the infected machine by sending an http request to hxxps://ipapi.co/json/.
+It then filters out Belarus (BY), Russia (RU), and Ukraine (UA) in order to prevent itself from running if the malware is being executed in one of those countries.
+In the main() function, it first deletes the Go binary.
+Then it calls the function randSeq() to generate a random AES key where the size is 0x20 in bytes, like the following:
+Next, it calls the function makesecret(), which is used to encrypt the AES key with an RSA public key hard-coded in the binary.
+Inside this function, it calls the function EncryptPKCS1v15 to encrypt the given AES key using RSA encryption and the padding scheme from PKCS#1 v1.5.
+The following is the data after RSA encryption.
+Next, it calls the function EncodeToString in the Golang package encoding/base64 to encode the previously encrypted data with a base64 algorithm.
+It then forms a buffer for the decrypted README file, shown in Figure 8.
+We can see that the encrypted AES key is written into the decrypted readme file with Base64 encoding.
+Before the ransomware encrypts files, it kills the following list of processes by issuing the commands “service stop [pname]” or “systemctl stop [pname]”.
+When it attempts to stop apache2.service, it prompts a dialog titled “Authentication Required” to instruct the user to input the system password to finish this operation.
+Finally, the malware starts to traverse the root directory “/” by calling the function Walk(root string, walkFn WalkFunc) in the Golang package “path/filepath” and then encrypting files.
+The malware also has a blacklist of directories for encryption.
+The following is the directory blacklist.
+The malware encrypts files using the AES-256-CFB algorithm, and the encrypted files have a name that concatenates the original name with an “.encrypted” extension.
+The README file for decryption is shown in Figure 13.
+The function EncFile() is used to encrypt files.
+It first gets the size of the file to be encrypted.
+If the file size is less than 0x986880(1,000,000) in bytes, it encrypts all of the file data with an AES-256-CFB algorithm.
+Otherwise, it reads the first 0x986880(1,000,000) bytes of data and encrypts them, then copies the remaining data of the original file to the end of the encrypted file.
+According to our analysis, we can see that this ransomware isn’t complicated and might be in an initial development stage.
+We should be aware that more and more malware is being developed with Golang, and I will constantly monitor and filter malware written in this new programming language.
+This malicious elf file has been detected as “ELF/Cryptor.B!tr” by the FortiGuard AntiVirus service.
+SHA256: 50470f94e7d65b50bf00d7416a9634d9e4141c5109a78f5769e4204906ab5f0b
+IoC: fullofdeep<at>protonmail.com
+REDRESS: https://go-re.tk/redress/
+Radare2: https://rada.re/r/
+Learn more about FortiGuard Labs and the FortiGuard Security Services portfolio.
+Sign up for our weekly FortiGuard Threat Brief.
+Read about the FortiGuard Security Rating Service, which provides security audits and best practices.

@@ -1,0 +1,93 @@
+Summary
+During the last weeks there have been several cases of international brand names being used by malware authors to propagate malware through phishing emails.
+These emails contain misleading links that download malicious Zip files, which, in turn, contain a JavaScript file that downloads the TorrentLocker ransomware.
+The malicious files have been detected as JS/Agent.2867!tr or JS/Nemucod.AFA!tr.dldr or JS/Nemucod.AFE!tr.dldr by the Fortinet Antivirus service.
+Since most of the available reports about this threat cover the encryption functionality, this report focuses on some less known but still critical aspects of this threat.
+Figure 1.
+The Obfuscated Code vs.
+The De-obfuscated Code
+The code in the attack’s malicious JavaScript file uses a number of obfuscation methods, such as:
+Complex, meaningless names
+Separating a string into multiple variables and functions, for example: to create the word “Folder” the malware writers define a function, assign some characters to a variable, and return that value when the function gets called:
+function merqevqi() {
+var cdifiqw5 = 'lde';
+return cdifiqw5;
+}
+var buxyzy = "Fo" + merqevqi() + “r”;
+Empty functions
+The JavaScript code does the following:
+Obtains a username
+Gets the current path of the JavaScript file
+Creates an ActiveX Data Object to download the malware
+Saves the malware in a Temp folder with a random name
+And executes it with the command “cmd.exe /c name_of_sample.tmp”
+It is important to note that this downloaded malware version does not seem to be compatible with the 64 bit versions of Windows.
+After the downloaded malware (file.exe) is executed, it attempts to obtain the external IP address of the infected computer by making requests to the following URLs:
+hxxp://myexternalip.com/raw
+hxxp://wtfismyip.com/text
+hxxp://ipecho.net/plain
+These links indicate that this threat seems to have been designed for certain geographical locations.
+Another indication of this is that it reads information about the languages configured on the infected computer using the following registry keys:
+HKLM\SYSTEM\CONTROLSET001\CONTROL\NLS\CUSTOMLOCALE
+HKLM\SYSTEM\CONTROLSET001\CONTROL\NLS\EXTENDEDLOCALE
+The malware also creates a directory that contains three files, all of them with randomly generated names, inside the directory folder C:\ProgramData\.
+The content of these files seems to be encrypted.
+Figure 2.
+Files Created by the Malware
+Afterwards, the malware executes the process explorer.exe and inserts its malicious code into it.
+In this case, the malware sample is using a technique called process hollowing, in which a legitimate process is created and used as a container for the malicious code.
+To replace the code of the legitimate process, the sample calls the following functions:
+CreateProcessA: Creates the legitimate process, whose code will be replaced, in a suspended state.
+NtUnmapViewOfSection: Removes all the sections of the legitimate process image.
+VirtualAlloc: Allocates memory for the executable file.
+GetThreadContext: Obtains the threat context, which contains data related to the registers, the Process Environment Block (PEB), and the entry point of the legitimate process.
+ReadProcessMemory: Reads the image base of the suspended process.
+VirtualAllocEx: Allocates memory for the malicious code in the legitimate process.
+WriteProcessMemory: Writes the malicious code in the address space of the legitimate, and now hollow, process.
+SetThreadContext: Sets the new entry point in the EAX register so that the execution of the legitimate process will continue on the malicious code.
+ResumeThread: Resumes the legitimate process, except it now contains the malicious code.
+After replacing the code of the real explorer.exe, the malware copies itself into C:\ProgramData\ or C:\Windows with a random name, and then adds this path to the registry key below so that it’ll be run automatically when Windows boots up.
+HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run\<random>.
+It also disables the Phishing Filter and the option to automatically detect Internet settings.
+It then enables proxy bypass along with the options to include all network paths and local sites.
+Depending on the sample, instead of changing these values it might simply try to delete them.
+Figure 3.
+The Phishing Filter is Disabled
+Figure 4.
+The Modified Keys for the Internet Settings
+To prevent the user from recovering the encrypted files, it starts the process vssadmin.exe to delete the shadow volume copies.
+Figure 5.
+Command Used to Delete the Shadow Volume Copies
+Additionally, the malware checks the installed applications by enumerating the entries in the key HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall.
+Figure 6.
+The Applications Installed on the System
+It also attempts to harvest the email addresses of the user’s contacts stored on the infected computer.
+These are later used to keep propagating TorrentLocker using spam emails.
+Figure 7.
+The Malware Looking for Usernames and Passwords
+Besides the regular .text, .data, .rdata and .rsrc sections, malware samples have other unusual sections which are most probably used to try to bypass hash signature based detection:
+.gt1: Only contains a series of strings with dashes.
+.gt2: Only contains what seems to be a string composed of random words.
+.gt3: Contains more random words and characters.
+ggg: Contains a series of characters, such as zeros and “A” letters.
+Figure 8.
+Random Words in Section .gt2
+One of the TorrentLocker samples analyzed contains a reference to the domain madshi.net, which is a legitimate website for software like madExcept, that according to its website helps locate bugs in software, as well as madCodeHook, which “will automatically choose the best hooking method for any API you want to hook.” Interestingly, the developer mentions that his applications have been misused by malware before.
+Figure 9.
+The Malware Might Have Used madCodeHook to Hook API Calls
+The TorrentLocker samples we analyzed also make use of the Sleep function to avoid sandboxing technologies and behavioral analysis techniques.
+During this sleep cycle the ransomware remains inactive, and might wait several hours before it finally starts encrypting files and appending the extension “encrypted”.
+As for API calls, the malware generates the names of the functions dynamically, either by decrypting the contents of a memory location or by concatenating each of the letters on the function name, as seen on the image below:
+Figure 10.
+Some of the System Function Names Were Called Letter by Letter
+The malware communicates with the C&C server using Tor, and sends requests to remote ports 443, 8443, 9001, 9002, 9003, and 9101.
+Once the files have been encrypted, the malware opens an HTML ransom note on the default browser.
+The ransom note contains a link where the user, identified with a “user_code” and a “user_pass” in the URL, can pay the ransom.
+It is worth mentioning that despite the “Crypt0L0cker” word on the ransom note, this sample is actually TorrentLocker.
+ae89360b03bf272c10cefcfb8af6b431dd81ffb7a2e75c8fa4396d18eb707296
+4f4ebaa1fc30d4265d3c020c8bf21c6c5b61cb464043518dddc4ab4236153ce3
+510c8a980fe4e40dc5871855cab7f98f2d8d19b614d5a83d915e563b38917999
+hxxp://escuelapacosedano.com/wp-includes/file.exe (85.238.12.162)
+hxxp://parasaymakineleri.com/templates/file.exe (77.245.157.207)
+hxxp://www.molavefoundation.org/components/file.exe (65.39.128.35)
+hxxp://raplavk.eu/wp-admin/file.exe (217.146.69.1)

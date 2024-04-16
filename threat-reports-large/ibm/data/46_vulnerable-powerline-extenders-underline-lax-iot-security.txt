@@ -1,0 +1,113 @@
+Multiple vulnerabilities have been found in Tenda PA6 Wi-Fi Powerline extender, version 1.0.1.21.
+This device is part of Tenda’s PH5 Powerline Extender Kit and extends the wireless network through home’s existing electrical circuitry.
+The kit, which was examined in collaboration with X-Force Red, IBM Security’s team of hackers, aligns with the HomePlug AV2 technology and provides wired speeds up to 1000Mbps.
+The first two flaws we discovered could potentially allow a remote attacker to gain complete control over the device.
+While authentication should provide a layer of security, this is not the case, here, as the device is only protected with a weak, default password.
+Command injection by authenticated users (CVE-2019-16213)
+Post-authentication buffer overflow (CVE-2019-19505)
+Pre-authentication denial of service flaw (CVE-2019-19506)
+A compromised device can become part of an internet of things (IoT) botnet that launches distributed denial-of-service (DDoS) attacks, used to pivot to other connected devices, leveraged to mine for cryptocurrency or used in various other unauthorized ways.
+We have documented these flaws under CVE-2019-16213, CVE-2019-19505 and CVE-2019-19506.
+Since theses flaws have to do with a powerline communications device (PLC), let’s begin with a short history that connects powerlines and the internet.
+In the world of connected devices, powerline communications carry data on a conductor simultaneously used for electric power transmission.
+By extension, powerline networking is a technology that uses a home’s electrical wiring as a wired data network.
+Most homes rely on wireless Wi-Fi connectivity, but that’s not the only way to connect to services like internet.
+Sending signals over powerlines that wire our homes has been around since the 1920s.
+Using them for internet can offer simplicity and reliability, reaching parts of the home or office where Wi-Fi signals may be weak.
+Using both as complementary methods can result in better overall coverage and reliability.
+While it is reliable, using powerlines for internet networking was not very popular until about 2012.
+That’s when the “HomePlug” communications specifications were introduced to the PLC marketplace.
+The overall standard was introduced by the HomePlug Powerline Alliance with the goal of promoting the domestic use of powerline communications through providing standards and specifications that would increase efficiency and reduce costs.
+HomePlug made the concept a lot more popular, and homes and SOHO organizations started increasingly using powerline communication kits to support their connectivity needs.
+Powerline and Wi-Fi working together, is very commonplace nowadays, and when it comes to threats, it means that any connected Internet of Things (IoT) device is open to the relevant online threats that come with internet connectivity.
+One of those issues can be a remote attacker accessing it to take over the device.
+Examining the device’s web interface was the first step in our process.
+We noticed that its web user interface was quite minimal with limited functionality.
+We proceeded to download the relevant firmware from the vendor’s website.
+In this case, we downloaded PA6 Firmware v1.0.1.21.
+Analysis of the firmware with Binwalk[1], revealed standard, Linux-based firmware with a BusyBox[2] environment, which is very commonly used in IoT devices.
+Figure 1: Firmware extraction with BinWalk
+Next, since common command line interfaces (CLI) like Telnet or SSH aren’t available, we had to look for a UART serial connection to the device to gain access to the console.
+This is also very common.
+We found the UART ports once we disassembled the device.
+Figure 2: PA6 PCB with UART ports
+We established a serial connection and got a login prompt, but access to the UART ports was password-protected.
+A search for the UART credentials inside text and configuration files within the firmware did not yield the necessary information.
+The next step was to reverse engineer the login process and understand how credentials were being validated — at which point we noticed that the username and password values were being compared to plain default values.
+This is not a secure way to authenticate, since the UART credentials could be easily extracted from the firmware.
+A more secure way to authenticate would have been storing the password’s hash, and not the clear text.
+With that method in the case of compromise, while an attacker could obtain the hash, they would also have to bruteforce it to find the cleartext password.
+It is worth noting that the default values we mention earlier aren’t aligned with the password strength requirement, so they could be easily cracked even with brutefoce.
+Figure 3: Login process: UART username and password are being compared to plain values stored in memory
+The first two vulnerabilities on our list reside in the extender device’s web server, under a process named “httpd.” Not only does it lead to the web server being solely password-protected, the default password is “admin.” This is a very weak and insecure way to allow access since the password is easily guessable.
+Both vulnerabilities in this web-UI allow an authenticated user to compromise the device with root privileges, and while authentication should provide a layer of security, in this case, with a weak and guessable password, it should not be considered adequate protection.
+Although this interface should only be accessible from the local network, a wrong setup and configuration can expose it to wide area networks (WAN), making it an attractive remote attack vector.
+Moreover, as we’ll demonstrate later, combining these vulnerabilities with the DNS rebinding technique provides the attacker with a remote vector that doesn’t depend on the user’s configuration.
+Let’s look at the issues we discovered in more detail.
+The first one is a command injection vulnerability.
+Under the “Powerline” section, the user can see and change the name of the other Powerline Communication (PLC) devices which are attached to the same powerline network.
+As we can see in the following figure, the name entered by the user is concatenated as an argument to the “homeplugctl” application and being executed by the “system” library function.
+This user input is just URL decoded, without any validation or sanitation.
+Figure 4: httpd: user input (PLC device name) being added to command executed by “system” function
+An authenticated attacker can exploit this vulnerability and inject an arbitrary command just by changing the device name of an attached PLC adapter with a specially crafted string.
+Since the web server is running with root privileges, an attacker could leverage this injection to fully compromise the device.
+The flaws we discovered would require access to the device from its local area network (LAN).
+But there is also a risk an attacker could prey on a router remotely by infecting them with malware or otherwise control their actions.
+That remote attack vector is not far-fetched here, and using a technique called DNS rebinding, we were able to perform the same attack from a remote website, overcoming same-origin limitations[3] by the browser.
+With this known technique, once the victim is tricked into visiting a malicious website, their entire local network is exposed to the attacker.
+Using a malicious JavaScript payload, an attacker would be able to scan the local network looking for this powerline extender.
+If found, a login could be attempted using a list of popular passwords.
+Once the login is successful, we know we have found a vulnerable device and we can proceed with the injection.
+In our demo we were able to get a reverse shell on the vulnerable device just by having someone with access to the device’s network visit our website.
+This is significant as it allows an attacker to gain control over the vulnerable devices remotely just by having the victim visit a website.
+The second vulnerability resides at the “Wireless” section in the web-UI.
+Adding a device to the Wireless Access Control list with a specially crafted hostname can lead to stack buffer overflow.
+As we can see in the next image, it is possible to overwrite the return address register $ra and begin controlling program execution.
+A motivated attacker can utilize this to potentially execute arbitrary code.
+Note that the overflow isn’t a result of an unsafe call to functions like strcpy or memcpy.
+A manual (byte-by-byte) and unsafe copy of user-provided input to a buffer allocated on the stack will trigger this vulnerability.
+It is worth noting that unlike many other IoT devices, the ASLR[4] defense mechanism is enabled in its kernel, making the exploitation process a bit harder.
+Still, the executable itself (httpd) is consistently being loaded at the same address (0x400000), leaving the attacker with enough Return Oriented Programming (ROP) gadgets[5] to use in the exploitation process.
+Other security mechanisms like DEP or Stack Guards don’t exist here.
+Figure 5: Device core dump shows that we successfully controlled the return address register
+A third vulnerability resides in a different process named “homeplugd,” which is related to the extender device’s powerline functionality.
+As we were inspecting the open ports and their corresponding services on the extender, we noticed the “homeplugd” process listening on UDP port 48912.
+Reversing the binary revealed to us that no authentication was required to interact with this service.
+One functionality that this service provides is changing the PLC network name, and as a result, changing the 128-bit AES key used to encrypt the traffic between two PLC devices as this key is derived from the network name.
+Sending a specially-crafted UDP packet to this service causes the device to reboot.
+Figure 6: UDP packet that leads to device reboot
+By causing a recurring reboot, the device will loop through restarts and not be able to carry out its functions or connect to the internet.
+An attacker can take advantage of that vulnerability and thereby run a denial of service attack, without ever needing to authenticate themselves.
+Although the firmware image can be downloaded from Tenda’s website, we found that the device allows unauthenticated access to a full firmware dump.
+The URL /goform/getimage will dump the firmware image in raw format directly from the onboard flash, exposing all of the current configuration values and internal data files.
+Vulnerabilities in devices that help us connect to the internet are becoming an increasingly problematic security gap for both home and business users.
+With consumer-grade Wi-Fi connectivity devices being a commodity sold through a large number of vendors, these IoT devices are part of almost any network, and much like other devices on the IoT spectrum, many are not very secure.
+Security flaws plague every software and hardware, and some are more critical than others.
+But while most flaws in popular software are addressed and patched, devices like powerline extenders, and even routers, do not seem to receive the same treatment, and are all too often left exposed to potential attacks.
+But these devices are not just a connectivity plug on the edge of the network.
+A critical enough vulnerability can be leveraged to reach other parts of the network.
+That is especially true for routers, but it also extends to other devices that have some sort of interface into the network.
+Some examples from the world of connectivity devices: In September 2019, researchers from TrustWave reported D-Link and Comba Telecom router vulnerabilities that could result in leaking the device’s password, but much worse, they could allow an attacker to possibly pivot to every other user on networks that use these routers for access.
+It took a long time to get a response from the manufacturer, and a while to see a patch issued.
+In October 2019, Fortinet researchers reported CVE-2019-16920, an unauthenticated command injection vulnerability that impacts D-Link router firmware.
+Apparently, due to the age of the products, the manufacturer declined to issue a patch.
+In mid-2019, router manufacturer D-Link Systems agreed to overhaul its security program to settle a Federal Trade Commission (FTC) charge that alleged it was not testing routers and cameras or fixing flaws.
+D-Link was accused of exposing customer data to potential attackers all while advertising that its devices feature top-of-the-line security.
+These issues are not exclusive to any one manufacturer in the IoT realms.
+IBM Security researchers have been seeing vulnerabilities in IoT devices across various vendors.
+Change default passwords on all devices that connect to the internet.
+Update firmware regularly as you would any other software product.
+To mitigate risks, use internal filtering controls or a firewall to limit the access to the web-based management interface of your consumer-grade routers and Wi-Fi extenders.
+Replace aging products.
+Perform penetration hardware tests on your IoT devices.
+Unfortunately, despite repeated attempts to contact Tenda, IBM is yet to receive any reply to its emails and phone calls.
+It remains unknown whether the company is working on patches.
+[1] Binwalk is a Linux tool used for binary file analysis, specifically in the case of embedder files and executable code.
+The tool is mostly used to extract the content of firmware images.
+[2] BusyBox is used in embedded Linux and Android environments and provides several Unix utilities in a single executable file.
+It’s common to see it used in IoT devices.
+[3] This note refers to same-origin policy (SOP) which is a web application security model.
+Under this policy, a web browser permits scripts contained in one web page to access data on another web page — but only if both of the web pages have the same origin.
+[4] ASLR: Address Space Layout Randomization is an operating system feature that guards against buffer-overflow attacks.
+It does that by randomizing the location where system executables are loaded into memory.
+[5] Return-oriented programming (ROP) is an exploitation tactic in which the attacker uses control of the call stack to indirectly execute machine instructions or groups of machine instructions immediately prior to the return instruction in subroutines within the existing program code.

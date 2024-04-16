@@ -1,0 +1,57 @@
+Researchers at FortiGuard Labs recently discovered another heap overflow vulnerability in the Adobe Flash Player.
+The vulnerability, CVE-2015-5129, is similar to a larger group of security issues found in Flash Player, all of which could be exploited to allow remote code execution on the host system.
+Although FortiGuard has not observed active exploits for this particular vulnerability in the wild, we did find multiple products that incorporate Flash with the vulnerability.
+This includes the Google Chrome browser.
+Additionally, the vulnerability could affect mobile developers on both Android and Apple iOS if Adobe AIR SDK & Compiler18.0.0.180 has been used.
+Perhaps more importantly, many active exploits have been developed for similar vulnerabilities, making future exploit development more straightforward.
+That said, Adobe not only patched this vulnerability very quickly but has also implemented layers of security, including the Adobe Sandbox, in recent versions of Flash that make it far more difficult to compromise a system by exploiting Flash.
+While new, arguably more secure web technologies are enabling rich media in ways that only Flash could in the past, Flash remains a nearly ubiquitous technology on PCs and a variety of embedded systems, making the ongoing maintenance and security of the application a critical task.
+Here's a closer look at the vulnerability and a demonstration of the use of regular expression parsing to generate a heap overflow.
+The following analysis is based on flashplayer_17_sa_169.exe.
+The crash location may be different when Flash Player plug-in runs in web browser.
+First, the regular expression parsing engine in Flash Player generates the compiled code in a heap buffer.
+The compiled code buffer looks like:
+The length of the compiled code buffer is 0x7d50.
+The following match function in pcre lib is called.
+match(REGISTER USPTR eptr, REGISTER const uschar *ecode, const uschar *mstart, int offset_top, match_data *md, unsigned long int ims, eptrblock *eptrb, int flags, unsigned int rdepth)
+The individual arguments are explained below:
+eptr - pointer to current character in subject
+ecode - pointer to current position in compiled code
+mstart - pointer to the current match start position (can be modified by encountering \K)
+offset_top current - top pointer
+md - pointer to "static" info for the match
+ims - current /i, /m, and /s options
+eptrb - pointer to chain of blocks containing eptr at start of brackets - for testing for empty matches
+flags - can contain
+match_condassert - this is an assertion condition
+match_cbegroup - this is the start of an unlimited repeat group that can match an empty string
+rdepth - the recursion depth
+The function could return the following results:
+MATCH_MATCH if matched
+MATCH_NOMATCH if failed to match
+A negative PCRE_ERROR_xxx value if aborted by an error condition (e.g.
+stopped by repeated call or recursion limit)
+The pointer ecode points to the current position in the compiled code buffer, which has a value of 0x0C54602C.
+Since the specifically crafted regular expression is incorrectly compiled, eventually when executing the string match, it causes an out-of-bounds read crash in heap buffer.
+The assembly code snippet is shown below:
+01892AB7 .
+894F 08 mov dword ptr [edi+8], ecx //ecx is 0x0C54DD36
+01892ABA > 8B47 08 mov eax, dword ptr [edi+8] //eax is 0x0C54DD36
+01892ABD .
+0FB648 04 movzx ecx, byte ptr [eax+4]
+01892AC1 .
+0FB650 05 movzx edx, byte ptr [eax+5]
+01892AC5 .
+C1E1 08 shl ecx, 8
+01892AC8 .
+0BCA or ecx, edx //ecx is 0x2438
+01892ACA .
+8D4401 03 lea eax, dword ptr [ecx+eax+3] //eax is 0x0C550171 which points to an invalid heap address and causes the heap overflow
+01892ACE .
+8947 08 mov dword ptr [edi+8], eax
+01892AD1 .
+8038 53 cmp byte ptr [eax], 53 //crash occurs here
+This vulnerability could potentially be exploited to execute arbitrary code with Advanced Heap Manipulation techniques.
+Adobe recently released a security bulletin summarizing the related vulnerabilities, including CVE-2015-5129.
+Fortinet blocks this vulnerability with IPS Signature: Adobe.Flash.ActionScript.Regexp.Heap.Overflow.
+Thanks to Kai Lu for discovering this vulnerability.

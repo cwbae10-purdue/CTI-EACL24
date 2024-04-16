@@ -1,0 +1,43 @@
+This blog was written by Sanchit Karve.
+The Dofoil downloader (found in the wild since 2011) occasionally updates itself with new features and encryption techniques to hide communications with its control servers.
+The latest iteration uses a variation of XOR and RC4 algorithms similar to previous variants to encrypt the list of control servers within the binary and encrypt all traffic with the server.
+The Dofoil sample we analyzed (D8AB2694A8AAA0FA729AC0FCC93767A2) contained many antianalysis tricks common to previous versions:
+Code obfuscation
+Self-modifying code
+Sleep for an infinite time if sample is named sample.exe
+Sleep for an infinite time if volume serial number of C:\ is 0xCD1A40 (anti-ThreatExpert) or 0x70144646 (unknown)
+CPU-specific checks
+Virtual machine presence based on an entry in HKLM\System\CurrentControlSet\Services\Disk\Enum
+Presence of sandboxing, etc.
+BeingDebugged and NTGlobalFlags checks in the process environment block
+As in previous versions, a GET request to msn.com is made to confirm an active Internet connection on an infected machine.
+After the confirmation, the sample proceeds to decrypt the location of its control servers, which are encrypted and stored in a lookup table.
+The encrypted strings for the control server domain names are visible in high-entropy areas:
+To decrypt, the samples use an XOR-based encryption scheme.
+The encrypted data conforms to the following format:
+One decrypted byte is represented with two encrypted bytes in this scheme.
+Two bytes are read from the encrypted data and individually XORed with the one-byte key.
+The difference between the two values yields the decrypted byte.
+The size_of_encrypted_data field is a bit misleading because it contains an intentionally large value that the sample corrects during its decryption.
+When decrypted, the control servers are visible:
+The sample we examined contains three control servers: hxxp://zoneserveryu(788|789|790)[dot]com
+All communications with a server take place over HTTP POST requests; the commands are encrypted with an RC4-based algorithm.
+Unlike previous variants, in which the MD5 of the infected computer along with the volume serial number of C:\ was passed as the login parameter, the new variant uses a 160-bit hash composed of five components.
+For example, for the following command string, the login field translates to five DWORDs:
+It’s unclear why the malware authors introduced redundancy in the hash.
+The command is encrypted, prefixed with its size and four-byte encryption key, and sent to the server like so:
+When the command is decrypted with the following algorithm, we can see the original command:
+The initial request gets a 404/not found response with an encoded body from the control server.
+The body consists of encoded commands from the server along with a plug-in file (executable DLL) encrypted with the same algorithm listed above except that it uses a 13-byte key.
+It decrypts to:
+The plug-in file usually has an exported function “Work” and could contain functionality for additional commands and features.
+When the sample wishes to download additional malware, it passes a file number using the file parameter:
+The server responds with a 404 response but passes on new malware in the content of the response.
+It also passes its own command in the “Vary” header.
+The sample is equipped to handle four commands: to write downloaded files to disk and execute them, remove itself, silently register DLLs, and inject content directly into memory.
+The sample returns the result of its command to the server.
+For example, if the server responds with “0-AAAAAA,” the sample writes the downloaded sample to disk (in %APPDATA% or %TEMP%) and executes it.
+If it succeeds, it responds with the run=ok command.
+If the sample fails to execute, it sends run=fail.
+Eventually, the sample downloads password stealers and spam bots, which send spam claiming to be from Amazon.com, and embeds an attachment containing the original sample to spread itself:
+McAfee customers are protected from this threat by Downloader-FAFW and other signatures.

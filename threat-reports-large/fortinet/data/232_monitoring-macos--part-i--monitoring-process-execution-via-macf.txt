@@ -1,0 +1,81 @@
+Over the years, the FortiGuard Labs team has learned that it is very common for macOS malware to launch a new process to execute its malicious activity.
+So in order to more efficiently and automatically analyze the malicious behaviors of malware targeting macOS, it is necessary to develop a utility to monitor process execution.
+The MACF on macOS is a good choice to implement this utility.
+The Mandatory Access Control Framework - commonly referred to as MACF - is the substrate on top of which all of Apple’s securities, both macOS and iOS, are implemented.
+In this blog, I will detail the implementation of monitoring process execution, including command line arguments, via MACF.
+If you are interested in the research of malware and vulnerabilities on macOS, the blogs from objective-see.com are great study resource.
+The blog series “Monitoring Process Creation via the Kernel” explains how to monitor process creation via the kernel using MACF and KAuth (Kernel Authorization).
+However, it did not show how to implement monitor process execution with command line arguments.
+During the process of analyzing malware on macOS, the malware usually executes new processes to perform specific malicious activities in background.
+These new processes are frequently executed with command line arguments.
+So to analyze them, it’s fairly necessary to monitor process execution with all of the command line arguments.
+First, you need to register your MAC Policy, as shown in Figure 1.
+In the KEXT’s start function, you can invoke the function mac_policy_register to perform the registration.
+The declaration of the function mac_policy_register is defined in the header file bsd/security/mac_policy.h.
+The key parameter is the first one, which is a pointer to the structure mac_policy_conf, defined below.
+The parameter policyConf shown in Figure 1 is an object of the structure mac_policy_conf, and its initialization is shown below.
+The 5th parameter, mpc_ops, is a pointer to the structure mac_policy_ops that defines policy module operations.
+The structure mac_policy_ops includes more than 300 policy module operations.
+You only need to initialize the operations you are concern.
+Here we only focus on the operations related to process execution, which are listed below.
+The following code shows the initialization of structure mac_policy_ops.
+We use the operation mpo_cred_label_update_execve_t to monitor process execution with all command line arguments, instead of mpo_vnode_check_exec_t.
+The following is the declaration along with all parameters comments of mpo_cred_label_update_execve_t.
+Next, we take a look at the callback processExecWithArgsHook that we previously defined.
+The following is a code snippet of the callback processExecWithArgsHook.
+As mentioned in the comments of mpo_cred_label_update_execve_t shown in Figure 6, the parameter csflags is code signing flags to be set after execution.
+It is a key parameter for retrieving the command line arguments taken by process execution.
+We can calculate the memory address of an object to image_params by subtracting the offset in the structure image_params from the memory address of csflags.
+The following is the definition of the structure image_params (defined in bsd/sys/imgact.h), which acts as a container for passing around program parameters between functions called by execve().
+We get the structure image_params pointer by executing the following code:
+struct image_params *img = (struct image_params *)((char*)csflags-__offsetof(struct image_params, ip_csflags));
+The member variable ip_csflags of structure image_params is actually the parameter csflags taken by the callback processExecWithArgsHook.
+Once we have the address of structure image_params pointer, we can reference its member variables ip_startargv and ip_endargv to get the data buffer for the command line arguments of process execution.
+Note that the member variable ip_argc represents the amount of the command line arguments.
+It is also worth noting that each parameter in buffer is separated with ‘\0’, so you need to do a string replacement operation to get the complete string of all command line arguments.
+Next, it is time to test the KEXT.
+After loading the KEXT successfully (I’ve tested it on macOS 10.12 and 10.13), you can open the Console.app to monitor the KEXT’s output.
+Try to launch some apps or execute some processes to test.
+For example, when we open the Calculator app, we can see the log of the executing of the Calculator app.
+So far, we have provided the key technical details regarding monitoring process execution with command line arguments in kernel on macOS.
+Next, we will set up the user-land program, which involves the communication between kernel space and user space.
+I chose the kernel control API, which is a socket-based API that allows you to communicate with and receive broadcast notifications from the KEXT.
+The kernel control (kernel_control) API, which uses the SYSPROTO_CONTROL protocol, allows applications to configure and control a KEXT.
+And it’s also a bidirectional communication mechanism between a user space application and a KEXT.
+For detailed usage of this API, please see:
+https://developer.apple.com/library/content/documentation/Darwin/Conceptual/NKEConceptual/control/control.html.
+The kernel process can call a number of functions to send data back to the user space process.
+This data can be read from the user process using read or recv system calls.
+In particular, you can use ctl_enqueuedata to queue up data to send to the user space process, and ctl_getenqueuespace to find out how much free space is available in the queue.
+The following is a code snippet from using kernel control APIs.
+In the KEXT’s start function, you must register a kernel control structure using the ctl_register function.
+The declaration of the ctl_register is shown below.
+Next, let’s look at the first parameter of the function ctl_register.
+The definition and initialization of structure kern_ctl_reg are shown below.
+We can set the buffer size for sending data using ctl_sendsize.
+In my KEXT, I set the send size as 2048K to ensure there is enough space when a large number of monitor events are triggered.
+You can set any reasonable value on ctl_sendsize depending on your needs.
+In the callback processExecWithArgsHook, in Figure 8, we can obtain the pid, ppid, uid, path, and path with all command line arguments of process, and fill that info into the data buffer, as shown below.
+The data to be sent includes timestamps, pid, uid, ppid, event id, reserved data, process name, parent process name, path, and path with command line arguments.
+After filling out the data buffer, we can invoke the function ctl_getenqueuespace to get the queue space size.
+If there is enough space to send this data buffer, we then invoke the function ctl_enqueuedata to send the data to the client program in user space.
+The following is a code snippet showing the receipt of data from KEXT in the client program in user space.
+Finally, let us look at the output of the client program in user space.
+I have tested many cases including launching apps and executing processes from the terminal.
+It works very well.
+From Figure 16, we can see that several processes besides the main process “Google Chrome” are executed after launching the google chrome app.
+The process “Google Chrome Helper” can be executed with a long command line argument.
+From Figure 16, we can see that when I execute the ping command from the terminal, our utility can monitor its execution well.
+In this blog, we have discussed the key technical details regarding how to monitor process execution (including command line arguments) via MACF.
+This utility includes two parts: one is the KEXT in kernel space, and the other one is the client program in user space.
+Actually, monitoring process execution is only one module of the tool I have developed to monitor the risky behaviors of malware on macOS.
+I will discuss how to monitor file system events, network activities, etc.
+in future blogs.
+You are welcome to stay tuned!
+1. https://developer.apple.com/library/content/documentation/Darwin/Conceptual/NKEConceptual/control/control.html
+2. https://objective-see.com/blog.html
+3.
+Mac OS X Internals: A Systems Approach By Amit Singh
+4.
+MacOS and iOS Internals, Volume III: Security & Insecurity By Jonathan Levin
+Sign up for our weekly FortiGuard intel briefs or to be a part of our open beta of Fortinet’s FortiGuard Threat Intelligence Service.

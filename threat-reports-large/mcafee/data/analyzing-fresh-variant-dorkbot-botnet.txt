@@ -1,0 +1,99 @@
+This blog post was written by Sudhanshu Dubey.
+At McAfee Labs, we have recently observed a new variant of the Dorkbot botnet.
+Dorkbot is a well-known bot, famous for its various capabilities including backdoor, password stealing, and other malicious behavior.
+Dorkbot relies on social networking as its infection vector.
+In this post, we offer our analysis of this new variant.
+The malware downloads the file from api.wipmania.net, a site that provides geolocalization services.
+The following screen shows the network traffic of the downloader file.
+Downloader network communications.
+The downloaded file is a wrapper compiled using Microsoft Visual C/C++ (2008 version).
+During our analysis we studied the wrapper file and extracted the inner file from the malware.
+Analyzing the core
+The inner file is also complied with a Microsoft Visual C++.
+The core is 48KB and has strings related to virtual machine names, registry entries, encrypted URLs, etc.
+as shown in the following:
+Strings and encrypted URLs in the core file.
+Anti-VM
+Before performing any malicious activity, the malware executes code that checks for a virtual environment.
+It uses the SetupDiGetDeviceRegistryPropertyA() API, which helps in retrieving specified Universal Plug and Play device properties.
+A code snippet:
+Searching for virtual machines using SetupDiGetDeviceRegistryPropertyA ().
+As we see in the preceding snapshot, the malware passes the third argument as 0xC (SPDRP_FRIENDLYNAME), which retrieves the friendly name of the device.
+It then checks the device name with the strings related to virtual machines, for example, vbox, qemu, vmware, and virtual hd.
+If the malware finds any of these strings, indicating the presence of a virtual environment, it will terminate itself.
+After passing the VM check, the malware checks the current working directory.
+It compares the file path with the desired path from %appdata% with the folder name in GUID format, for example, %appdata%/{GUID}.
+The following assembly code shows the malware code that checks the file path.
+File execution path check.
+If the file is executed from a different path, the malware considers the event as its first execution.
+In the first execution, the malware sets up its environment: file drop, registry entries, etc.
+The malware creates a directory in %appdata% and copies itself.
+It uses a custom function and the StringFromGUID2() API to get the folder name in GUID format.
+The dropped file and path is shown in the following:
+The malware copies itself to %appdata%.
+Dorkbot also creates a Run registry entry and task to persist on the system, setting the execution file path with the dropped file mentioned above.
+The registry entry created by the malware:
+Dorkbot’s registry entry.
+The malware also creates a task that triggers when the user logs on, executing the malware file.
+After successful installation of registry and schedule tasks, the malware uses process hollowing to execute its code as svchost.exe and bypass application-level whitelists.
+The malware creates svchost.exe.
+After injecting itself into svchost.exe, Dorkbot calls ZwQueueApcThread(),an undocumented API used to queue an asynchronous procedure call (APC) routine (the malware’s remote code) on a current remote thread.
+(APCs are functions that execute asynchronously in the context of a particular thread.)
+ZwQueueApcThread allows the caller to specify three arguments that will be passed to the thread, including the thread routine.
+The malware sends a routine address different from the address of the entry point of the file, resulting in communication with the control server.
+The injected code first executes the relocation code, making the injected code compatible with the new base address.
+After relocating the code, the malware ensures it is kept active in the system—even after being killed manually—by injecting a watchdog code in already running processes.
+One strange thing we observed is that before injecting the watchdog code, the malware checks for the process names TeamViewer and tv_w32.exe.
+If the malware finds either of them, it does not inject its code into that process.
+Process enumeration and watchdog code injection.
+Dorkbot enumerates the running processes and tries to open them with 0x10047A flag/permissions related to remote memory creation, reading and writing to memory.
+Definitions of the flags:
+0x100000 => Synchronize 0x400 => QueryInformation 0x70 => VirtualMemoryRead + VirtualMemoryWrite + DuplicateHandle 0xA => VirtualMemoryOperation + CreateThread
+The watchdog code has some API calls that Dorkbot needs to update to make its code compatible with the remote process.
+Dorkbot updates the placeholders in the code that are related to API addresses and the malware’s process ID.
+Along with the watchdog code, the malware also inject its file path, referenced by the code, to restart the process.
+The following screen shows the watchdog code before and after modification:
+Injected watchdog code: before and after modification.
+The injected code uses the WaitForSingleObject() API to wait infinitely for malware process.
+It provides the malware’s process ID as the first argument and infinite time as the second argument.
+If the malware process is killed, Dorkbot signals to WaitForSingleObject () and the injected code proceeds.
+After getting the signal, the injected code executes CreateProcessW () API and again creates the malware process.
+As we mentioned, the malware also injects the malware’s file path to the remote process to restart its execution if it is killed manually.
+But as we see in the preceding screen, we cannot find any address referencing the malware file path.
+This is because the malware passes the file path’s address as an argument to the CreateRemoteThread() API and in the code is referenced with the help of the EBP register ([EBP + 8]).
+CreateRemoteThread arguments.
+Network communications
+For communications, the malware contains a list of encrypted URLs.
+The malware decrypts this list and generates a list of URLs in the format %s%u.%s, which is also present in the malware itself.
+Here the first “%s” signifies the string “con,” “%u” signifies integers 1 and 2, and the subsequent “%s” signifies the decrypted URL.
+Thus the malware adds the prefixes con1.
+and con2.
+to each of the decrypted URLs.
+Decrypted URL: abcxyz.com Generated URLs: con1.
+abcxyz.com, con2.
+abcxyz.com
+Data sent by the malware to its control server.
+The first 4 bytes of the data is the fixed dword value hardcoded in the malware.
+These 4 bytes are also used while checking the received data from the server.
+The fifth byte of the data represents operating system major and minor versions.
+The sixth byte defines whether the OS is 32- or 64-bit.
+The value for this byte is either 0x20 or 0x40, the hex representations of 32 and 64, respectively.
+The next part is the hex data, defined as a character, for example, 0x41 stands for for “A” and is represented as 4 and 1.
+This part of the data is the union of the computer name and the calculated hash data separated by #.
+The malware uses the format specifier “%s#%s,” in which the first part is the computer name and the latter the hash value.
+Following this data is the word value (0x444E in this case), which is taken from the particular offset in the file.
+The last part of the data is derived from the current time and the output of the GetTickCount () API.
+After sending the data to the server, the malware is ready to receive data.
+Because the URLs are not currently active, we did not receive any data from the server during our analysis.
+However, from the assembly code, we can see that the malware expects the data from the server in a particular format.
+The following assembly code snippet shows the checks performed by the malware on the received data.
+Received data checks.
+The WS2_32.recv () API receives data from a connected socket and returns the number of bytes received.
+The malware checks the return value of the API, which is the length of bytes received from server with the value 205; that is, the malware expects the data from control server to be 205 bytes in length.
+After checking the number of bytes, it evaluates the first 6 bytes of the data.
+It compares the first 4 bytes with the fixed dword value (18273645 in this case), which it used while sending the data.
+(See the screen of data sent to the control server.)
+The malware expects the fifth and sixth bytes to be 1 and 0, respectively.
+The inactive URLs prevented us from going further with our analysis.
+We shall post new information when available.
+McAfee products detect this variant of the malware.

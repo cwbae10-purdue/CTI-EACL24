@@ -1,0 +1,40 @@
+If you deal with the same threats that Mandiant does, you may have noticed a lot of malware lately named "fxsst.dll".
+If you're wondering why this is happening, this article is for you.
+When I spend time working solely on reverse engineering malware, I don't often get the whole story with a malware sample.
+I wasn't curious about the name fxsst.dll until we had a plump stack of malware samples in our library that all had this name and were completely unrelated to each other.
+A quick check with our incident responders confirmed that in my latest specimen the malware was operational and the persistence mechanism was not immediately apparent.
+It gave me a flashback of ntshrui.dll from last year and I decided to investigate the issue.
+If you try a quick Google search, you will find that fxsst.dll is a legitimate system DLL, specifically the fax server.
+The DLL is found on most systems that were installed with default settings, though it is an optional feature during the operating system installation process.
+It resides in the System32 folder, and a search for the DLL on a live system with Process Explorer shows that it is loaded inside the Explorer.exe process.
+At this point it sounds very similar to the ntshrui.dll problem, but we'll keep digging.
+I found that my malware analysis VM did not contain fxsst.dll so I placed a malware DLL of this name in the System32 folder and rebooted.
+The malware was loaded by Explorer.exe upon reboot.
+Unlike ntshrui.dll though, there is no mention of fxsst.dll anywhere in the Registry.
+A string search through Explorer.exe reveals that it is also not loaded directly by the program through its import table or dynamically with LoadLibrary().
+A complete search for fxsst.dll through all files revealed it to be referenced by the file stobject.dll in the System32 folder.
+Stobject.dll is the System Tray component of the Windows Shell (the tray at the bottom right of your screen).
+It is loaded by Explorer.exe as an In-Process Server (InprocServer in Windows lingo) and utilized through a COM interface.
+It is referenced in the Registry as shown below.
+With the mystery of stobject.dll solved, we can focus on how it loads fxsst.dll.
+We also need to figure out what a piece of malware must do to successfully replace the legitimate DLL and still ensure a stable system.
+The following is the decompiled fragment of stobject.dll which shows the loading of fxsst.dll.
+According to this fragment of code if the fxsst.dll file is found it will be loaded and the two functions, IsFaxMessage() and FaxMonitorShutdown() will be resolved and stored in a pair of global function pointers.
+If the DLL is not found, or if the functions were not found within the DLL, then the global function pointers will be NULL.
+Let us now examine how these function pointers are used to see if a NULL pointer will adversely affect the program.
+The IsFaxMessage() function is used only once, and in the fragment above you can see that the program checks to see if it is NULL before calling the function.
+If the pointer is NULL, then the program just skips this piece of functionality.
+The same is the case for FaxMonitorShutdown().
+Why does this matter?
+If a malware replaces fxsst.dll and is loaded by Explorer through stobject.dll, then it doesn't need to implement the fax server function calls.
+The only repercussion is that the system can no longer act as a fax server, but that is a feature I don't think anyone would notice was missing.
+The malware authors obviously arrived at the same conclusion.
+Since fxsst.dll resides in the System32 folder, is not protected by KnownDlls and is loaded by the Explorer.exe process, it is vulnerable to the same DLL load order hijack as ntshrui.dll.
+By that I mean you can place a malicious DLL in the C:WINDOWS folder and it will load instead of the legitimate copy in System32.
+You can also just overwrite the copy in System32 and the user of the system will not notice.
+Unlike with ntshrui.dll, the malware replacing fxsst.dll doesn't really need to take the extra step of loading the legitimate copy to restore its important functionality.
+In this case, the original functionality is useless to all but the last few people in the world who still use their Windows computer to receive faxes.
+Conclusion (and TL;DR version):
+You can take pretty much any malware DLL, name it fxsst.dll and drop it in C:WINDOWS or the System32 folder and Explorer.exe will load it at boot time.
+No hassle, no fuss.
+There are bound to be more problematic DLL locations like this, but I'll keep spreading the word as we find them.

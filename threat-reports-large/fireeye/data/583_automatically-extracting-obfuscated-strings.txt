@@ -1,0 +1,108 @@
+Have you ever run strings.exe on a malware executable and its output provided you with IP addresses, file names, registry keys, and other indicators of compromise (IOCs)?
+Great!
+No need to run further analysis or hire expensive experts to determine if a file is malicious, its intended usage, and how to find other instances.
+Unfortunately, malware authors have caught on and are trying to deter your analysis.
+Although these authors try to protect their executables, we will teach you to use the FireEye Labs Obfuscated Strings Solver (FLOSS) to recover sensitive strings from malware executables.
+One popular approach malware authors use to protect their software is packing.
+Packing a program transforms the executable into a compressed and/or obfuscated form.
+Packed malware can impede your analysis since it requires you to restore the unpacked data first.
+On the other hand, since packing is unusual, simply flagging on packed files is a reliable way to identify suspicious executables.
+Packed files can be easily detected via features such as: a small number of imported functions, a high entropy level, or suspicious section header characteristics.
+So, while packing hides the strings, it makes a malicious binary stick out like a sore thumb.
+Instead, attackers often encode sensitive strings individually without packing the entire binary file.
+This means that during runtime, the program decodes the strings prior to use.
+For example, the program may decode the strings unconditionally during the initialization routine or decode the strings immediately before their use.
+Either way, the strings are not visible in the on-disk executable and the file is not trivial to detect.
+Listing 1 shows pseudo-code of a simple decoding function that decodes obfuscated strings by applying a single-byte XOR with a key of 0x15 to each character.
+Listing 1: Simple string obfuscation example using the XOR operation
+Manually constructing strings is another technique malware authors often use to hide strings.
+Instead of storing a consecutive sequence of bytes to form a string, a collection of instructions re-creates the strings byte-by-byte.
+Since strings.exe looks for a sequence of printable characters, it is unable to identify the human readable string because the characters are interspersed with the opcode data.
+Hiding strings such as file system paths and domain names makes it harder for forensic analysts to decide if a file is malicious or not.
+Figure 1 shows a screenshot of IDA Pro illustrating the string “goodbye world” being manually constructed on the stack.
+Although we call this technique “stackstrings” it can just as easily be applied to global memory or the heap.
+Figure 1: Manually constructed string on the stack
+Reverse engineers have various possibilities when tasked with decoding obfuscated strings in malware.
+Two traditional techniques are to use a debugger to recover strings or to reimplement the decoding function.
+Both approaches require analysts to manually identify decoding functions first.
+After a decoding routine has been identified in a disassembler such as IDA Pro, analysts can use a debugger to execute every code path that yields a decoded string.
+They can do this by setting breakpoints and manipulating the CPU flags at important spots in the program.
+When the malware decodes a string, analysts dump the region of memory that contains this data.
+This technique uses the malware’s string decoding implementation, which must decode strings properly if the malware works correctly.
+However, the debugging steps can be a daunting task to perform for every relevant code path.
+Complex initialization of decoding routines and inlined decoding functions further complicate this technique.
+Our flare-dbg project can help to automate string decoding using WinDbg, as described in the blog post, FLARE Script Series: Automating Obfuscating String Decoding.
+An alternative static analysis technique is to reimplement the decoding routine in a scripting language, such as Python, based on the disassembly of the routine.
+This allows analysts to flexibly apply a decoding scheme to all obfuscated strings in a binary at their leisure.
+However, porting code is a tedious and error prone process.
+Additionally, it can be a challenge to extract the obfuscated data.
+For example, if the obfuscated data is manipulated before the decoding function initialization then it may be difficult to manually recreate the transformations.
+Although not challenging, manually recovering stackstrings in IDA Pro can be a cumbersome process.
+The FLARE team provides an IDA Pro plugin that automates the recovery of stackstrings.
+Depending on the actual obfuscation implementation, each recovery method can take a considerable amount of time.
+Unfortunately, malware authors can drastically transform an encoding routine with trivial changes to the source code.
+Therefore, analysts have to repeat these procedures manually for every single malware sample with obfuscated strings.
+An automated system that extracts these strings would save dozens of hours per month for a reverse engineering team such as FLARE.
+The FireEye Labs Obfuscated String Solver (FLOSS) is an open source tool that is released under Apache License 2.0.
+It automatically detects, extracts, and decodes obfuscated strings in Windows Portable Executable files.
+FLOSS is extremely easy to use and works against a large corpus of malware.
+You run it just as you did the strings.exe tool.
+Malware analysts, forensic investigators, and incident responders who already look for strings in a binary will benefit from FLOSS.
+Figure 2 shows an example output of FLOSS run on a malware with obfuscated strings.
+For this executable the strings output shown in Figure 3 does not yield any useful information.
+Figure 2: FLOSS example output that provides valuable information to analysts
+Figure 3: Strings tool output that shows no indicators for this executable
+For many obfuscated samples, FLOSS’s output offers valuable insight into the program’s functionality, whereas the strings.exe tool provides no useful information.
+FLOSS extracts higher value strings since strings that are obfuscated typically contain the most sensitive configuration resources, including command and control server addresses, names of dynamically resolved imports, suspicious file paths, and other indicators of compromise (IOCs).
+In fact, FLOSS entirely eliminates the need for strings.exe as FLOSS can also extract all static ASCII and UTF-16LE strings from any file.
+And as we have learned, FLOSS also provides deobfuscated strings and recovered stackstrings from PE files.
+This means that there is no real reason to run strings.exe anymore.
+FLOSS combines advanced static analysis techniques to automatically detect decoding functions and recover obfuscated strings.
+Here is the algorithm in detail:
+FLOSS uses vivisect to disassemble and analyze the control flow of a program.
+Vivisect is a program analysis library written in pure Python.
+You can think of it like an open-source IDA Pro instance.
+FLOSS uses plug-ins for defining heuristics.
+Each heuristic scores the likelihood that a function is a decoding routine.
+This approach allows us (and you) to easily extend FLOSS’s identification capabilities.
+The most effective heuristics, which happen to be very simple, to date are:
+Function contains non-zeroing XOR operation
+There are many code cross-references to a function
+FLOSS uses vivisect’s CPU and memory modules to emulate x86 instructions.
+Each executable is emulated in the Python runtime.
+The goal of this step is to obtain the arguments that get passed into a decoding function.
+FLOSS emulates all code paths in the executable in a single-pass, brute-force manner.
+Whenever FLOSS detects a call to a possible decoding function, it takes a snapshot of the memory and register state.
+This trick allows FLOSS to collect all relevant function input without knowing any details about the function, e.g., calling convention or the number of arguments.
+Before FLOSS performs emulation of possible decoding functions, it “reverts” to each snapshot it created in the previous step.
+FLOSS emulates each decoding routine with all collected emulator state snapshots.
+The emulation stops once the routine returns, or until 10,000 instructions have been emulated, which avoids infinite loops during program emulation.
+This allows FLOSS to identify changes to the CPU and memory states introduced by the decoding routines.
+FLOSS compares the emulator memory segments before and after emulating a decoding function.
+This results in a list of byte sequences with differing content.
+If a decoding routine exposed some data, the deobfuscated data must be found within these byte sequences.
+For each differing byte sequence, FLOSS extracts all human readable strings in ASCII and UTF-16LE format.
+This is what it displays to the user.
+We provide standalone executable files of FLOSS for Windows and Linux at https://github.com/fireeye/flare-floss/releases.
+The tool is written in pure Python and the source code is available on GitHub at https://github.com/fireeye/flare-floss.
+You can also install FLOSS via the standard Python package installer pip.
+This will add an executable floss.exe (on Windows) or floss (on Linux) to your $PATH.
+As a third option, you can install FLOSS from source.
+Please see the GitHub page for the most up to date installation instructions.
+To extract static ASCII and UTF-16LE strings, obfuscated strings, and stackstrings from an executable file, run:
+If you want to exclude static strings from FLOSS’s output provide the –-no-static-strings switch:
+You can suppress FLOSS’s headers and formatting output with the -q switch.
+This mode is appropriate for piping to grep or other tools:
+To display only strings with a minimum length use the -n switch.
+The default minimum string length is four:
+If you know a decoding function offset (or have a list of comma-separated function offsets), you can instruct FLOSS to only analyze the provided functions using the -f switch:
+Use the -i switch to create an IDAPython script that annotates an IDA Pro IDB database with the decoded strings:
+FLOSS can also create radare2 scripts via the –r switch:
+The -h switch displays the entire help for all of FLOSS’s functionality:
+In this blog post we have introduced the FLARE team’s newest contribution to the malware analysis community.
+FLOSS is an open-source tool to automatically detect, extract, and decode obfuscated strings in Windows Portable Executable files.
+The community needs this type of tool to fight back against malware authors who commonly obfuscate strings in their programs to deter static and dynamic analysis.
+In addition to extracting strings that are deobfuscated by decoding routines, FLOSS can recover stackstrings and obtain all static strings.
+Try out FLOSS in your next malware analysis.
+The tool is extremely easy to use and can provide valuable information for forensic analysts, incident responders, and reverse engineers.
+If you enjoy the tool, run into issues using it, or have any other comments, please contact us via the projects GitHub page at https://github.com/fireeye/flare-floss/.

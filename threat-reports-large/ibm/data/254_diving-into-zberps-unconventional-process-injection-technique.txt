@@ -1,0 +1,93 @@
+IBM X-Force Research recently discovered a small-scale malware campaign involving a Neutrino bot, aka Kasidet, dropping a payload that contains two Zeus malware breeds: Atmos and Zberp.
+Both of these codes are based on the leaked source code of the Zeus V2 banking Trojan that was exposed publicly in 2011.
+The Zberp Trojan, which is a subvariant of ZeusVM mixed with code from the Carberp malware, was first discovered and named by IBM X-Force in May 2014.
+Zberp uses most of ZeusVM’s core financial capabilities, such as a steganography technique to hide its configuration file, an invisible persistence mechanism and, notably, a unique process injection technique and an API hooking mechanism taken from Carberp.
+This has made Zberp one of the stealthiest Zeus-based financial Trojans ever seen in the wild.
+Although the recent campaign featured a new Zberp variant, the payload itself did not feature major changes.
+This reinforces the belief that the malware remained rather static from the time it was first discovered.
+Throughout the past three years, Zberp’s operators remained relatively quiet and did not launch the malware into large infection campaigns, so it was not a surprise to see it emerge in a relatively small campaign.
+That said, Zberp does feature some interesting aspects due to the mix of code chunks it copied from Carberp, particularly its code injection technique.
+Let’s take a closer look.
+Read the white paper: Detecting digital identity fraud with IBM Trusteer
+Code injection is one of the top tactics used by malware authors, making its detection crucial for many security solutions.
+Injecting code into otherwise legitimate system processes allows the malware to become more evasive by running from a trusted resource, thus hiding itself from the user’s eyes and thwarting detection by process-specific security mechanisms.
+Furthermore, the core capabilities of financial malware, such as webinjections, form grabbing and redirect attacks, are achieved using API function hooks from within the web browser’s process, routing the execution flow through injected malicious code.
+Code injection, in many cases, is the basis of what a financial malware can do once it lands in a newly infected endpoint.
+To detect the activity of malicious code, security solutions often monitor API function calls that are affiliated with process injection techniques.
+For example, the VirtualAllocEx and WriteProcessMemory APIs are used in most code injection techniques.
+These APIs allocate space and write the payload to the remote process, and the CreateRemoteThread API is often used to execute it.
+In pursuit of becoming more evasive, some malware authors try to use alternative techniques that don’t involve typical process injection APIs.
+One such method is the recently discovered AtomBombing, which was adopted by the infamous Dridex malware.
+When it comes to code injection, Carberp’s developer had an interesting way to go about the process.
+The malware’s source code was leaked in mid-2013, revealing how Carberp used a variety of standard process injection routines.
+This involved using Asynchronous Procedure Calls (APC) or the CreateRemoteThread API, which didn’t differ much from other competing banking Trojans, along with a few other tricks.
+But to overcome the more advanced breed of protection mechanisms of that era, Carberp had to invent a brand new injection technique.
+That technique was later adapted by Zberp’s developers to become the primary injection method to all user-mode processes.
+To evade security mechanisms that would detect suspicious API calls, Carberp’s authors were quite determined to create a thread in a remote process without using APC or the CreateRemoteThread API.
+They even marketed that ability in 2013, claiming it was the workaround that could bypass IBM Trusteer’s antifraud product, Rapport, but that was unproven.
+One way for Carberp’s developers to implement the trick was to remotely set up a hook on a frequently used API — in our case, ZwClose.
+Whenever this API was called from any thread in the targeted process, the hook detoured execution to a shellcode function that created a new local thread from within the target process and immediately fixed the hook.
+Creating such a hook is not trivial — it requires thread safety considerations, since two threads will attempt to modify the code and fix the hook at the same time.
+In the process, one thread can interfere with the other, and it may lead to unexpected behavior that can cause the program to crash.
+Another issue the malware’s authors had to address was memory protection.
+Since the memory pages of the code section in system dynamic link libraries (DLLs) have the access rights of PAGE_EXECUTE_READ (0x20), the access rights must be adjusted before attempting to write any payload or modify the code to set a hook.
+Otherwise, an access violation error will be raised and the program will crash.
+Read the white paper: Detecting digital identity fraud with IBM Trusteer
+Zberp is implemented in a four-step process, which is broken down and explained in granular detail below.
+As a preparatory step, Zberp uses a rather standard way of writing the payload to the targeted process: It allocates a PAGE_EXECUTE_READWRITE memory block using VirtualAllocEx and writes its own executable into the target process using WriteProcessMemory.
+Next, it copies a structure to a predefined offset in the copied module.
+This is supplemented with essential data for the shellcode, which contains the first six bytes from the beginning of ZwClose, also known as a trampoline.
+Unlike permanent hooks, where the trampoline is used to call the original API function, this trampoline simply stores the original data for fixing the hook once it was executed.
+Figure 1: Normal ZwClose as seen in Windbg (above) and the six-byte trampoline in the targeted process (below)
+The malware begins by calculating the size of Ntdll.dll and calling the API functions CreateFileMappingW and MapViewOfFile with PAGE_EXECUTE_READWRITE access rights.
+This step creates an empty file mapping with the size of Ntdll.dll that will be mapped to the malware process’s memory space.
+Now that the trampoline is set and the file mapping is ready, the malware is ready to patch ZwClose.
+First, the malware suspends the target process by calling NtSuspendProcess.
+It then uses ReadProcessMemory to make a replica of the target process’s Ntdll.dll into the file mapping in its own memory space.
+Before setting the hook itself, the malware needs to calculate two addresses: the address of ZwClose in the file mapping so it will have the address that needs to be patched and the address of the shellcode function in the remote process so it will know where the hook should point to.
+Figure 2: Calculating the hook address and the shellcode address in the remote process
+Next, Zberp overwrites the six bytes at the address of ZwClose in the mapped Ntdll.dll and sets the hook.
+The first byte is overwritten with 0x68, which is the x86 assembly push instruction.
+The next four bytes are the address of the shellcode function in the remote process, and the last byte is 0xC3, which is the x86 ret instruction.
+In other words, the shellcode address will be pushed onto the stack and the ret instruction will return to it as if it were a return address of a function.
+Figure 3: Setting the hook on the mapped ntdll!ZwClose
+The final step is the most significant part.
+After everything has been prepared, the remote hook can be placed.
+Since the remote process was previously suspended, the malware can call NtUnmapViewOfSection with the address of Ntdll.dll in the remote process and then NtMapViewOfSection to map the patched Ntdll.dll instead, effectively replacing it and setting a hook on ZwClose.
+As soon as the hook is set, the malware calls the FlushInstructionCache API to clean the cache and make sure the code changes take place.
+Finally, it calls NtResumeProcess to continue the normal process execution.
+Figure 4: Dynamic dll replacement
+Figure 5: The patch on ZwClose in the replaced Ntdll.dll
+Memory protection prevents a process from accessing memory that has not been allocated to it.
+Since the patch was set in the file mapping and NtMapViewOfSection was called with PAGE_EXECUTE_READWRITE (0x40) access rights, the replaced Ntdll.dll has all the permissions it needs.
+This eliminates the need to adjust permissions by using the VirtualProtectEx API.
+Figure 6: Replaced Ntdll.dll with PAGE_EXECUTE_READWRITE access rights (prot 0x00000040)
+An interesting feature of this technique is that it prevents debugging the target process with WinDbg.
+Since unmapping of an integral system DLL such as Ntdll.dll is extremely intrusive, WinDbg does not handle it properly and is forcefully detached, discontinuing the debugging process.
+Other debuggers, such as OllyDbg and Immunity, are not affected.
+Figure 7: Windbg attached to the target process is forcefully detached
+As soon as ZwClose is called from any thread in the targeted process, the hook jumps into a shellcode function, which fixes the hook and executes the payload.
+Since the shellcode function does not have any prior information about the loaded DLLs in the target process, it first resolves the addresses of the API functions it needs to use, which is similar to most shellcodes.
+It begins by resolving the image base of Kernel32.dll from a series of undocumented structures within the Thread Environment Block (TEB), accessed by the FS register.
+Then the shellcode resolves the addresses of the exported functions it needs by parsing the Kernel32.dll exports section in the PE header.
+To hide the hardcoded function name strings, they are stored as four-byte (DWORD) chunks that are concatenated when stored as parameters on the stack.
+Figure 8: The hardcoded chunks of the “CreateThread” string, stored on the stack as parameters
+Since many threads can call ZwClose and execute the same code at once, when the function modifies the code by fixing the hook one thread can affect the execution of another and cause unexpected behavior.
+To avoid this problem, the malware must implement a thread safety locking mechanism that allows only a single thread to modify the code at a time, while all other threads are forced to sleep.
+Only after the patch is completed by the first thread are the other threads allowed to resume executing the original ZwClose.
+Figure 9: Resolving the “kernel32!sleep” API function and the thread-safety locking mechanism
+To fix the hook, the shellcode simply copies the original six bytes from the trampoline location to the address of ZwClose in Ntdll.dll.
+It then uses VirtualProtect and FlushInstructionCache again to make sure the page has PAGE_EXECUTE_READWRITE access rights and that the changes took place.
+Figure 10: Fixing the hook
+As soon as the hook is fixed, it sets the lock flag to 2 so the other sleeping threads can resume execution to the fixed ZwClose.
+Finally, it creates a local thread to the entry point of the malware’s copied module.
+Figure 11: Releasing the lock and creating the local thread
+Zberp has kept a low profile over the years in terms of its attack scope by focusing on specific geographies and limiting malware spam.
+It is likely being used for targeted operations or as a second-stage backup malware to increase the infection chances of other malicious codes.
+Although the Zberp process injection technique introduced here is not new per se, it has not been analyzed or exposed fully to date.
+This method should be noted as robust, relatively simple and effective.
+The features described above make this injection tactic easy to miss for security solutions that base their detection on monitoring only certain API calls.
+For this research, we analyzed the following Zberp sample:
+MD5:6D2E29A65A72EF099DB12B722D15FC43
+Read the white paper: Detecting digital identity fraud with IBM Trusteer
+Pavel is a malware researcher for IBM Security's Trusteer's group.

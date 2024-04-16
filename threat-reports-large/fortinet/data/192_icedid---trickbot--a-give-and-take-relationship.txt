@@ -1,0 +1,117 @@
+Operations of the banking trojan IcedID have been active since its discovery in September of 2017.
+In the first half of this year it has also been distributed by other well-known banking Trojan families, such as Emotet and Ursnif.
+Using this kind of scheme, distributed malware families can increase their spread potential.
+There are two possible motives for this behavior.
+The first is that it allows the downloaders, which in this case are also banking Trojans, to perform their own cybercrime operations while also profiting by providing distribution services to their kin.
+In the second, a subscriber to different malware services may simply want to increase the chance of extracting valuable information by bombarding their victims with multiple malware exploits.
+FortiGuard Labs recently caught one of Trickbot’s C2 (Command and Control) servers sending commands to its victims that instructed its bots to download what turned out to be an updated variant of the IcedID banking Trojan.
+A month ago it was the opposite scenario, as SC Magazine reported that IcedID was seen downloading Trickbot.
+So perhaps they decided it was time to return the favor.
+In addition, after a quick glimpse at IcedID’s behavior, it appears that it has been updated so that its methods are now very similar to Trickbot’s.
+In this article we will be limiting our analysis to the overview of the significant changes that we have observed in this new variant.
+We will be following this up with a separate article that provides more details.
+Trickbot the Giver
+The collaboration between Trickbot and IcedID was first observed in FortiGuard Labs’ Kadena Threat Intelligence System (KTIS), where our bot tracking system caught Trickbot sending commands to download a new executable file named “crypt_2_100_1.exe”.
+Trickbot C2 has the following command codes that it can send to infected clients:
+· 1 – Keep Alive
+· 42 – Download Binary and Execute by CreateProcess
+· 62 – Download plugin component and inject to svchost
+· 92 – Delete file
+The command ID “42” comes with an encoded base64 data, which when decoded contains details including the URL where the binary can be downloaded.
+Figure 2 shows the actual Trickbot command that leads to the download of a binary, which turned out to be the IcedID banking Trojan.
+As far as we know, this new version of IcedID is currently not in mass distribution.
+After seeing Trickbot’s command to download this malware two weeks ago, we have not seen the request again, nor have we seen it occur with other distribution methods.
+IcedID the Taker
+File and Directory Name Obfuscation
+Before going to its main payload, this variant of IcedID first decrypts the C&C (command-and-control) configuration that contains the bot ID, affiliate ID, and C2 domain sites.
+Take note that in this part its process has already been injected on svchost.exe.
+The next thing this malware does is generate a unique ID of the infected computer based on its Domain SID information.
+If it fails to retrieve this information, the system date time is used instead.
+This Unique ID is also used as the key to generate strings for directory and file names, event names, shared memory mapping names, etc.
+This is also used as an RC4 key to encrypt downloaded modules and other components that will be stored in the infected computer.
+The installation directories have also been changed to CommonAppData (e.g.
+C:\ProgramData).
+IcedID creates a directory where it drops a copy of itself, and another directory where it drops its downloaded modules and other components.
+The directory and file names are then generated through a custom algorithm using the Unique ID and a hard-coded value as seeds.
+Client-Server Communication
+As with the previous version, all communication between the infected client and the C2 server are secured via HTTPS protocol.
+A notable change in its POST traffic is the addition of the URI parameter “g”, which refers to the request ID.
+In a nutshell, this ID signals what operation should be performed on the C2 side.
+This parameter will initially have a value of “2” to send a new infection report.
+The next figure shows the communication of IcedID when sending a new infection report.
+Here are the updated details of the message being sent to the C&C:
+· g – Command ID
+· c – Client ID (Bot ID + Unique ID)
+· a – Affiliate ID
+· f – Username
+· h – Computer name
+· m – Is admin or Domain Controller
+· j – Cpuid
+Possible Values:
+< 0x04 – not VM
+0x04 to 0x07 – VMWare
+0x08 to 0x0B – XenVM
+0x10 to 0x13 – MicroVM
+0x20 to 0x23 – KVMK
+0x80 to 0x83 – Vbox
+· s – OS Version
+After sending the report, C2 replies with a multi-line message containing an array of functions that will be executed on the infected machine.
+In our observation, each line can consist up to three elements that are separated by a semicolon.
+Let’s take a closer look at one of the C2 replies shown below.
+Similar to Trickbot, this variant of IcedID uses named events to synchronize the execution between the core and its loaded modules.
+Upon injection, these modules are assigned with event names (IDs).
+The first element specifies the ID of the module to execute the function.
+In this case, “0” refers to the core module.
+The second element simply refers to the index of the function to be executed by the module.
+Finally, the third element is an arbitrary parameter to the specified function.
+Downloading and Loading IcedID modules
+This updated variant of IcedID implements a new scheme that is very similar to the one used by Trickbot.
+One notable update is the implementation of binary modules to be injected into different processes.
+In past versions, these modules were embedded in its main executable.
+In this new variant, only the core module that generally controls the malware’s execution is initially present in the victim system.
+Other modules are requested and downloaded from its C2 servers.
+This significantly decreases its initial file size while also increasing its flexibility.
+Looking back at the C2’s reply from the previous section, in the command block “0;1;2” the function with the index “1” is responsible for downloading binary modules from C2 servers.
+During the execution of this function, the function parameter (the third element) refers to the ID of the module to be downloaded.
+The value “2” is then added to “32”, causing the result to be passed as the “g” parameter in a GET method request to the C2.
+Figure 8 below shows examples of the URIs used to download different modules from the malware C2.
+If the request succeeds, the C2 sends back RC4-encrypted data, with the first 8-bytes containing the key for decryption.
+This data contains the requested binary module to be injected into a new svchost.exe process.
+Looking at two dumps of the decrypted modules, we already have some hint as to what the intent is for each one.
+We will be discussing IcedID’s modules and their functionalities in more detail in a follow-up article.
+After decryption and loading the module, it is then encrypted with an RC4 cipher, but this time using the Unique ID as the key.
+The encrypted module is then dropped to its installation directory.
+In this way, even if the modules are somehow discovered, without the generated Unique ID they cannot be easily decrypted.
+This technique sets IcedID apart from Trickbot, which drops its modules without file content encryption or filename obfuscation.
+Conclusion:
+We seem to be observing a significant shift in the cybercrime landscape.
+Gone are the days when banking trojans competed by killing each other’s processes in a victim system.
+Aside from IcedID and Trickbot, there have been several other reports involving collaborations between different banking trojans in terms of distribution.
+This case is particularly special, however, as these two malware families are not only supporting each other through distribution.
+As shown in our analysis, it also appears that they may also be working together in terms of development, as made evident by their behavioral similarities.
+IcedID has evolved in terms of its module loading and delivery.
+It is now very similar to Trickbot, and probably even more evasive given the addition of file content encryption and filename obfuscations.
+As always, FortiGuard Labs (along with our Cyber Threat Alliance (CTA) counterparts) will continue to monitor this malware collaboration.
+Solution:
+1.
+FortiGuard’s Antivirus service detects the sample as W32/IcedID.KAD!tr.pws
+2.
+FortiGuard’s Webfilter service blocks and tags the domain sites as malicious
+3.
+FortiGuard’s IPS signature detects it as Trojan.IcedID
+4.
+FortiSandbox rates the IcedID sample as High Risk
+-= FortiGuardLion Team =-
+IOC:
+Download URL:
+hxxp://whoulatech.com/crypt_2_100_1.exe
+Sample (SHA256):
+d0a248655d40c1312058ecc096a32cab86e77737908f14477e2152015a503fa1 - W32/IcedID.KAD!tr.pws
+C2:
+whoulatech.com
+fillizee.com
+efiging.com
+entabor.com
+aboupir.com
+Check out our latest Quarterly Threat Landscape Report for more details about recent threats.
+Sign up for our weekly FortiGuard intel briefs or for our FortiGuard Threat Intelligence Service.

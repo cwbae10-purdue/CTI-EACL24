@@ -1,0 +1,90 @@
+Recently, Zscaler released a blogpost about Android malware impersonating the mobile version of the very popular game Fortnite.
+The game is currently supported on PC, PlayStation 4, and iOS, but does not offer an Android alternative, making it very attractive for potential malicious actors, as does the young age of a large portion of the audience of this game.
+FortiGuard Labs tracked these samples as well.
+The source code for the app has been around for a while and is present in many third party market places.
+We decided to take a closer look and we noticed a few additional things not included in the original post.
+Zscaler did a great job listing the capabilities of this malware, so we will not describe them at length.
+Here is just a quick summary of the things this malware app can do:
+Access camera and take pictures
+Wipe device data
+Access accounts
+Read keystrokes
+Access file manager
+Record audio
+Send and receive SMS
+Access contacts
+Make calls
+Harvest call logs
+There were, however, a couple of other things happening under the hood.
+Which is why we decided to write down what we found to provide a clearer picture.
+For this analysis, we are going to refer to sample 5e9b28f53c008225f9e4174f4c2db6a03cd7e7fe77438d3f134bbd592e2d99e3
+We noticed that a lot of apks using the same package name “yps.eton.application” were also sporting the same code.
+This did not surprise us, as malicious actors often repackage the same malicious code with different icons and names.
+All of them were also signed with the same certificate.
+A quick check on the this certificate allowed me to identify other apps using the same code but a different package name, such as “com.eset.ems2.gp”, which happens to be ESET’s official android app package name.
+Our chosen sample also tries to impersonate Facebook Messenger by using a similar icon and the name “mssenger”.
+In addition to requesting Accessibility services, this malware is also capable of requesting DEVICE_ADMIN rights.
+The app contains the code for it, but when testing the malware we were surprised to see that it doesn’t actually request these rights during execution.
+Device admin rights can make the application way more resilient by, for example, not allowing the user to delete it – which is why it’s very common to see malware request it at start.
+After taking a more careful look at the code, below, we realized that these actions depended on some configuration strings present in the resources of the apk.
+In the following screenshot you can see the strings used.
+Here is what the various values mean:
+group_properties[0] = disable the Spyware (0 would mean spyware enabled) group_properties[1] = Used to manage WifiLocks group_properties[2] = Used to Manage WakeLocks group_properties[3] = Check if Superuser is present group_properties[4] = Request Device Admin group_properties[5] = Hide original icon group_properties[6] = Request Accessibility services (asked only if Device admin is not requested) group_properties[7] = Set a repeating intent to activate the main functionalities of the spyware
+Based on the figures above we can see that in this case the spyware was designed to hide its icon and have the main functionalities active, and as we experienced during testing, no Device admin was actually requested.
+The ‘group_properties’ string found in the FortNite sample we analyzed was “11001111”, which makes it a much more aggressive version.
+It is relatively unusual to have these strings hardcoded in the app.
+It would make more sense to retrieve these from a Command and Control server, as these hardcoded strings cannot be modified at run time.
+Moreover, because these apps are found on third party marketplaces, this approach also denies them the possibility of receiving updates that could modify them.
+Another thing we noticed was its access to a resource called “R.raw.google”.
+In the Fortnite sample, this resource, called “google.apk”, existed, but was a 0 byte file.
+In our sample (and others we found), however, it was a real apk for the exact Facebook messenger app that the spyware is trying to impersonate.
+Looking at the code, we can see that the spyware checks if the ‘merge_file’ string is 1, and if so,it tries to either install or run ‘google.apk’.
+During installation, the user is prompted with a warning about third party sources not being allowed in case that option has not been previously enabled.
+Instead of just disappearing, or not actually doing anything, however, the malware actually installs the real application alongside itself, allowing the user to load the application he thought he had downloaded.
+This technique allows the malware installation to seem less suspicious in the eyes of the user.
+Here are two screenshots of the installation process.
+After this execution, the fake icon disappears and the new authentic Messenger icon appears.
+But in reality, both applications have actually been installed on the device.
+This is not the first time we have seen this kind of behavior in malware.
+It is actually quite common for malware to be paired with benign software to not raise suspicion.
+However, the malicious software is usually hidden within the legitimate one in order to make analysis and detection by security programs more difficult, and not the other way around.
+This odd behavior, paired with the fact that more than half of the samples we found using this technique were laden with bugs and not functioning, causes us to believe that this may be the work of a somewhat inexperienced author.
+Nonetheless, even though this technique makes the spyware easily detectable by security software, it is actually quite efficient at tricking someone who is not an expert.
+This malware may not be the most advanced Android malware around, but it is still able to steal a large amount of sensitive information from an infected device.
+In addition, while this spyware is currently dropping benign apps to hide itself, it could just as easily drop some other malicious apk.
+Instead, it leverages the popularity of other apps to spread through third party apk markets.
+Over the past month there has been a surge in videos on YouTube advertising fictitious Fortnite apps for Android.
+It is an extremely popular game, and a very large percentage of the users are young kids that can be tricked into downloading anything in order to play the game they love.
+We were able to find dozens of videos encouraging their audience to download the game from third party sites.
+The apks are obviously not legitimate, but the videos have not all been taken down yet, even though they have hundreds of thousands of views.
+Some of them have even been advertised through YouTube’s internal Ad system:
+What is probably happening is that the author of the malware has encouraged, or even paid a lot of people to advertise his product on YouTube.
+And judging from the numbers, it seems like he is succeeding in doing so.
+YouTube has taken down some of these videos, but as soon as they are taken down others pop up.
+This serves as an important reminder to always check carefully what your kids are doing and what apps they are downloading while using a phone or tablet.
+In order to remain safe, be sure to remember to:
+1.
+Uncheck the ‘unknown sources’ installation option.
+It comes as a switch in “Settings”->“Security”->“Unknown sources”.
+If you have a device running Android Oreo, then you will not be able to locate this switch as it has been modified into a permission to be granted every time it is needed.
+2.
+Always check the kinds of permissions that any application requests
+3.
+Use some kind of security software on your device
+4.
+Monitor your children’s use of phones and tablets
+Fortinet users are protected against this malware:
+- Malware is detected as Android/SpyAgent.AHK!tr
+Many thanks to my colleague David Maciejak for the additional analyses/insights.
+-= FortiGuard Lion Team =-
+59aa5297b983f2709a113eab96d1b1e18aa04029b1089ba0b3f23ed68f6659ab
+0277b5385bcc033e01966990d356dc643814828e23c4a51be3bc7d1629545c5c
+d76e07060a3458cc69b5ab167b7cc86a6e872e5a51586c69315e723f916af965
+5e9b28f53c008225f9e4174f4c2db6a03cd7e7fe77438d3f134bbd592e2d99e3
+7aa3ad9fc81681567d7ccbdbfb9203b0b054eabc341e4ec4d3cc0ff34ada9b01
+727106140b81522f31bb534a9535438ec3442d1b0d6f551fe72aca3db999b060
+1e181c65751d1c744d60f54871b93f186f1e1757c3970024340b33303b9e4ffe
+1876f72a33ac8b824e0f5e285d5d1addb4a640c0d7b51096eba05d38c3e2151e
+6930737f31cd792dc0c7e3830ac1e3cf575199527865f0b3dedfd810ad72e75c
+Check out our latest Quarterly Threat Landscape Report for more details about recent threats.
+Sign up for our weekly FortiGuard intel briefs or for our FortiGuard Threat Intelligence Service.

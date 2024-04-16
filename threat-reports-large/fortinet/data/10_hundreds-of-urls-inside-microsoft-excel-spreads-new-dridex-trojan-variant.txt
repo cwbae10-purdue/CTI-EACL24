@@ -1,0 +1,136 @@
+FortiGuard Labs Threat Report
+Affected platforms: Microsoft Windows Impacted parties: Windows Users Impact: Collects sensitive information from victims’ computers Severity level: Critical
+Only days ago, FortiGuard Labs captured a phishing campaign where a malicious Microsoft Excel document delivered as an email attachment was spreading a new variant of Dridex.
+Dridex is a Trojan malware, also known as Bugat and Cridex, that it is capable of stealing a victim’s online banking and system information from an infected machine.
+I deeply analyzed the Excel document, as well as the Dridex payload file downloaded by the malicious Macro in the Excel document.
+In this post, I provide the following information: how the Dridex payload is downloaded by the Macro, how the Dridex payload file starts, what techniques it uses to perform anti-analysis, what information it collects from the victim’s machine, and how the collected information is sent to its C2 server.
+The phishing email included in the detected phishing campaign, in Figure 1.1, is shown after it was opened in my local email client.
+It was disguised as a payment request email with a fake Excel invoice file attached.
+If a victim double-clicks the attached file, Microsoft Office Excel opens it.
+Besides the attachment, there is a hyperlink included in the email body.
+Clicking it downloads the same Excel file.
+As you can see in Figure 1.2, Microsoft Excel displays a yellow bar with a Security Warning message, which means the opened file contains risky active content like a VBA Macro.
+Once the victim hits the “Enable Content” button, however, the risky content is loaded and even executed automatically.
+The Excel document deliberately shows a vague invoice in the file to drive the victim to click the button to get a clearer look at the invoice.
+According to my analysis, this file contains a malicious Macro (VBA code) that can be executed in two ways.
+The first is by clicking the green “All-Open and pay” button to execute the malicious VBA code.
+The other way is when a Layout event occurs, it has a private Formsa_Layout() function to handle such an event that executes the malicious VBA code.
+Such a Layout event occurs many times while the victim is working on the file.
+The VBA code is protected with passwords and special properties.
+Once the user tries to view the VBA project, it pops up a warning message, as shown in Figure 1.3.
+Modifying its binary file can jump over the protection detection.
+Going through the VBA code, I found that it is able to decode and run a piece of dynamic VBA code containing a URL randomly picked from around 290 encoded download URLs.
+These download URLs are encoded and hidden (their font color was set to white, the same as the background color) in the first sheet of the Excel document.
+Figure 1.4 shows a partial list of the encoded URLs, starting from cell number A720, where I have set their font color to black.
+There is a working function called printerSave() that decodes the dynamic VBA code in string, which is then executed in the API function ExecuteExcel4Macro().
+As you can see in Figure 1.5, ExecuteExcel4Macro() receives a string parameter, which is the decoded VBA code, after calling the repl() function.
+For you to better understand the code, I printed out all of the decoded dynamic VBA code in the “Immediate” sub-window.
+If you are familiar with VBA code, you will know that two folders, with the random string names ("J1fljSfQ" and "QVluls2"), are created.
+It then downloads one of the 290 URLs "https://umeskin.com/4i1sgz.pdf" to the local file "bLAZ6Ji."
+in the folder “C:\J1fljSfQ\QVluls2\”.
+This local file’s name is also random.
+The last line starts the downloaded file using the process "regsvr32.exe" with the parameter “-s”.
+The downloaded file is the payload file of Dridex.
+Therefore, the Excel document is used as a Dridex downloader.
+Dridex is executed in the regsvr32.exe process, which is a command-line utility process of Microsoft Windows used for registering and unregistering DLLs and ActiveX controls in the operating system Registry.
+The downloaded Dridex payload file is one of these DLL files.
+Figure 2.1 is a screenshot of the process tree that runs Dridex in “regsvr32.exe”.
+Regsvr32.exe loads the Dridex payload file and calls its DllEntryPoint()function to perform the initialization work.
+It has an encrypted data block of 7B600H in size, with data and code.
+It is decrypted and extracted into a newly-created memory buffer.
+It then jumps to the decrypted code, whose address was loaded in EAX.
+The entire process looks like an unpack procedure.
+Figure 2.2 shows the code context when it is about to jump to the extracted code.
+Executing the code can decrypt and extract a complete PE file, which is the Dridex core module, into memory.
+It then deploys the PE file into an executable space.
+The process is just like how Windows OS loads an EXE file to execute, including but not limited to coping sections onto relative virtual addresses (RVA), loading imported APIs, adjusting relocation data, and so on.
+After all the above work is done, the Entry Point function of the extracted PE is finally called by a piece of ASM code, as shown in Figure 2.3.
+It uses the ASM code “push edx” and “retn”, which is similar to “jmp edx” here.
+After above double unpacking, the Dridex core module is now out.
+Going through the core Dridex, you will find that there are two export functions in it –“DllEntryPoint()” and “DllRegisterServer()”.
+“DllEntryPoint()” is the one being called in Figure 2.3.
+Each DLL file that can be registered via “regsvr32.exe” has to provide an export function named “DllRegisterServer()”.
+MSDN (Microsoft Developer Network) says that this function “Instructs an in-process server to create its registry entries for all classes supported in this server module.”
+Remember that we are still within the function DllEntryPoint() that “regsvr32.exe” originally called.
+In the Entry Point function of the core Dridex, it performs some initialization work.
+When “regsvr32.exe” receives a “1” from this function, it means the initialization work has been finished successfully.
+“regsvr32.exe” then calls the API GetProcAddress() to find out the export function address of “DllRegisterServer()” with its name.
+Figure 2.4 is a screenshot taken when “regsvr32.exe” calls the API GetProcAddress() to obtain the export function “DllRegisterServer()” from the core Dridex.
+The Dridex developer puts all of its malicious work in the function DllRegisterServer(), which can be thought of as the Main() function to other normal processes.
+Many anti-analysis techniques are observed in the core Dridex to prevent its code from being analyzed.
+In this section, I will introduce some of them.
+Most Windows API functions are hidden, and will be retrieved before calling.
+This creates more difficulties for static analysis.
+A function (referred to as GetAPIByHash() in this post) retrieves the API by its hash code.
+Figure 3.1 shows an example of retrieving the API RegEnumKeyW() using GetAPIByHash() that requires two arguments.
+The first is a hash value (68EFDF75h) of the XORed CRC32 code of the module named “ADVAPI32.DLL” (all in uppercase) with the constant 6AECC489h.
+The second is the hash value (0A7373679h) of the XORed CRC32 code of the API named “RegEnumKeyW” with the constant 6AECC489h.
+In this case, the CRC32 code of “RegEnumKeyW” is CDDBF2F0H, which being XORed with the constant 6AECC489h equals 0A7373679h.
+GetAPIByHash() enumerates all of the APIs in a specified module to discover an API by comparing the hash code passed in parameter.
+It returns the API address in EAX when matched.
+Key strings are encrypted throughout the core Dridex.
+Therefore, analysts cannot find its behaviors by simply searching key strings in its memory space.
+Like the hidden API, strings are decrypted before use.
+Figure 3.2 is an example of decrypting Unicode string “POST”.
+Function 813B00 is the decryption function that takes three arguments.
+ECX was the index (0 for “GET”, 1 for “POST”) of the string to decrypt.
+8296D0 points to the buffer of the encrypted string.
+This malware not only has hidden APIs, as explained earlier, but also uses a trick when calling these hidden APIs.
+Referring back to Figure 3.1, it has the ASM code “int 3” at the bottom, which generates an exception with code 80000003 (the BREAKPOINT trap).
+It interrupts execution and waits until the exception is processed.
+Dridex managed to set up an exception handler (a local function like a Try…Catch block) in its Entry Point function.
+To do this, it calls the API RtlAddVectoredExceptionHandler() to add a local function as the exception handler.
+This way, whenever Dridex causes any exceptions, this local function gets called first to handle it.
+While the local exception handler is called, in the argument it is a data _EXCEPTION_RECORD containing the exception information and a context structure with values of all registers at the exception, where the EAX register holds the API being called.
+It then pushes the EAX value into the stack and modifies other registers’ values, such as EIP and ESP.
+At the end of the function, it returns 0FFFFFFFFh (-1), which stands for EXCEPTION_CONTINUE_EXECUTION, telling the system to restore the entire registers with modified values.
+It finally runs the process from the next line of the exception line, where the API will be called from the stack with the argument(s) to it, all of which have been pushed to the stack before the exception occurred.
+This is the entire mechanism of how Dridex uses an exception to call an API.
+Figure 3.3 displays the local exception handler function.
+Other than this, if Dridex is attached by a debugger performing single step tracking it can generate an EXCEPTION_SINGLE_STEP exception (code 80000004).
+The local exception handler can identify this exception and modify the register’s value to have Dridex crash to protect itself from being analyzed and debugged.
+In the DllRegisterServer() function, Dridex collects information from the victim’s machine and then sends the information to its C2 servers.
+In this section, I will explain how Dridex does this.
+First, it obtains the victim’s username and full computer name.
+It then reads out the Windows installation time from the system registry.
+The above values are put together and an MD5 value is made of them.
+The first part (2Fh long) of the packet consists of data length + computer name + the MD5 value.
+It then appends to the packet buffer VolumeInformation data (20h long hex value) obtained by calling the API GetVolumeInformationW().
+The following data is a constant word value “29 3B” and a dword of combined system versions from the API GetVersion().
+“18F8C844h” is the packet ID appended to the packet.
+For more information, you can refer to Figure 4.2.
+Dridex collects all installed software information from victim’s system registry.
+It navigates to subkey “HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall” and enumerates all subkeys, from which it reads out their values DisplayName and DisplayVersion.
+Under “Uninstall” it has all installed software registry information for use at uninstall.
+For example, the read information for 7-Zip is “7-Zip 18.05 (18.05)”, as shown in Figure 4.1.
+The length (a dword in network byte order) and entire collected software information will then be appended to the packet.
+The last part of the packet comes from the victim’s system environment variables.
+To do this, Dridex calls the API GetEnvironmentStringsW(), which returns a pointer to a block of memory that contains the environment variables.
+These are then formatted and appended to the packet after the collected software information.
+Figure 4.2 shows the outline of the packet, where the values underlined in red are the length of data followed in network byte order, and the values split with the blue vertical bar are data fields that I have explained earlier.
+The entire collected data will be encrypted using an RC4 algorithm to protect it during transmission.
+This means the final packet will begin with a dword CRC32 value of the entire cipher text data, and the cipher text will follow.
+This variant of Dridex has four C2 servers that are hardcoded in binary, just as displayed in Figure 4.3.
+Dridex repeats sending out the final packet to them until a response packet with HTTP “200 OK” status is received.
+To do so, it calls these APIs: InternetOpenA(), InternetConnectW(), HttpOpenRequestW(), HttpSendRequestW(), and InternetReadFile(), all of which are retrieved by GetAPIByHash().
+So far, we have not yet received the “200 OK” response from those C2 servers.
+Therefore, we don’t know what further tasks are in store for this Dridex campaign.
+We will keep monitoring it.
+In this post, you have learned how this Dridex variant was being spread via a phishing email, how the malicious Macro in its attached Excel document downloaded the Dridex payload from hundreds of URLs.
+I also explained the loading process of the payload file in regsvr32.exe and what kinds of techniques Dridex uses to protect itself from being analyzed.
+And finally, I demonstrated what information can be collected from the victim’s machine and how it gets them, as well as how the data is processed and sent to its C2 servers.
+Fortinet customers are already protected from this variant of Dridex by FortiGuard’s Web Filtering, AntiVirus, and CDR (content disarm and reconstruction) services, as follows:
+The downloading URLs are rated as "Malicious Websites" by the FortiGuard Web Filtering service.
+The Excel document and downloaded payload file are detected as "VBA/Dridex.TWY!tr" and "W32/Dridex.TWY!tr" and blocked by the FortiGuard AntiVirus service.
+FortiMail users are protected by FortiGuard AntiVirus which detects the original Excel document that is delivering Dridex, and further protected with the CDR service which can be used to neutralize the threat from all macros within Office documents.
+There are 289 URLs in total, see below in Index.
+[Excel Document]
+519312A969094294202A2EBE197BB4C563BA506FFFBD45000F0F9CC2923695CE
+[Dridex Payload]
+3F5AC9186AF10E92859996A4A778CD9C56828A68BE6C8CAA42BC449C745A8BAA
+hxxps://helasverigesamlas.se/ukef26.txt hxxps://helasverigesamlas.se/y0bvsc.pdf hxxps://bobbydhillonfilmdirector.com/ib9tfm.txt hxxps://lescousettesdewouavie.com/p8yljj.txt hxxps://zajacwogrodzie.pl/ge9arn.txt hxxps://lescousettesdewouavie.com/x4mkyo.pdf hxxps://zajacwogrodzie.pl/v7f6l4.pdf hxxps://helasverigesamlas.se/fojik1.rar hxxps://bobbydhillonfilmdirector.com/e6xbxo.pdf hxxps://gds-korea.com/j7sumb.txt hxxps://lescousettesdewouavie.com/legxmb.rar hxxps://bobbydhillonfilmdirector.com/nqd7dd.rar hxxps://zajacwogrodzie.pl/knpyhq.rar hxxps://policelifeline.in/3zqpkh.txt hxxps://limitlessadviser.com/1zg5cb.txt hxxps://plasconpackaging.co.uk/5v3k2o.txt hxxps://helasverigesamlas.se/g8mtcq.rar hxxps://nativated.com/xtfi4j.txt hxxps://lovecryst.com/rkhmzt.txt hxxps://malaysia.hadatha.net/wpn57i.txt hxxps://ayobergerak.id/uvtvur.txt hxxps://vimacorrugados.com.mx/ine9y1.txt hxxps://juiceslam.com/js6tlz.txt hxxps://mengshuzhai.com/bupcqu.rar hxxps://musei.basilicata.beniculturali.it/j3wbla.txt hxxps://lescousettesdewouavie.com/khp6tv.rar hxxps://m.am-clinica.ru/egqrzg.txt hxxps://bobbydhillonfilmdirector.com/yujwl6.rar hxxps://helasverigesamlas.se/5sdkiq.pdf hxxps://satyasumamarketers.in/u7sjvs.txt hxxps://zajacwogrodzie.pl/r0n2ad.rar hxxps://plasconpackaging.co.uk/9srpo9.pdf hxxps://limitlessadviser.com/ccokdx.pdf hxxps://dreamerrs.com/erjawd.txt hxxps://lescousettesdewouavie.com/ocqzrj.pdf hxxps://lovecryst.com/3kjg9x.pdf hxxps://helasverigesamlas.se/goueak.pdf hxxps://bobbydhillonfilmdirector.com/2oyr8b.pdf hxxps://policelifeline.in/uhdyoc.pdf hxxps://malaysia.hadatha.net/beysbq.pdf hxxps://vimacorrugados.com.mx/h3zlwl.pdf hxxps://gds-korea.com/6gczpy.rar hxxps://zajacwogrodzie.pl/qkjtlj.pdf hxxps://limitlessadviser.com/gvcr6i.rar hxxps://musei.basilicata.beniculturali.it/kupdkk.pdf hxxps://ayobergerak.id/xh9gpx.pdf hxxps://lescousettesdewouavie.com/oeyq8b.pdf hxxps://plasconpackaging.co.uk/e6x6d4.rar hxxps://m.am-clinica.ru/1n5pyb.pdf hxxps://bobbydhillonfilmdirector.com/rbcvdl.pdf hxxps://lovecryst.com/85lh50.rar hxxps://helasverigesamlas.se/1pjfdo.rar hxxps://dreamerrs.com/q27mzd.pdf hxxps://zajacwogrodzie.pl/fdsvdi.pdf hxxps://helasverigesamlas.se/ih22hv.pdf hxxps://limitlessadviser.com/d54nnr.rar hxxps://lescousettesdewouavie.com/2k0ncn.rar hxxps://nativated.com/dsczgy.rar hxxps://gds-korea.com/7aumml.rar hxxps://mengshuzhai.com/7aqvw0.pdf hxxps://bobbydhillonfilmdirector.com/pfxahf.rar hxxps://helasverigesamlas.se/n7splg.rar hxxps://lovecryst.com/2y9dum.rar hxxps://musei.basilicata.beniculturali.it/s7bt9w.rar hxxps://plasconpackaging.co.uk/92icz9.rar hxxps://zajacwogrodzie.pl/qpipqx.rar hxxps://ayobergerak.id/arebeo.rar hxxps://lescousettesdewouavie.com/pthz9d.pdf hxxps://helasverigesamlas.se/4qdibt.txt hxxps://limitlessadviser.com/2w2ks3.pdf hxxps://satyasumamarketers.in/wpe2b1.rar hxxps://mengshuzhai.com/bxjotq.pdf hxxps://m.am-clinica.ru/n73qhk.rar hxxps://dreamerrs.com/5hftea.rar hxxps://bobbydhillonfilmdirector.com/h3uqyd.pdf hxxps://lescousettesdewouavie.com/egee1u.rar hxxps://plasconpackaging.co.uk/wqnehw.pdf hxxps://umeskin.com/llqzxb.txt hxxps://lovecryst.com/fefpbd.pdf hxxps://helasverigesamlas.se/o9y2f3.jpg hxxps://gds-korea.com/w2voij.pdf hxxps://zajacwogrodzie.pl/6fcdud.pdf hxxps://nativated.com/lazp9f.rar hxxps://limitlessadviser.com/tfqegv.pdf hxxps://bobbydhillonfilmdirector.com/uuj9jc.rar hxxps://musei.basilicata.beniculturali.it/igmysc.rar hxxps://malaysia.hadatha.net/zrxrqy.rar hxxps://dreamerrs.com/c2igom.rar hxxps://juiceslam.com/kllmw3.rar hxxps://helasverigesamlas.se/bca1ww.rar hxxps://ayobergerak.id/8ikgkh.rar hxxps://lescousettesdewouavie.com/rmlxyi.txt hxxps://satyasumamarketers.in/px8ddp.rar hxxps://plasconpackaging.co.uk/2fz42f.pdf hxxps://m.am-clinica.ru/jgyual.rar hxxps://zajacwogrodzie.pl/jrmuk7.rar hxxps://bobbydhillonfilmdirector.com/dtrwi4.txt hxxps://helasverigesamlas.se/plr6yv.jpg hxxps://mengshuzhai.com/plzi5h.pdf hxxps://gds-korea.com/nmluap.pdf hxxps://nativated.com/lr25xt.pdf hxxps://limitlessadviser.com/3scwyr.rar hxxps://lescousettesdewouavie.com/ckqfw9.jpg hxxps://lovecryst.com/4lzzhj.pdf hxxps://helasverigesamlas.se/ucjv9u.txt hxxps://malaysia.hadatha.net/ajlfui.pdf hxxps://bobbydhillonfilmdirector.com/vgr6ow.jpg hxxps://musei.basilicata.beniculturali.it/y2mbjv.pdf hxxps://zajacwogrodzie.pl/upa3jg.txt hxxps://ayobergerak.id/2td7dc.pdf hxxps://helasverigesamlas.se/khrvax.txt hxxps://mengshuzhai.com/or7xje.rar hxxps://dreamerrs.com/lj00wc.pdf hxxps://lescousettesdewouavie.com/lm88em.rar hxxps://plasconpackaging.co.uk/pypzaj.rar hxxps://m.am-clinica.ru/ksshm8.pdf hxxps://bobbydhillonfilmdirector.com/dzcqk9.rar hxxps://satyasumamarketers.in/3ayj2v.pdf hxxps://helasverigesamlas.se/cmwtcv.txt hxxps://zajacwogrodzie.pl/qbvt7o.jpg hxxps://limitlessadviser.com/gcbomc.pdf hxxps://nativated.com/b4rpqe.pdf hxxps://lovecryst.com/obyxwn.rar hxxps://gds-korea.com/6vvyvy.rar hxxps://mengshuzhai.com/caozwy.txt hxxps://malaysia.hadatha.net/v7hqvb.pdf hxxps://lescousettesdewouavie.com/w25bjz.jpg hxxps://zajacwogrodzie.pl/zdchkl.rar hxxps://bobbydhillonfilmdirector.com/itfonf.jpg hxxps://ayobergerak.id/uq8fpu.pdf hxxps://dreamerrs.com/sao43r.pdf hxxps://musei.basilicata.beniculturali.it/kpesan.pdf hxxps://juiceslam.com/xqhnoc.pdf hxxps://lescousettesdewouavie.com/clhvma.txt hxxps://zajacwogrodzie.pl/n8orwp.jpg hxxps://lovecryst.com/dl3yr3.pdf hxxps://gds-korea.com/czqfpm.pdf hxxps://m.am-clinica.ru/l0qcdb.pdf hxxps://bobbydhillonfilmdirector.com/tqlwgh.txt hxxps://mengshuzhai.com/eqlbuj.jpg hxxps://nativated.com/8chckx.rar hxxps://limitlessadviser.com/9ekq6i.txt hxxps://lescousettesdewouavie.com/petr84.txt hxxps://ayobergerak.id/rnoihf.rar hxxps://lovecryst.com/a96qmc.rar hxxps://zajacwogrodzie.pl/ab9uer.txt hxxps://plasconpackaging.co.uk/t774od.rar hxxps://bobbydhillonfilmdirector.com/namexs.txt hxxps://dreamerrs.com/y1efzu.rar hxxps://mengshuzhai.com/uhrahv.rar hxxps://limitlessadviser.com/thbutn.jpg hxxps://musei.basilicata.beniculturali.it/veoyu1.rar hxxps://m.am-clinica.ru/n9vpzt.rar hxxps://lescousettesdewouavie.com/cyijck.txt hxxps://gds-korea.com/v5teug.rar hxxps://zajacwogrodzie.pl/il6hlg.txt hxxps://umeskin.com/axbky9.rar hxxps://bobbydhillonfilmdirector.com/jejv9v.txt hxxps://americanhomedoctors.com/nvu6yj.txt hxxps://ayobergerak.id/wq9dek.pdf hxxps://mengshuzhai.com/lbdcxn.jpg hxxps://limitlessadviser.com/obawsh.rar hxxps://zajacwogrodzie.pl/bu7wnz.txt hxxps://dreamerrs.com/wlrh5p.pdf hxxps://juiceslam.com/3swseh.pdf hxxps://plasconpackaging.co.uk/quie2e.txt hxxps://m.am-clinica.ru/6t6q7a.pdf hxxps://malaysia.hadatha.net/yyx51c.pdf hxxps://musei.basilicata.beniculturali.it/b7i904.pdf hxxps://nativated.com/5yr9lu.rar hxxps://mengshuzhai.com/yqhge9.txt hxxps://americanhomedoctors.com/clpldk.pdf hxxps://limitlessadviser.com/yi10g3.jpg hxxps://malaysia.hadatha.net/fjbims.rar hxxps://ayobergerak.id/rzpfra.rar hxxps://dreamerrs.com/gai3zz.rar hxxps://juiceslam.com/qrm1n9.rar hxxps://m.am-clinica.ru/5kdjmx.rar hxxps://plasconpackaging.co.uk/z0b0xa.jpg hxxps://umeskin.com/4i1sgz.pdf hxxps://malaysia.hadatha.net/uhcvkd.txt hxxps://americanhomedoctors.com/u3jc7q.rar hxxps://limitlessadviser.com/567z4r.txt hxxps://nativated.com/7ineq7.txt hxxps://mengshuzhai.com/mnljwc.txt hxxps://musei.basilicata.beniculturali.it/fvvqqs.rar hxxps://ayobergerak.id/svhsrj.txt hxxps://satyasumamarketers.in/0m1hcn.pdf hxxps://lovecryst.com/gjtdqm.jpg hxxps://juiceslam.com/va0pr7.txt hxxps://mengshuzhai.com/21s5dk.txt hxxps://americanhomedoctors.com/zhredi.rar hxxps://limitlessadviser.com/felysh.txt hxxps://m.am-clinica.ru/6swgox.txt hxxps://nativated.com/m681f6.jpg hxxps://ayobergerak.id/2lftdo.jpg hxxps://plasconpackaging.co.uk/tqew67.rar hxxps://gds-korea.com/nzsa2r.rar hxxps://malaysia.hadatha.net/xxfmbb.jpg hxxps://musei.basilicata.beniculturali.it/yz193v.txt hxxps://lovecryst.com/hiyv3r.rar hxxps://caissefamilylaw.com/wepe4o.txt hxxps://nativated.com/blkhax.rar hxxps://limitlessadviser.com/awunl8.txt hxxps://gds-korea.com/phxu3e.jpg hxxps://juiceslam.com/sobkyn.jpg hxxps://plasconpackaging.co.uk/4kli3j.jpg hxxps://lovecryst.com/6ztj1b.jpg hxxps://ayobergerak.id/7qxwgf.rar hxxps://malaysia.hadatha.net/5ecazk.rar hxxps://m.am-clinica.ru/wqsxbh.jpg hxxps://caissefamilylaw.com/iufrd8.pdf hxxps://nativated.com/gvni7l.jpg hxxps://lovecryst.com/lmomof.txt hxxps://juiceslam.com/ydvqrh.rar hxxps://musei.basilicata.beniculturali.it/cdu5wf.jpg hxxps://gds-korea.com/rvuyar.txt hxxps://americanhomedoctors.com/s5qy9y.pdf hxxps://m.am-clinica.ru/pounyb.rar hxxps://plasconpackaging.co.uk/hhz1qm.txt hxxps://ayobergerak.id/f0h5ie.jpg hxxps://malaysia.hadatha.net/npegid.jpg hxxps://lovecryst.com/euuufi.txt hxxps://dreamerrs.com/mv9tgh.jpg hxxps://nativated.com/6k6aua.txt hxxps://juiceslam.com/6pyyik.jpg hxxps://americanhomedoctors.com/li1ove.rar hxxps://m.am-clinica.ru/sp9raz.jpg hxxps://caissefamilylaw.com/opwspg.rar hxxps://gds-korea.com/vh0xwe.txt hxxps://lovecryst.com/aqj2h2.txt hxxps://musei.basilicata.beniculturali.it/jdpst4.rar hxxps://malaysia.hadatha.net/smur2v.txt hxxps://ayobergerak.id/zc7ifi.txt hxxps://dreamerrs.com/sdyb3e.rar hxxps://plasconpackaging.co.uk/3y5ef0.txt hxxps://americanhomedoctors.com/kh7b3t.pdf hxxps://nativated.com/33b2s3.txt hxxps://gds-korea.com/9zjyth.txt hxxps://juiceslam.com/djspsy.txt hxxps://m.am-clinica.ru/h82tkk.txt hxxps://ayobergerak.id/2esx1t.txt hxxps://satyasumamarketers.in/cb9met.jpg hxxps://malaysia.hadatha.net/q170rq.txt hxxps://musei.basilicata.beniculturali.it/sl5qbv.jpg hxxps://vimacorrugados.com.mx/gvv8mm.jpg hxxps://plasconpackaging.co.uk/9lgfbu.txt hxxps://dreamerrs.com/qvtlvd.jpg hxxps://americanhomedoctors.com/pgnaq4.rar hxxps://caissefamilylaw.com/haxztp.rar hxxps://nativated.com/41tihp.txt hxxps://m.am-clinica.ru/ecnosl.txt hxxps://ayobergerak.id/nvzzdp.txt hxxps://malaysia.hadatha.net/x6duub.txt hxxps://umeskin.com/hc56ql.rar hxxps://satyasumamarketers.in/xovuli.rar hxxps://dreamerrs.com/0xil1h.txt hxxps://musei.basilicata.beniculturali.it/2ogr8k.txt hxxps://americanhomedoctors.com/eso7ky.txt hxxps://vimacorrugados.com.mx/htbd13.rar hxxps://m.am-clinica.ru/xhqgzb.txt hxxps://juiceslam.com/mioi9l.txt hxxps://satyasumamarketers.in/grnmal.jpg hxxps://dreamerrs.com/rmtmuq.txt hxxps://vimacorrugados.com.mx/ncmdpv.jpg hxxps://satyasumamarketers.in/v5jxaz.txt hxxps://musei.basilicata.beniculturali.it/9exj0e.txt hxxps://dreamerrs.com/f0pzfy.txt hxxps://satyasumamarketers.in/iesytp.txt hxxps://vimacorrugados.com.mx/3qqbjr.txt hxxps://musei.basilicata.beniculturali.it/sbnhzv.txt hxxps://satyasumamarketers.in/yxzbeq.txt hxxps://policelifeline.in/9hapi2.rar hxxps://policelifeline.in/heno5b.jpg hxxps://caissefamilylaw.com/rusjrs.pdf hxxps://umeskin.com/x13p7x.jpg hxxps://caissefamilylaw.com/6alzup.rar hxxps://caissefamilylaw.com/w41fok.txt hxxps://caissefamilylaw.com/iu8gld.jpg hxxps://caissefamilylaw.com/oj9fkj.rar hxxps://caissefamilylaw.com/vrpatn.jpg hxxps://americanhomedoctors.com/mz2gnd.jpg hxxps://caissefamilylaw.com/8ohgs5.txt hxxps://umeskin.com/htiowj.txt hxxps://americanhomedoctors.com/fxqqib.txt hxxps://americanhomedoctors.com/8ejdob.txt hxxps://caissefamilylaw.com/pdrnkg.txt hxxps://americanhomedoctors.com/botpcr.txt hxxps://caissefamilylaw.com/qy2d5q.txt
+https://en.wikipedia.org/wiki/Dridex
+https://docs.microsoft.com/en-us/office/vba/language/reference/user-interface-help/layout-event
+Learn more about FortiGuard Labs threat research and the FortiGuard Security Subscriptions and Services portfolio.
+Sign up for the weekly Threat Brief from FortiGuard Labs.
+Learn more about Fortinet’s free cybersecurity training initiative or about the Fortinet Network Security Expert program, Network Security Academy program, and FortiVet program.

@@ -1,0 +1,76 @@
+IOT devices are notoriously insecure and this claim can be backed up with a laundry list of examples.
+With more devices “needing” to connect to the internet, the possibility of your WiFi enabled toaster getting hacked and tweeting out your credit card number is, amazingly, no longer a joke.
+With that in mind, I began to investigate the Mr. Coffee Coffee Maker with Wemo (WeMo_WW_2.00.11058.PVT-OWRT-Smart) since we had previously bought one for our research lab (and we don’t have many coffee drinkers, so I didn’t feel bad about demolishing it!).
+My hope was to build on previous work done by my colleague Douglas McKee (@fulmetalpackets) and his Wemo Insight smart plug exploit.
+Finding a similar attack vector absent in this product, I explored a unique avenue and was able to find another vulnerability.
+In this post I will explore my methodology and processes in detail.
+All Wemo devices have two ways of communicating with the Wemo App, remotely via the internet or locally directly to the Wemo App.
+Remote connectivity is only present when the remote access setting is enabled, which it is by default.
+To allow the Wemo device to be controlled remotely, the Wemo checks Belkin’s servers periodically for updates.
+This way the Wemo doesn’t need to open any ports on your network.
+However, if you are trying to control your Wemo devices locally, or the remote access setting is disabled, the Wemo app connects directly to the Wemo.
+All my research is based on local device communication with the remote access setting turned off.
+To gain insight on how the coffee maker communicates with its mobile application, I first set up a local network capture on my cellphone using an application called “SSL Capture.” SSL Capture allows the user to capture traffic from mobile applications.
+In this case, I selected the Wemo application.
+With the capture running, I went through the Wemo app and initiated several standard commands to generate network traffic.
+By doing this, I was able to view the communication between the coffee maker and the Wemo application.
+One of the unique characteristics about the app is that the user is able schedule the coffee maker to brew at a specified time.
+I made a few schedules and saved them.
+I began analyzing the network traffic between the phone application and the Mr. Coffee machine.
+All transmissions between the two devices were issued in plaintext, meaning no encryption was used.
+I also noticed that the coffee maker and the mobile app were communicating over a protocol called UPNP (Universal Plug and Play), which has preset actions called “SOAP ACTIONS.” Digging deeper into the network capture from the device, I saw the SOAP action “SetRules.” This included XML content that pertained to the “brew schedule” I had set from the mobile application.
+A Mr. Coffee “brew” being scheduled.
+At this point I was able to see how the Wemo mobile application handled brewing schedules.
+Next, I wanted to see if the coffee maker performed any sort of validation of these schedules so I went back into the mobile application and disabled them all.
+I then copied the data and headers from the network capture and used the Linux Curl command to send the packet back to the coffee maker.
+I got the return header status of “200” which means “OK” in HTTP.
+This indicated there was no validation of the source of brewing schedules; I further verified with the mobile application and the newly scheduled brew appeared.
+Curl command to send a “Brew” schedule to the Wemo Coffee maker.
+Screenshot of the Curl command populating the Wemo app with a brew schedule
+At this point I could change the coffee maker’s brew schedule without ever using the Wemo mobile application.
+To understand how the schedules were stored on the Wemo coffee maker, I decided to physically disassemble it and look at the electronics inside.
+Once disassembled, I saw there was a Wemo module connected to a larger PCB responsible for controlling the functions of the coffee maker.
+I then extracted the Wemo module from the coffee maker.
+This looked almost Identical to the Wemo module that was in the Wemo Insight device.
+I leveraged Doug’s blog on exploitation of the Wemo Insight to replicate the serial identification, firmware extraction, and root password change.
+After I obtained root access via the serial port on the Wemo device, I began to investigate the way in which the Wemo application is initiated from the underlying Linux Operating System.
+While looking through some of the most common Linux files and directories, I noticed something odd in the “crontab” file (used in Linux to execute and schedule commands).
+It appeared the developers decided to take the easy route and used the Linux crontab file to schedule tasks instead of writing their own brew scheduling function.
+The crontab entry was the same as the scheduled brew I sent via the Wemo application (coffee-3) and executed as root.
+This was especially interesting; if I could add some sort of command to execute from the replayed UPNP packet, I could potentially execute my command as root over the network.
+With the firmware dumped, I decided to look at the “rtng_run_rule” executable that was called in the crontab.
+The rtng_run_rule is a Lua script.
+As Lua is a scripting language, it was written in plaintext and not compiled like all the other Wemo executables.
+I followed the flow of execution until I noticed the rule passing parameters to a template for execution.
+At this point, I knew it would be useless trying to inject commands directly into the rule and instead looked at modifying the template performing the execution.
+I went back to the Wemo mobile application network captures and started to dig around again.
+I found the application also sends the templates to the Wemo coffee maker.
+If I could figure out how to modify the template and still have the Wemo think it is valid, I could get arbitrary code execution.
+Template with the correct syntax to pass Wemo’s verification
+There were 3 templates sent over, “do,” “do_if,” and “do_unless.” Each of the templates were Lua scripts and encoded with base64.
+Based on this, I knew it would be trivial to insert my own code; the only remaining challenge would be the MD5 hash included at the top of the template.
+As it turned out, that was hardly an obstacle.
+I created an MD5 hash of the base-64 decoded Lua script and the base64 encoded script separately, simply to see if one or the other matched the hash that was being sent; however, neither matched the MD5 being sent in the template.
+I began to think the developers used some sort of HMAC or clever way to hash the template, which would have made it much harder to upload a malicious template.
+Instead, I was astounded to find out that it was simply the base64 code prepended by the string “begin-base64 644 <template name>” and appended with the string “====.”
+At last I had the ability to upload any template of my choice and have it pass all the Wemo’s verification steps necessary to be used by a scheduled rule.
+I appended a new template called “hack” and added a block of code within the template to download and execute a shell script.
+Within that shell command, I instructed the Mr. Coffee Coffee Maker with Wemo to download a cross-complied version of Netcat so I can get a reverse shell, and also added an entry to “rc.local.” This was done so that if the coffee maker was power cycled, I would have persistent access to the device after reboot, via the Netcat reverse shell.
+The final aspect of this exploit was to use what I learned earlier to schedule a brew with my new “hack” template executing my shell script.
+I took the schedule I was able to replay earlier and modified it to have the “hack” template execute 5 minutes from the time of sending.
+I did have to convert the time value required into the epoch time format.
+Converting time to Epoch time.
+Now, I sat back and waited as the coffee maker (at my specified time delay) connected to my computer, downloaded my shell script, and ran it.
+I verified that I had a reverse shell and that it ran as intended, perfectly.
+This vulnerability does require network access to the same network the coffee maker is on.
+Depending on the complexity of the user’s password, WiFi cracking can be a relatively simple task to accomplish with today’s computing power.
+For example, we demonstrate a quick and easy brute force dictionary attack to crack a semi-complex WPA2 password (10 characters alpha-numeric) in the demo for the Wemo Insight smart plug.
+However, even a slightly more complex password, employing special characters, would exponentially increase the difficulty of a brute force attack.
+We contacted Belkin (who owns Wemo) on November 16th, 2018 and disclosed this issue to them.
+While the vendor did not respond to this report, we were pleasantly surprised to see that the latest firmware update has patched the issue.
+Despite a general lack of communication, we’re delighted to see the results of our research further securing home automation devices.
+This vulnerability shows that not all exploits are overly complicated or require an exceptional amount of effort to pull off, if you know what to look for.
+This vulnerability exists solely because a few poor coding decisions were made in conjunction with a lack of input sanitation and validation.
+Even though this target does not contain sensitive data and is limited to your local network, it doesn’t mean malicious hackers are not targeting IOT devices like this.
+These devices may serve as a sought-after target as they are often overlooked from a security standpoint and can provide a simple and unmonitored foothold into your home or business network.
+It is very important for any consumer, when purchasing new IOT gadgets, to ask themself: “Does this really need to be connected to the internet?” In the case of a coffee maker, I’ll let you be the judge.

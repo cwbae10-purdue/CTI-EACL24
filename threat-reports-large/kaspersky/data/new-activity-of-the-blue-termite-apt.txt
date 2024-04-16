@@ -1,0 +1,103 @@
+In October 2014, Kaspersky Lab started to research “Blue Termite”, an Advanced Persistent Threat (APT) targeting Japan.
+The oldest sample we’ve seen up to now is from November 2013.
+This is not the first time the country has been a victim of an APT.
+However, the attack is different in two respects: unlike other APTs, the main focus of Blue Termite is to attack Japanese organizations; and most of their C2s are located in Japan.
+One of the top targets is the Japan Pension Service, but the list of targeted industries includes government and government agencies, local governments, public interest groups, universities, banks, financial services, energy, communication, heavy industry, chemical, automotive, electrical, news media, information services sector, health care, real estate, food, semiconductor, robotics, construction, insurance, transportation and so on.
+Unfortunately, the attack is still active and the number of victims has been increasing.
+The following graph shows daily access to some of the known C2s:
+You will see a significant increase in the middle of July (marked in orange).
+The spike resulted from new attack methods that the Blue Termite group employed and that Kaspersky Lab detects.
+This article introduces the new methods and technical details on how they work.
+Originally, the main infection vector of the APT was spear-phishing emails.
+Kaspersky Lab has detected a new method of first infection that uses a drive-by-download with a flash exploit (CVE-2015-5119, the one leaked from The Hacking Team incident).
+Several Japanese web sites have been compromised with this method.
+Example:
+The malicious code inserted into the compromised site points to “faq.html”.
+The source code of “faq.html”:
+The “faq.html” loads “movie.swf” which contains the exploit.
+In this way, the malware infects a visitor’s machine when it’s accessed.
+The “movie.swf” header is “ZWS”, a flash file compressed using the Lempel-Ziv-Markov chain-Algorithm (LZMA):
+The file contains a big data section, marked in blue:
+The data includes 12 bytes of header.
+The encoded data begins at 0x5dca (“\x78\x9c\xec\xb7….”) and is compressed using zlib.
+After decompression, an executable file (with an “MZ header”) is found.
+In addition to the above data, the swf file also has a shellcode in ActionScript (AS):
+The function of this shellcode is quite simple: it saves the extracted executable file as “rdws.exe” in the current temp directory, then executes it with WinExec().
+The extracted executable file is “emdivi t17”, a new infection vector used by the attackers.
+We found several kinds of malware that execute as rdws.exe, and emdivi t17 is one of them.
+Kaspersky Lab also found some watering hole attacks, including one on a website belonging to a prominent member of the Japanese government.
+We sent a notification email to the admin and ISP of the affected site but didn’t receive any reply.
+However, the malicious code was removed after about an hour.
+The code below filters out any IPs except for the one belonging to the specific Japanese governmental organization.
+Interestingly, the script includes IP information with the variable name “TEST”.
+We suspect this is the attackers’ testing IP, located in Shanghai.
+Kaspersky Lab detected the tailored malware, “emdivi t20”.
+This malware is basically used after the infection by emdivi t17 that serves as a backdoor.
+Although the versions emdivi t17 and emdivi t20 are from the same emdivi family, the latter is more sophisticated.. For example, let’s look at the backdoor commands they make use of.
+emdivi t17 has 9 commands; on the other hand, some of emdivi t20 samples have up to 40 commands.
+Commands supported by emdivi t17:
+Commands supported by emdivi t20:
+They both store the md5 checksums of backdoor commands.
+When analyzing emdivi t20 samples, we found that it is highly targeted in two respects.
+Firstly, an emdivi t20 sample contains hardcoded internal proxy information, being encrypted at 0x44e79c:
+The decrypted code is “proxy.?????????
+?.co.jp:8080”:
+This trick is not new, but it is not widely used.
+This is because it may reveal its targets, or it is not a generic method and only works in a specific organization.
+However, similar cases have been observed sometimes in other APTs.
+The second aspect is quite interesting.
+The emdivi family stores important data about itself, including C2, API name, strings for anti-analysis, value of mutexes, as well as the md5 checksum of backdoor commands and the internal proxy information.
+They are stored in encrypted form, and are decrypted when necessary.
+Therefore, to analyze an emdivi sample in detail, we need to locate which hex codes are encrypted, and how to decrypt them.
+In the process of decryption, a unique decryption key is required for each sample.
+emdivi t20 has a function to generate a decryption key using Salt1 and Salt2.
+Salt1 is generated from a magic string (suspected to be a version of emdivi) with certain four digits (suspected to be an ID of the C2).
+Example of a magic string:
+Part of the emdivi name (“t17” and “t20”) is taken from this hardcoded magic string.
+Salt2 is generated with a large amount of data that is hardcoded:
+In most cases, the emdivi family generates a decryption key using Salt1 and Salt2.
+In early July 2015, however, Kaspersky Lab found a sample that creates a decryption key with Salt1, Salt2, and Salt3.
+Salt3 is the security identifier (SID) from a compromised PC.
+The flow of decryption key generation (with additional Salt3):
+In other words, the sample works only on its target PCs.
+Without knowing the victim’s SID, the decryption key will not be generated successfully, making it difficult to decrypt important data.
+This means it’s not possible to analyze the malware in detail.
+Fortunately, we were able to analyze those samples.
+We were able to successfully brute-force the decryption keys from several samples without SIDs.
+From early June, when the cyber-attack on the Japan Pension Service started to be reported widely, various Japanese organizations would have started to deploy protection measures.
+However, the attackers from Blue Termite, who it seems kept a close eye on them, started to employ new attack methods and successfully expanded their operation.
+While writing this article, another sample of emdivi t20 has been found.
+It employs AES in addition to SID tricks, making it difficult to decrypt sensitive data.
+In order to fight back against this cyber-espionage, Kaspersky Lab will continue its research.
+Kaspersky products detect emdivi t17, emdivi t20, and the flash exploits using the verdicts below:
+Backdoor.Win32.Emdivi.
+*
+Backdoor.Win64.Agent.
+*
+Exploit.SWF.Agent.
+*
+HEUR:Backdoor.Win32.Generic
+HEUR:Exploit.SWF.Agent.gen
+HEUR:Trojan.Win32.Generic
+Trojan-Downloader.Win32.Agent.
+*
+Trojan-Dropper.Win32.Agent.
+*
+Kaspersky Lab products already successfully mitigates this APT modules.
+Hashes of flash exploit:
+f46019f795bd721262dc69988d7e53bc
+512d93c711f006891cbc124392c2e8d9
+Hashes of emdivi t17:
+b3bc4b5f17fd5f87ec3714c6587f6906
+f8d9af763e64c420ffa6e8930727f779
+Hashes of emdivi t20:
+3b42577bbd602934a728744f242ffe26
+f07216c34689a9104b29bbdcba17325f
+C&Cs:
+hxxp://**********kind.com/
+hxxp://j*******a.org/
+hxxp://j*******b.biz/
+hxxp://www.n*******b.com/
+hxxp://www.s********ei.com/
+More information about the Blue Termite targeted attacks is available to Kaspersky Security Intelligence Services customers.
+Contact: intelreports@kaspersky.com

@@ -1,0 +1,46 @@
+In the first two posts of this series (Part 1 and Part 2), we discussed using IDAPython to make your life as a reverse engineer easier.
+Now let’s look at conditional breakpoints.
+While debugging in IDA Pro, there are often situations where an analyst wishes to break on a specific address, but only when a certain condition occurs.
+An example of this might include breaking on a call to a particular function, but only when a specific argument is passed to it.
+Another instance I personally run into is breaking when a specific library is loaded into my analysis virtual machine.
+Today, I’m going to look at this specific problem and discuss ways to handle it with IDAPython.
+An analyst is often tasked with reversing a DLL.
+In certain instances, the file in question may be loaded by some other executable.
+One solution to tackling this problem would be to ensure that the debugger breaks on each instance of a library loading, and then stops when the DLL or driver finally loads.
+Figure 1 Debug option to break on each library load
+However, this process often proves cumbersome, as it usually requires an analyst to stop and start: resuming execution, determining what the most recent library or driver was loaded and seeing if it’s the correct one.
+It would be much easier for an analyst to simply run a single command, sit back, and wait for the interested file to be loaded.
+For this particular example, we’re working with a file named ‘dd.dll’.
+This particular file is normally injected into another process by an exploit after being extracted during runtime.
+To run this dynamically into IDA Pro, I’m going to load the rundll32.exe executable located in the system32 directory, and supply the dd.dll file as an argument, as seen below.
+The rundll32.exe executable allows a user to load a specified DLL at a given export name.
+For this particular sample, I’m interested in the DLL’s ‘Setting’ exported function.
+Then I supply the following arguments to IDA Pro:
+The next step in the process is to identify the correct place to set a breakpoint after a DLL is loaded by the executable.
+To do so, I initially check the ‘Suspend on library load/unload’ in the debugger setup.
+After suspending on the first instance of a DLL being loaded, I can see that a breakpoint is set just after a call to NtMapViewOfSection.
+Next I use the address of 0x7C91ADFB as a breakpoint.
+In my code, I use calls to add_bpt() and enable_bpt() to create and enable this breakpoint.
+At this stage, I’ve setup a breakpoint at 0x7C91ADFB and the debugger will break every time a DLL is loaded.
+In order to ensure a breakpoint only occurs when ‘dd.dll’ is loaded, we must make use of a conditional breakpoint.
+A conditional breakpoint allows the analyst to use code, either IDC or Python in the latest version, to determine if a breakpoint actually is triggered or not.
+If the return value of the code is True, the breakpoint will trigger.
+Otherwise, it will be ignored.
+To use Python, we first set Python as the default programming language.
+Then, we store our Python code to a variable and use this variable in a call to SetBptCnd(), which sets this code as a condition to our breakpoint.
+After the condition is set, we continue the debugger and wait until a suspend debugger event is witnessed.
+This ends up looking like the following:
+The actual code that is used for the conditional breakpoint is:
+The code will iterate over all of the loaded modules by the executable, and searches to determine if ‘dd.dll’ has been loaded.
+If it has, a debugging message is printed, the initial breakpoint is removed, and a boolean value of True is returned, signifying that the breakpoint should be triggered.
+When executed, we see the following in our IDA Pro output window:
+At this stage, we can set our breakpoint at the desired exported function of ‘Setting’ and run the program until the breakpoint fires.
+In order to automatically perform this step, the following code can be used:
+This code will iterate over the loaded modules, looking for ‘dd.dll’.
+Once identified, we analyze the code that encompasses this DLL.
+We then iterate through this code looking for names, searching for the name of ‘Setting’.
+Once identified, we set a breakpoint on this address, continue the debugger, and wait for the breakpoint to be triggered.
+When executed, we see our breakpoint has fired as expected on the desired address.
+While this technique of setting a conditional breakpoint might seem trivial, it can save an analyst an enormous amount of time overall.
+A small snippet of code can replace a manual process of continually breaking on a single location over and over until the desired criteria is met.
+Once again, we’ve seen the power of using IDAPython while reverse engineering a sample, which has saved us valuable time and energy.

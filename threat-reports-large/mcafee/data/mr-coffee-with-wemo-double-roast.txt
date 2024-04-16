@@ -1,0 +1,60 @@
+McAfee Advanced Threat Research recently released a blog detailing a vulnerability in the Mr. Coffee Coffee Maker with WeMo.
+Please refer to the earlier blog to catch up with the processes and techniques I used to investigate and ultimately compromise this smart coffee maker.
+While researching the device, there was always one attack vector that I had wanted to revisit.
+It was during the writing of that blog that I was finally able to circle back to it.
+As it turns out, my intuition was accurate; the second vulnerability I found was much simpler and still allowed me to gain root access to the target.
+The first vulnerability modified the “template” section of the brew schedule rule file, which a is unique file that is sent when the user schedules a brew in advance.
+I also needed to modify the template itself, sent from the WeMo App directly to the coffee maker.
+During that research I noticed that many of the other fields could be impactful but did not investigate them as thoroughly as the template field.
+Figure 1: Brew schedule rule
+When the user schedules a brew, an individual rule is added to the Mr. Coffee root crontab.
+The crontab entry uses the rule’s “id” field to make sure the correct rule is executed at the desired time.
+Figure 2: Root crontab entry
+Crontab allows for basic scheduling features from the OS level.
+The user provides both the command to execute as well as timing details down to the minute, as shown in Figure 3.
+Figure 3: Crontab syntax
+During the initial research, I started to fuzz the rule id field; however, because every rule name that I placed in the malicious schedule was always prepended by the “/sbin/rtng_run_rule”, I could not get anything abnormal to happen.
+I also noticed that a lot of characters that could be useful for command injection were being filtered.
+The following is a list of characters sanitized or filtered on input.
+At this point I moved on and ended up finding the template vulnerability as laid out in the previous blog.
+A few months after disclosing to Belkin, I revisited the steps to achieve this template abuse feature, in preparation for a public disclosure blog.
+Having the ability to write arbitrary code directly into the root’s crontab is enticing, so I began looking into it again.
+I needed to find a way to terminate the “rtng_run_rule” and add my own commands to the crontab file by modifying the “id” field.
+The “rtng_run_rule” file is a shell script that directly calls a Lua script named “rtng_run_rule.lua”.
+I noticed that I could send the double pipe “||” character but the “rtng_run_rule” wrapper script would never return a failing return code.
+Next, I looked at the how the wrapper script is handling command line arguments as shown below.
+Figure 4: rtng_run_rule wrapper script
+At this point I created a new rule: “-f|| touch test”.
+The “-f” is not a parsed argument, meaning it will take the “Bad option” case, causing the “rtng_run_rule” wrapper script to return “-1”.
+With the wrapper script returning a failing return code, the “||” (or) statement is initiated, which executes “touch test” and creates an empty file named “test”.
+Since I still had serial access (I explain in detail in my previous blog how I achieved this) I was able to log in to the coffee maker and find where the “test” file was located.
+I found it in root’s home directory.
+Being able to write arbitrary files and execute commands without the “/” character is still somewhat limiting, as most file paths and web URLs will need forward slashes.
+I needed to find a way to execute commands that had “/” characters in them.
+I decided to do this by downloading a file from a webserver I control and executing it in Ash to bypass file path sanitization characters.
+Figure 5: Commands allowing for execution of filtered characters.
+Let me break this down.
+The “-f” as indicated before will cause the wrapper script to execute the “||” command.
+Then the “wget” command will initiate a download from my web server, located at IP address “172.16.127.31.” The “-q” will force wget to only print what it receives, and the “-O -“ tells wget to print to STDOUT instead of a file.
+Finally, the “| ash” command grabs all the output from STDOUT and executes it as Linux shell commands.
+This way I can set up a server that simply returns a file containing necessary Linux commands and host it on my local machine.
+When I send the rule with the above command injection it will reach out to my local server and execute everything as root.
+The technique of piping wget into Ash also bypasses all the character filtering so I can now execute any command I want.
+Belkin did patch the original template vulnerability and released new firmware.
+The vulnerability explained in this blog was found on the new firmware and, as of today, we have not heard of any plans for a patch.
+This vulnerability was disclosed to Belkin on February 25th, 2019.
+In accordance with our vulnerability disclosure policy, we are releasing details of this flaw today in hopes of alerting consumers of the device of the ongoing security findings.
+While this bug is also within the Mr. Coffee with WeMo’s scheduling function, it is much easier for an attacker to leverage since it does not require any modifications to templates or rehashing of code changes.The following demo video shows how this vulnerability can be used to compromise other devices on the network, including a fully patched Windows 10 PC.
+Devices such as the Mr. Coffee Coffee Maker with WeMo serve as a good reminder of the pros and cons to “smart” IoT.
+While advances in automation and technology offer exciting new capabilities, they should be weighed against the potential security concerns.
+In a home setting, consumers should set up these types of devices on a segmented network, isolated from sensitive network traffic and more critical devices.
+They should implement a strong password policy to make network access more challenging and apply patches or updates for all networked devices whenever available.
+Enterprises should restrict access to devices such as these in corporate environments or, at a minimum, provide a policy for oversight and management.
+They should be treated just the same as any other asset on the network, as IoT devices are often unmonitored pivot points into more critical network infrastructure.
+Network scanning and vulnerability assessments should be performed, in conjunction with a rigorous patching cycle for known issues.
+While the vendor has not provided a CVE for this vulnerability, we calculated a CVSS score of 9.1 out of 10.
+This score would categorize this as a critical vulnerability.Finally, as consumers of these products, we need to ask more of the vendors and manufacturers.
+A better understanding of secure coding and vulnerability assessment is critical, before products go to market.
+Vendors who implement a vulnerability reporting program and respond quickly can gain consumers’ trust and ensure product reputation is undamaged.
+One goal of the McAfee Advanced Threat Research team is to identify and illuminate a broad spectrum of threats in today’s complex and constantly evolving landscape.
+Through analysis and responsible disclosure, we aim to guide product manufacturers toward a more comprehensive security posture.

@@ -1,0 +1,115 @@
+Mobile banking is a convenient way for users to complete transactions anywhere and anytime.
+KPMG predicts that the mobile banking user base will grow to 1.8 billion by 2019.
+And, when money is involved, the bad guys always find creative ways to steal it.
+Now they are increasingly doing so on the Android platform in the same way they did for online banking on PCs.
+In the beginning of December, the Association of Banks in Singapore (ABS) released an advisory on mobile banking malware infecting Android smartphones and the substantial rise in infection volumes.
+In our interest to take an in-depth look at this emerging threat, we found an Android malware that targets mobile banking apps.
+Installation and Arrival
+This mobile malware arrives on a smartphone as an app dropped by other mobile malware - a standalone app or an update downloaded unknowingly by users when visiting malicious sites.
+So far the samples we encountered disguised themselves as a fake Adobe Flash Player named, not surprisingly, "Abode Flash Player".
+It has more permissions than it should compared to the original application (which hasn't been officially supported on Android for some time).
+The most notable permission asks for the player to be activated as a device administrator giving it elevated privileges, which are commonly manipulated by malware.
+Essentially, with the device administrator privilege, the malware disables the Android Force Stop and Uninstall function for its own process making it harder to remove.
+Figure 1: Installation, Permissions and Device Administrators
+Figure 2: Malware asked for device administrator privilege
+Deep dive into the malware code
+Trojan’s configuration data
+Upon installation as shown below, the malware retrieves and decodes its configuration data, a Base64 encoded string, and splits it with “@” delimiter so it can be stored as an array.
+Figure 3: Code to Retrieve its Configuration File
+The decoded Base64 configuration data shows its C&C server, targeted applications, list of banks, and C&C commands, among other things.
+Figure 4: Base 64 Decoded Configuration Data
+Whenever the malware needs specific data, it can be retrieved through its hardcoded integer value which serves as an index to the array.
+As seen in code below, integer values 14 and 46 point to the index of the configuration array with values “type” and “device info”.
+We can also see that the C&C server replied with a code value which serves as an identifier of the infected device.
+Figure 5: Configuration Indexing
+The malware supports a number of banks by creating its own fake banking window to phish out important banking information from the infected user like credit card number, billing address, banking username, PIN, and passwords.
+The following are the targeted countries supported Banks based on our sample:
+Australia
+New Zealand
+Austria
+Hong Kong
+Singapore
+Spain
+Next we looked into the main operations central to the malware's function, particularly in carrying out data-stealing activities.
+Phishing Techniques
+Whenever the victim opens the legit mobile banking or payment app, the malware opens its fake banking window simultaneously to overlay the user interface making it hard to notice that a new window was opened.
+The fake one is fairly similar to the original.
+However, the main difference occurs when a user taps on other functions like the edit and menu function on top of the screen.
+In this case, nothing happens because the functionality was not implemented by the fake user interface.Tapping on the multitask view, two login page can be revealed - one for the legit app and the second for the fake Abode Flash Player.
+Figure 6: Multitask View
+Other examples of the fake phishing windows that look sufficiently similar to the original one are shown below:
+Figure 7: Credit Card Phishing Window
+Collecting login credentials
+As explained earlier, the most important step is to persuade the victims to enter their login credentials on the fraudulent page.
+Hence the first thing the malware needs to do is determine which customized mobile banking login page should be delivered to the user interface.
+The malware regularly checks the running application on the device and retrieves the application’s associated package name via the getPackageName() API call and compares the return value from the API to a list of targeted application names found from its configuration.
+Figure 8: Get the package name of the running process
+If a matching application was found running on the infected device, the responsible receiver class will show the corresponding fraudulent login page accordingly.
+Figure 9: Flow in displaying fraudulent login page
+The following video illustrates a real-world attack scenario of stealing a victim's Internet banking credentials when their phone has been infected.
+Hopefully this can give you an idea how the actual attack could be carried out:
+Video 1: Application phishing scenario
+As you can see from the video, the victim will be presented with the fake login screen upon the legitimate application is triggered.
+Soon you can also see that the victim will be asked to enter the login credentials twice.
+After this has been done, the victim will be redirected to the legitimate application GUI.
+Whereas the intercepted login credentials, obtained from the fake login screen, will be sent to the C&C server by the malware:
+Figure 10: Sending off stolen credentials
+Intercepting one-time password (OTP)
+Banks frequently send customers notifications via text messages with one-time passwords (OTP) to supplement the user ID and password.
+That extra layer of security information requires the attacker to hack to the targeted victim’s device to have access to the OTP.
+The malware achieves this by registering itself as one of the incoming SMS broadcast receivers to receive messages broadcasted by the Android operating system.
+In theory, this can be conveniently done with the appropriate permission allowed by the victims during the app installation; this permission is also explicitly specified in the manifest file.
+Hence all incoming SMS can be easily hijacked and the content of the SMS will be sent to the attacker’s C&C server.
+Figure 11: Intercept all the incoming SMS messages
+Persistence mechanism
+We are also interested to understand how the persistence mechanism works.
+With the help of the manifest file, we can quickly pinpoint the entry point of the persistence mechanisms - android.intent.action.BOOT_COMPLETED and android.intent.action.ACTION_EXTERNAL_APPLICATIONS_AVAILABLE.
+However, analyzing the decompiled source code is not a trivial task because the Java code is obfuscated.
+The good news is that the obfuscated code can be easily identified as there are mere junk codes mixed with the actual code that is of interest.
+After cleaning up the junk code in the ServiceStarter code, we realized that the malware appears to intentionally avoid targeting Russian users.
+This could indicate that this piece of malware originated from Russia.
+Figure 12: Manifest file showing the entry point class name of the persistence mechanism
+Figure 13: Receiver functions that will be invoked when the phone is starting up
+Figure 14: Service creation handler function called from receiver functions
+As shown from Figure 15, we can see that the malware drops the hidden file in the sdcard with a hardcoded filename.
+Figure 15: Raw configuration data saved as file in SD card
+Conclusion
+Most malicious Android apps do not install automatically--they require user intervention to infect the device.
+Keeping your device safe requires you to be vigilant in downloading apps and updates.
+It is advisable to do some research on the app and download only from trusted sources like the Google Play Store.
+That being said, malware authors will keep improving their phishing techniques for victims to be lured to install a malicious app or update that appears legitimate.
+Installing security software greatly improves the protection of personal data and online transactions on a device.
+Fortinet proactively detects this mobile malware as Android/Acecard.B!tr, while the C&C traffic will be detected as Android.Acecard.
+-=Fortiguard Lion Team=-
+Related MD5 hash:
+76745ce873b151cfd7260e182cbfd404
+702770d70c7aab793ffd6a107fd08dad
+eeab2f9137c59efdfae5db2b2b93f178
+d08b2f4d851b2505f4aed31ecfa53c2e
+a7e28a9efc8a6acb02d65829a6d773c2
+List of C&C Servers:
+http://37.235.48.177:34580
+http://46.108.39.12:34580
+http://5.196.243.6:34580
+http://31.148.219.192:34580
+STIX xml report is located on the following link:
+https://github.com/fortiguard-lion/AceCard/blob/master/acecard.xml
+Malware removal steps
+Step 1: Put your phone or tablet into Safe mode.
+Press and hold your phone’s power button until Android prompts you to turn off your phone.
+Next, tap and hold the Power off until your phone asks you the option to reboot to safe mode then tap OK.
+If this doesn’t work for your device then you should Google “How to put (model name) into safe mode”.
+Figure 16: Boot your device into safe mode
+Step 2: At safe mode, open the settings menu and scroll all the way to Security and tap on it.
+Look for an option named Device Administrators and tap on it.
+It should now show the list of administrators of the device.
+To remove it as Device Administrator, tap on the malicious app Abode Flash Player and tap on Deactivate.
+Figure 17: Find suspicious application registered as device admin
+Step 3: Go to settings menu again and scroll down to Apps; make sure to view on the Downloaded tab.
+Tap on the malicious app Abode Flash Player to open the App info, then tap Uninstall and OK.
+Figure 18: Uninstall the banking Trojan
+Step 4: Reboot the phone in normal mode.
+Indicators of compromise
+By using third-party application like File Manager or adb from Android SDK tools, you can browse to your external storage such as an SD card if it is available, and look for the hidden file (with a dot ‘.’ in-front of the file name).
+For every hidden file, look for the filename similar to one show in Figure 15
+Check any unknown or fishy applications from the device administrator list as shown in Figure 17

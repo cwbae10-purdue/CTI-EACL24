@@ -1,0 +1,56 @@
+Through DTI Intelligence analysis, We have been observing Locky malware rise to fame recently.
+Locky is ransomware that is aggressively distributed via downloaders attached in spam emails, and it may have surpassed the Dridex banking trojan in popularity.
+In previous campaigns, the ransomware was downloaded by a macro-based downloader or a JavaScript downloader.
+However, in April 2016, FireEye Labs observed a new development in the way this ransomware is downloaded onto a compromised system.
+In a recent Locky spam campaign using ‘Photos’ as a theme (Figure 1), we saw a new binary being downloaded by the JavaScript found in the attached ZIP file, as seen in Figure 2.
+This JavaScript downloader reached out to “hxxp://mrsweeter.ru/87h78rf33g”.
+Figure 1: Recent Locky spam campaign
+Figure 2.
+Locky spam ZIP attachment containing JS downloader
+The new downloader has a custom network communication protocol.
+In our tests, it only downloads the Locky ransomware as its payload.
+This malware seems to be in its early development stage as it only supports commands for download and execution of an executable and deletion of itself.
+This means the malware can also update its own binary, leading to the possiblity of more commands being supported.
+The malware communicates with its command and control (C2) over HTTP using a custom encryption algorithm.
+The first beacon to the hard-coded C2 asks for a task to be executed by the malware.
+An example of the unencrypted message sent to C2 is formatted, as shown in Figure 3.
+Figure 3.
+Raw message format
+ID1 – derived from HDD Volume Serial Number ID2 – 2222222222 (hard-coded value) ID3 – random generated number ID4 – derived from bit-masked OS version and system architecture time – UTC time the message is created type – getjob (hard-coded value)
+This beacon string is encrypted with the custom algorithm shown in Figure 4 before sending it to its C2.
+The custom encryption is composed of XOR and bit shifts.
+Figure 4.
+Custom string encryption
+After encryption, an ‘A’ (0x41h) character is appended to the encrypted message.
+The beacon request is delivered via an HTTP POST request.
+In this sample, it reaches out to hxxp://raprockacademy.com/api, as shown in Figure 5.
+Figure 5.
+Encrypted HTTP POST request and C2 response
+The C2 server responds with an encrypted message that tells the malware what action to take.
+Decrypting the C2 response is possible with the Python code shown in Figure 6.
+Figure 6.
+C2 reponse decryptor
+The decrypted message shows a URL to download a binary and, in this case, an updated Locky binary.
+Figure 7.
+Decrypted message
+The ‘command’ field can be ‘UPDATE’, ‘NOTASKS’, and ‘DEL’ – ‘NOTASKS’ being no further instructions from the C2 for the moment and ‘DEL’ for deletion of the downloader from the victim machine through drop and execute of a batch file.
+Further inspection of this malware reveals several small DLL files embedded in the binary.
+These DLLs may be used depending on the OS environment of the compromised system.
+The following is a brief description of the embedded DLLs:
+1.
+32-bit and 64-bit DLLs, which executes a file via the CreateProcessW API.
+2.
+64-bit binary used for bypassing User Account Control (UAC).
+Debug symbol path is not stripped in the binary: D:\Test\Build\AvoidUAC\x64\Release\Test64Shellcode.pdb 3.
+64-bit binary which can elevate privileges for a specified process.
+The Locky sample downloaded (MD5: 357c162a35c3623d1a1791c18e9f56e7) has updated its DGA.
+The DGA has the following differences:
+TLD is not randomly generated and is picked from the following list: ["ru", "info", "biz", "click", "su", "work", "pl", "org", "pw", "xyz"]
+Constant 0x2709a354 is no longer used
+Introduced new constants: 0x1bf5, 0xd8efffff, 0x65cad
+We provide an update to the shared DGA code from our previous blog, as shown in Figure 8.
+Figure 8.
+Updated Locky Domain Generation Algorithm
+The actors behind the Locky ransomware are actively seeking new ways to successfully install their malware on victim computers.
+That may be one of the reasons this new downloader is used and being introduced to the current distribution framework.
+This downloader can be a new platform for installing other malware (“Pay-per-Install”).

@@ -1,0 +1,76 @@
+Breaking Threat Research from FortiGuard Labs
+In June 2019, Fortinet's FortiGuard Labs discovered and reported 7 vulnerabilities in Live Chat, the Next Generation Live Help and Live Support System from LiveZilla that connects organizations to their website visitors.
+LiveZilla is a software company trusted by Fortune 500 companies and top universities, and has over 15,000 users.
+The vulnerabilities were found in versions 8.0.1.0 and below.
+At the time of the writing of this advisory, these issues have been fixed and those fixes have been published by the vendor.
+FortiGuard Labs appreciates the vendor’s quick response and timely fixes.
+The following is a summary of the discovered vulnerabilities:
+LiveZilla Server before 8.0.1.1 is vulnerable to SQL Injection in server.php via the p_ext_rse parameter
+LiveZilla Server before 8.0.1.1 is vulnerable to XSS in mobile/index.php via the Accept-Language HTTP header
+LiveZilla Server before 8.0.1.1 is vulnerable to Denial of Service (memory consumption) in knowledgebase.php via a large integer value of the depth parameter
+LiveZilla Server before 8.0.1.2 is vulnerable to XSS in the chat.php Create Ticket Action
+LiveZilla Server before 8.0.1.1 is vulnerable to SQL Injection in functions.internal.build.inc.php via the parameter p_dt_s_d.
+LiveZilla Server before 8.0.1.1 is vulnerable to XSS in the ticket.php Subject
+LiveZilla Server before 8.0.1.1 is vulnerable to CSV Injection in the Export Function
+When auditing the source code file in \livezilla\server.php, line 76 indicates that the server.php will import intern.php file.
+When we look into \livezilla\intern.php, we see that it calls Listen() method of class OperatorRequest at Line 29.
+This class is derived from \livezilla\_lib\objects.internal.inc.php.
+As we can see in Figure 3, it then calls Build() method in same class at line 302:
+Digging into Build(), line 405, we can see that it calls buildResources():
+As you can see at line 59 in Figure 5, it executes the following SQL query:
+In Listing 1, the parameter is sanitized using the DBManager::RealEscape filter function to avoid SQL injection.
+But unfortunately, there is a lack of quote sanitization here, which makes the filter function become ineffective.
+Hence, we just need to input the value without any quotes into the SQL query in order to exploit the vulnerability.
+$_POST[POST_INTERN_XMLCLIP_RESOURCES_END_TIME]) is defined in \livezilla\_definitions\definitions.protocol.inc.php in line 51:
+So the final payload of the exploit looks like:
+True case:
+p_ext_rse=(select*from(select(if((substr(123,1,1) like 1),2,sleep(5))))a)
+False case
+p_ext_rse=(select*from(select(if((substr(123,1,1) like 2),2,sleep(5))))a)
+Figure 7 shows the patch from the vendor:
+When analyzing the source code file in \livezilla\mobile\index.php, at line 84, we realize that the server echoes $language without proper sanitization, which can result in a Cross-Site Scripting (XSS) vulnerability.
+The value of $language is taken from $_SERVER['HTTP_ACCEPT_LANGUAGE'], which is the Accept-Language field in HTTP request header.
+By using a Man-in-The-Middle (MiTM) attack method, really, or any extension to modify the header, the attacker can run javascript code within the user’s browser.
+Figure 10 shows the patch from the vendor:
+This Denial of Service was spotted in \livezilla\knowledgebase.php, at lines 39 to 51:
+The conditional structure at line 39 determines if the Search Engine Optimization (SEO)-friendly URL option is turned on.
+If it is, it looks for GET parameter depth and then performs a loop based action on its value, which can be controlled by attackers.
+In other words, if we provide input, say “?depth=2200000”, it will loop 2200000 times.
+As we can see in Figure 11, line 46-47, the loop instructions will concatenate the string “../” into the $path variable that could result in memory overflow.
+Figure 12 shows the patch from the vendor:
+This is another XSS vulnerability that can be triggered from Guest Live Chat window.
+The attacker can input XSS payload in the Live Chat (Figure 13).
+From the admin panel, if the admin creates a ticket on the chat window, that chat content is rendered into a new chat ticket pop-up without sanitization, which could result in arbitrary javascript execution within the user’s browser.
+Upon verifying the patches from the vendor, we realized that the patch in version 8.0.1.1 was incomplete.
+We informed the developer and provided them with the additional payload that can bypass the patch in version 8.0.1.1, and they provided a complete fix for this issue.
+Figure 15 shows the patch in version 8.0.1.2 from the vendor:
+Another SQL injection vulnerability can be found in \livezilla\_lib\functions.internal.build.inc.php, at lines 596 to 605.
+The server determines if the parameter p_dt_s_d is sent via a POST HTTP request, and then inputs its value directly to the query without sanitizing the value.
+This leads to a classic SQL injection.
+Figure 17 and 18 show the patch from the vendor:
+Another XSS was spotted in \livezilla\ticket.php, at line 109.
+For this vulnerability, the server replaced the $subject holder with our crafted contents without proper sanitization.
+Figure 21 shows the patch from the vendor:
+We also spotted the Comma Separated Value (CSV) file injection in the source code file \livezilla\_lib\functions.internal.man.inc.php.
+From lines 736 to 744 in Figure 22 we can see that the server attempts to export data in CSV format without sanitization.
+Figure 23 shows the patch from the vendor:
+June 22, 2019: Fortinet reported the vulnerabilities FG-VD-19-082 and FG-VD-19-084 to LiveZilla
+June 24, 2019: Fortinet reported the vulnerability FG-VD-19-086
+June 25, 2019: Fortinet reported the vulnerabilities FG-VD-19-083, FG-VD-19-085, FG-VD-19-087, and FG-VD-19-088 to LiveZilla
+June 26, 2019: LiveZilla confirmed the vulnerabilities, released patches for those vulnerabilities
+June 27, 2019: Fortinet confirmed the fix for those vulnerabilities, except for FG-VD-19-085
+July 01, 2019: LiveZilla confirmed the fix for FG-VD-19-085 is not correct, waiting for version 8.0.1.2
+July 23, 2019: LiveZilla released 8.0.1.2 patch the vulnerability, Fortinet confirmed the fix for FG-VD-19-085
+In conclusion, the root cause for all of these vulnerabilities is the lack of trivial input sanitization.
+As a result, FortiGuard Labs found multiple vulnerabilities in the LiveZilla Live Chat software, ranging from medium to critical severity.
+It is crucial for Live Chat users to apply the patches provided by LiveZilla immediately, as some of the vulnerabilities – for instance, those that enable the SQL Injection – would allow attackers to extract confidential information from the database upon successful exploitation.
+Note: If you are interested in this kind of assessment for your software or application, FortiGuard Labs provides a tailor-made vulnerability assessment and penetration testing service that can help you improve the security of your products.
+Visit https://fortiguard.com/services/pentesting for more information.
+-= FortiGuard Lion Team =-
+FortiGuard Labs released the following IPS signatures, which cover all the vulnerabilities mentioned:
+LiveZilla.LiveZillaServer.buildResources.SQL.Injection LiveZilla.LiveZillaServer.Language.XSS LiveZilla.LiveZillaServer.knowledgebase.DoS LiveZilla.LiveZillaServer.CreateTicket.XSS LiveZilla.LiveZillaServer.demandTickets.SQL.Injection LiveZilla.LiveZillaServer.TicketSubject.XSS LiveZilla.LiveZillaServer.Export.CSV.Injection
+CVSS 3.0 metrics:
+FG-VD-19-082: Base Score 9.8, Critical severity FG-VD-19-083: Base Score 6.1, Medium severity FG-VD-19-084: Base Score 5.9, Medium severity FG-VD-19-085: Base Score 6.1, Medium severity FG-VD-19-086: Base Score 9.8, Critical severity FG-VD-19-087: Base Score 6.1, Medium severity FG-VD-19-088: Base Score 8.8, High severity
+Learn more about FortiGuard Labs and the FortiGuard Security Services portfolio.
+Sign up for our weekly FortiGuard Threat Brief.
+Read about the FortiGuard Security Rating Service, which provides security audits and best practices.

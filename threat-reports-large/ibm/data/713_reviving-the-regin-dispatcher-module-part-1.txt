@@ -1,0 +1,57 @@
+This post is the first of my two-part series on Regin’s Stage 4 (32-bit) dispatcher module.
+In this first part, I will detail the steps I used to rebuild the Regin dispatcher module from an image dump, resulting in a malware sample suitable for both static and dynamic analysis.
+If you are a security researcher or reverse engineer tasked with looking at Regin, you have undoubtedly read the reports from Kaspersky and Symantec.
+When looking for a sample, you have also likely come across the Regin sample archive available from The Intercept.
+Looking at the samples 4139149552b0322f2c5c993abccc0f0d1b38db4476189a9f9901ac0d57a656be and e420d0cf7a7983f78f5a15e6cb460e93c7603683ae6c41b27bf7f2fa34b2d935 from the archive, one can find the string disp.dll at offset 0x52148:
+Interestingly, this means the samples are likely the Stage 4 (32-bit) dispatcher module, which was labeled as the “brain that runs the entire platform.” Since it was a major component of the Regin platform, I deemed it was important to further reverse engineer the samples to understand their functionality.
+However, I quickly encountered a problem.
+The samples appeared to be just image dumps, and to further complicate the issue, the header was zeroed-out and the first DWORD appeared to be marked with 0xFEDCBAFE:
+This means that when loading the files in a disassembler, you will see a bunch of unresolved application programming interface (API) calls, such as the following:
+Because API calls are one of the major hints a reverse engineer uses to identify the purpose of a particular code, important parts of the code will not be easily found and understood.
+Additionally, because the samples are not loadable, it would be difficult to perform dynamic analysis, which could further help in understanding the sample.
+Therefore, for faster and more accurate analysis, the samples would need to be repaired first.
+Using 4139149552b0322f2c5c993abccc0f0d1b38db4476189a9f9901ac0d57a656be as the sample, I first copied a header from another dynamic-link library (DLL) — the 32-bit KERNEL32.DLL in my case — and then patched it to the sample.
+Then, using a PE editor tool (CFF Explorer), I modified several parts of the PE header.
+Section Headers: The section headers are modified as follows:
+Since the sample is an image dump, the sections are already expanded.
+Therefore, the raw addresses correspond to virtual addresses.
+Determining where the section starts and ends can be assessed by looking for section paddings (chunks of zeroes) between blocks of code or data.
+One example is the following section padding, which appears between the .text and the .data section:
+Also, finding which section is .text., data., reloc, etc.
+will involve looking at the initial disassembling of the image dump and inspecting the image dump to determine whether a block of data follows a particular PE data structure.
+Data Directories > Import Directory and Export Directory: All data directory entries are zeroed-out, and the Import Directory and Export Directory entries are set as follows:
+Looking for the Import Directory (import table) involves finding an array of IMAGE_IMPORT_DESCRIPTOR structures.
+Since IMAGE_IMPORT_DESCRIPTOR.Name (+0x0C) points to an imported DLL name, we can use the system DLL names stored in the image dump as hints to where we can find the IMAGE_IMPORT_DESCRIPTORs.
+For example, the string KERNEL32.dll found at 0x518C4 what appears to be a valid hint, since the surrounding strings are API names:
+Then, to find the IMAGE_IMPORT_DESCRIPTOR structure for KERNEL32.DLL, we will search for references to 0x518C4, which is eventually found at 0x514FC:
+This means 0x514F0 (0x514FC-0x0C) is the start of the IMAGE_IMPORT_DESCRIPTOR structure for KERNEL32.DLL.
+Next, the pieces of data surrounding 0x514F0 are inspected to assess the start (0x514DC) and the size (0x8C) of the IMAGE_IMPORT_DESCRIPTOR array (including the last NULL entry).
+These values are then set as the values of the Import Directory entry.
+Similarly, looking for the Export Directory (export table) involves finding the IMAGE_EXPORT_DIRECTORY structure.
+Since IMAGE_EXPORT_DIRECTORY.Name (+0x0C) points to the sample’s original DLL name, we can use the disp.dll string as a hint for finding the IMAGE_EXPORT_DIRECTORY.
+Searching for references to the disp.dll address (0x52148) results with 0x5211C:
+This means the 0x52110 (0x5211C-0x0C) is possibly the start of the IMAGE_EXPORT_DIRECTORY.
+Therefore, it is set as the value of the Export Directory RVA.
+The Export Directory size is then assessed to be 0x41 (up to the NULL terminator of the DLL name).
+ImageBase: Based on the initial disassembly of the image dump, the pointers in the code suggest the image was loaded at 0x10000000.
+SectionAlignment and FileAlignment: The sections’ virtual address and raw address are all aligned to 0x1000.
+AddressOfEntryPoint: The entry point is temporarily zeroed-out to prevent the disassembler from marking and processing an incorrect entry point.
+After the above modifications are made and the repaired sample is loaded in a disassembler, the imports and exports are properly listed:
+Furthermore, important parts of the code are easily found and are more understandable because the API calls are resolved:
+Now that we have a clean disassembly, the next task would be to continue the repair of the sample so that it can be loaded under a debugger.
+At a minimum, we need to additionally set the following PE header fields:
+AddressOfEntryPoint: Identifying the entry point can be an involved task because different compilers and settings will use a different entry point stub.
+However, for a DLL entry point, we generally can look for a function that is not referenced by any other function that accepts three arguments and uses the APIs called by known DLL entry point stubs as hints.
+In a Visual Studio installation, the source codes of DLL entry point stubs are available in crtdll.c and dllcrt0.c).
+In this particular case, the cross-references to MSVCRT!_initterm(), a function called by a DLL entry point stub, eventually led me to the unreferenced function starting at RVA 0x0000AFCC.
+When analyzed, the function proved to be a valid DLL entry point:
+SizeOfImage: The size of the image (0x68000) can be computed by adding the highest section’s virtual address with its virtual size and then aligning it to SectionAlignment.
+SizeOfHeaders: The size of the headers is set to 0x1000, which is the total size of the headers aligned with FileAlignment.
+Data Directories > Relocation Directory: Since the sample has relocations, relocation information would need to be set.
+For this, the Relocation Directory RVA is pointed to the .reloc section (0x65000), and the size (0x281C) can be assessed via inspection and then DWORD-aligned.
+After all the above additional modifications, a simple program can be written to load the repaired Regin dispatcher module via LoadLibrary() to verify whether the modifications are correct.
+Once the dispatcher module is loaded, the exported functions can then be resolved (by ordinal value) and then traced under a debugger.
+Below is the entry of the exported disp!Ordinal1() under a debugger:
+In addition to becoming comfortable using reverse engineering tools for malware analysis, investing the first chunk of the analysis time on repairing and rebuilding damaged or nonworking modules provides a sample for proper static and dynamic analysis, which will pay great dividends in terms of increased speed and accuracy.
+As I discovered through my continued analysis of the Regin dispatcher module, reviving it was just the first small step toward understanding its complex functionality.
+In my next blog post, I will share the interesting findings from my research of the Regin dispatcher module’s internals.

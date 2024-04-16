@@ -1,0 +1,64 @@
+Image parsing and rendering are basic features of any modern operating system (OS).
+Image parsing is an easily accessible attack surface, and a vulnerability that may lead to remote code execution or information disclosure in such a feature is valuable to attackers.
+In this multi-part blog series, I am reviewing Windows OS’ built-in image parsers and related file formats: specifically looking at creating a harness, hunting for corpus and fuzzing to find vulnerabilities.
+In part one of this series I am looking at color profiles—not an image format itself, but something which is regularly embedded within images.
+Wikipedia provides a more-than-adequate description of ICC color profiles: "In color management, an ICC profile is a set of data that characterizes a color input or output device, or a color space, according to standards promulgated by the International Color Consortium (ICC).
+Profiles describe the color attributes of a particular device or viewing requirement by defining a mapping between the device source or target color space and a profile connection space (PCS).
+This PCS is either CIELAB (L*a*b*) or CIEXYZ.
+Mappings may be specified using tables, to which interpolation is applied, or through a series of parameters for transformations.”
+In simpler terms, an ICC color profile is a binary file that gets embedded into images and parsed whenever ICC supported software processes the images.
+The ICC specification is around 100 pages and should be easy to skim through.
+Reading through specifications gives a better understanding of the file format, different types of color profiles, and math behind the color transformation.
+Furthermore, understanding of its file format internals provides us with information that can be used to optimize fuzzing, select a good corpus, and prepare fuzzing dictionaries.
+Windows started to ship Image Color Management (ICM) version 1.0 on Windows 95, and version 2.0 beginning with Windows 98 onwards.
+A major overhaul to Windows Color System (WCS) 1.0 happened in Windows Vista onwards.
+While ICC color profiles are binary files, WCS color profiles use XML as its file format.
+In this blog post, I am going to concentrate on ICC color profiles.
+Microsoft has a list of supported Windows APIs.
+Looking into some of the obviously named APIs, such as OpenColorProfile, we can see that it is implemented in MSCMS.dll.
+This DLL is a generic entry point and supports loading of Microsoft’s Color Management Module (CMM) and third-party CMMs such as Adobe’s CMM.
+Microsoft’s CMM—the ICM—can be found as ICM32.dll in system32 directory.
+Figure 1: ICM32
+Windows’ CMM was written by a third-party during the Windows 95 era and still ships more or less with the same code (with security fixes over the decades).
+Seeing such an old module gives me some hope of finding a new vulnerability.
+But this is also a small module that may have gone through multiple rounds of review and fuzzing: both by internal product security teams and by external researchers, reducing my hopes to a certain degree.
+Looking for any recent vulnerabilities in ICM32, we can see multiple bugs from 2017-2018 by Project Zero and ZDI researchers, but then relative silence from 2019 onwards.
+Although there is a list of ICM APIs in MSDN, we need to find an API sequence used by Windows for any ICC related operations.
+One of the ways to find our API sequence is to search a disassembly of Windows DLLs and EXEs in hope to find the color profile APIs being used.
+Another approach is to find a harness for open source Color Management Systems such as Little CMS (LCMS).
+Both of these end up pointing to very small set of APIs with functionality to open color profiles and create color transformations.
+Given this information, a simple initial harness was written:
+Listing 1: Harness
+Sites offering multiple color profiles can be found all over the internet.
+One of the other main source of color profile is images; many image files contain a color profile but require some programming/tools to dump their color profile to stand-alone files.
+Simply skimming through the specification, we can also make sure the corpus contains at least one sample from all of the seven different color profiles.
+This along with the code coverage information can be used to prepare the first set of corpuses for fuzzing.
+A dictionary, which helps the fuzzer to find additional code paths, can be prepared by combing through specifications and creating a list of unique tag names and values.
+One can also find dictionaries from open source fuzzing attempts on LCMS, etc.
+I used a 16-core machine to fuzz the harness with my first set of corpuses.
+Code coverage information from MSCMS.dll and ICM32.dll was used as feedback for my fuzzer.
+Crashes started to appear within a couple of days.
+The following crash happens in icm32!SwapShortOffset while trying to read out of bounds:
+Listing 2: Crash info
+icm32!SwapShortOffset reads unsigned short values, bswaps them and stores at the same location, giving this crash both read and write primitives.
+Listing 3: SwapShortOffset decompiled
+The crashing function icm32!SwapShortOffset doesn’t immediately point to the root cause of the bug.
+For that, we need to go one call up to icm32!InitNamedColorProfileData.
+Listing 4: InitNamedColorProfileData decompiled
+Here the code tries to read the ‘ncl2’ tag/element and get the size of the stream from file.
+A buffer is allocated and the same call is made once again to read the complete content of the element ‘ncl2’.
+This buffer is parsed to find the count and number of device coordinates, and the values are verified by making sure read/write ends up with in the buffer size.
+The vulnerability here is that the offset (0x51) used for verification is smaller than the offset (0x54) used to advance the buffer pointer.
+This error provides a 3 byte out of bound read and write.
+The fix for this was pretty straight forward—change the verification offset to 0x54, which is how Microsoft fixed this bug.
+While looking at the previous vulnerability, one can see a pattern of using the CMGetPartialProfileElement function for reading the size, allocation, and reading content.
+This sort of pattern can introduce bugs such as unconstrained size or integer overflow while adding an offset to the size, etc.
+I decided to pursue this function and see if such instances are present within ICM32.dll.
+I found three instances which had an unchecked offset access: CMConvIndexToNameProfile, CMConvNameToIndexProfile and CMGetNamedProfileInfoProfile.
+All of these functions are accessible through exported and documented MSCMS functions: ConvertIndexToColorName, CMConvertColorNameToIndex, and GetNamedProfileInfo respectively.
+Listing 5: CMConvIndexToNameProfile decompiled
+The bug discovered in CMConvIndexToNameProfile and the other two functions is that there is no minimum length check for ‘ncl2’ elements and offsets 12 and 16 are directly accessed for both read and write—providing out of bound read/write to allocBuffer, if the size of allocBuffer is smaller than 12.
+Microsoft decided not to immediately fix these three vulnerabilities due to the fact that none of the Windows binaries use these functions.
+Independently, we did not find any Windows or third-party software using these APIs.
+In part one of this blog series, we looked into color profiles, wrote a harness, hunted for corpus and successfully found multiple vulnerabilities.
+Stay tuned for part two, where we will be looking at a relatively less talked about vulnerability class: uninitialized memory.

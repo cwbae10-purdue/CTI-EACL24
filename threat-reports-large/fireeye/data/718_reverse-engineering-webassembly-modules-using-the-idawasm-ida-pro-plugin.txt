@@ -1,0 +1,54 @@
+This post continues the FireEye Labs Advanced Reverse Engineering (FLARE) script series.
+Here, we introduce idawasm, an IDA Pro plugin that provides a loader and processor modules for WebAssembly modules.
+idawasm works on all operating systems supported by IDA Pro, and can be obtained from the idawasm GitHub project.
+You may have competed in this year’s Flare-On challenge and reached the fifth level only to discover a new file format: a WebAssembly (“wasm”) module.
+In order to proceed, you had to reverse engineer the key check logic contained in this binary file for the WebAssembly stack-based virtual machine.
+But first, you probably learned a bit about wasm:
+While WebAssembly is a fairly new standard, some tools for analysis already exist:
+The WebAssembly Binary Toolkit provides the command line tool wasm2wat that translates a .wasm file into the human-readable .wat format, as well as a basic decompiler called wasm2c.
+The web-based WebAssembly Studio IDE exposes features for extracting .wasm files into interesting formats, including translations to x86-64 produced by the Firefox SpiderMonkey JIT engine.
+Radare2 can disassemble instructions, though it doesn’t reconstruct control flow graphs just yet.
+Unfortunately, few of these tools are interactive or familiar to us.
+If we could analyze .wasm files in IDA Pro, like we do with .exe and .so files, then we might be better prepared for malware distributed as WebAssembly.
+The idawasm IDA Pro plugin is a loader and processor module that enables analysts to review WebAssembly modules using a familiar interface.
+Let’s take a peek at some of its major features.
+Once you’ve installed idawasm, you can load .wasm files into IDA Pro.
+The "Load a new file" dialog will indicate when the loader module recognizes a WebAssembly module.
+Currently, the plugin supports the MVP (version 1) release of WebAssembly, as shown in Figure 1.
+Figure 1: IDA Pro loading a WebAssembly module
+The processor module then gets to work and reconstructs the control flow, which enables IDA’s graph mode.
+This makes it easy to identify high-level control constructs, such as if statements and while loops.
+On the FLARE team, we’ve found that when a C program is compiled for WebAssembly, the resulting control flow graphs mirror those of an x86 compilation target.
+Although the specific instructions differ, our techniques and intuitions we’ve learned for x86 apply to wasm too.
+Note how easy it is to identify the pair of if statements in Figure 2.
+Figure 2: Control flow graph of WebAssembly instructions
+In addition to control flow, the processor module parses and renders function names and types using metadata embedded with .wasm files.
+It also extracts cross-references to global variables, enabling an analyst to “List cross-references” and find code that manipulates interesting values.
+Of course, all of the elements that idawasm parses can be interactively renamed and commented.
+Therefore, you can record knowledge about WebAssembly malware samples in .idb files and share them with other analysts.
+For example, Figure 3 shows how an analyst has renamed local variables and added comments that explain how the function frame is manipulated during a function prologue.
+Figure 3: Annotated WebAssembly in IDA Pro
+When the idawasm processor detects that a WebAssembly module was compiled by LLVM, it enables enhanced analysis.
+LLVM uses primitives provided by the WebAssembly specification to implement a function frame stack in global memory used for mutable function-local variables.
+In the function prologue, the first few instructions allocate the frame on this global stack, while the epilogue cleans it up prior to return.
+idawasm automatically finds references to the global frame stack pointer and reconstructs the frame layout of each function.
+Using this information, the processor updates IDA’s stack frame structures and marks immediate constants as offsets into these structures.
+This means that many more instruction operands are actually symbols that can be commented and renamed, as shown in Figure 4.
+Figure 4: Automated reconstruction of function frame
+By convention, WebAssembly compilers emit instructions that reference variables in Single Static Assignment (SSA) form.
+This is a benefit to browser engines, because code that is already in SSA form is easier to import into analysis systems such as optimizers and JIT engines.
+Using SSA form is why even the simplest functions have dozens or hundreds of local variables.
+But as a human, SSA form is tedious to analyze since we must trace operations across many separate local variables.
+To help us out, idawasm includes a WebAssembly emulator that can track instructions at a symbolic level.
+This enables us to collapse a sequence of simple-but-related instructions into a single complex expression.
+To use it, we select a region of instructions within a single basic block and run the wasm_emu.py script.
+The script emulates the instructions, simplifies their effects, and renders the effect to global variables, locals, memory, and the stack.
+Figure 5 shows how a function’s prologue is simplified to a single global variable update:
+Figure 5: wasm_emu.py show effects of function frame allocation
+When there are many arithmetic operations, wasm_emu.py often simplifies into a single meaningful expression.
+For example, Figure 6 shows how 32 instructions boil down into a single XOR across two input bytes:
+Figure 6: wasm_emu.py simplifying many instructions to a complex instruction
+idawasm is an IDA Pro plugin that enables support for WebAssembly modules via a loader and processor.
+This lets analysts use a familiar interface to reverse engineer .wasm files and share their work with others.
+The wasm_emu.py script can also be helpful for understanding the effects of long streams of WebAssembly instructions.
+Now dealing with this new file format and architecture won’t be as scary, so head on over to the idawasm GitHub project to start using it!

@@ -1,0 +1,67 @@
+Security researchers have identified more and more Mac OS malware attacks over the past two years.
+In June 2017, Rommel Joven and Wayne Chin Yick Low from Fortinet’s Fortiguard Labs found and analyzed a new ransomware targeted at Mac OS.
+Most malware for Mac OS was developed in the Objective-C programming language.
+A good introduction to reverse engineering Cocoa applications can be found here.
+In that blog post, the researcher released an IDAPython script named objc2_xrefs_helper.py that can only be executed in IDA Pro.
+As you know, IDA Pro is the gold standard for disassemblers.
+However, IDA Pro Licenses start at $1409 (you can refer to that here).
+So this can be extremely cost prohibitive for many people.
+One good alternative is the Hopper Disassembler for Mac OS.
+A Hopper Disassembler v4 Personal License is only $99.00.
+I rewrote the IDAPython script named objc2_xrefs_helper.py and developed a python script for the Hopper Disassembler.
+It’s similar to the IDAPython script.
+I named this Hopper python script objc2_xrefs_helper_hopper.py.
+In this blog I will share this tool.
+Some background regarding Objective-C can be found from here.
+As mentioned in that article, the function call is implemented by the message sending mechanism in Objective-C.
+Unfortunately, this message sending mechanism causes problems when trying to follow cross-references for selectors in Hopper Disassembler.
+Before rewriting the python script for Hopper, therefore, we need to walk through the codes in IDAPython script objc2_xrefs_helper.py and understand all the details.
+It’s important that we figure out the data structures of Class in low level in Objective-C, as well as the relationship between these data structures.
+I have included a figure showing the relationship between these related data structures, as shown below.
+Figure 1.
+The relationship between these related data structures of class in Objective-C
+To verify the functionality of objc2_xrefs_helper_hopper.py, I wrote a simple Cocoa application.
+The demo application can be downloaded from here.
+We load the executable mach-o file of the demo application into Hopper Disassembler, as shown below.
+Figure 2.
+Loading the demo application’s executable file into Hopper Disassembler
+The following is the python script objc2_xrefs_helper_hopper.py.
+The script first walks through all classes in Section __objc_data.
+The following is the Section __objc_data of the executable file in Hopper.
+We can see that this section stores the data of all classes, which includes all classes defined by the user and their meta-class.
+Hopper is able to identify the data structure of the class in Objective-C.
+Figure 3.
+The Section __objc_data in Hopper
+The field __objc_class_TestXrefs1_data is the type of struct _class_ro_t.
+It’s located at Section __objc_const.
+The following is the data structure of __objc_class_TestXrefs1_data.
+Figure 4.
+The data structure of __objc_class_TestXrefs1_data in Hopper
+The field __objc_class_TestXrefs1_method is a type of struct _method_list_t.
+It’s also located at Section __objc_const.
+The following is the data structure of __objc_class_TestXrefs1_method in Hopper.
+Figure 5.
+The data structure of __objc_class_TestXrefs1_method in Hopper
+In the python script objc2_xrefs_helper_hopper.py, the function getRefPtr first gets the selector field in struct __objc_method.
+It then gets all references to the selector.
+Next, it checks which section these references are from.
+If there is more than one reference from Section __objc_const, that means that more than one class define a method with the same name.
+For this case, the script ignores it.
+The following screenshot is the references to the selector 0x100001ef8 in Hopper.
+Figure 6.
+The references to the selector 0x100001ef8 in Hopper
+We can see that both class TestXref1 and class TestXref2 define the same method “setName”, so this script ignores handling it.
+Next, we take look at how to get the reference to the selector “extra” in Section __objc_selrefs.
+In the demo application, only class TestXref1 defines the method “extra.”
+Figure 7.
+The reference to the selector “extra” in Section __objc_selrefs
+Next, it gets the references to 0x100002608 in Section __objc__selrefs, and adds a new reference between each of these references and the implementation method.
+The following is a screenshot of obtaining the references to the method “extra” in the class TestXref1 before executing the python script.
+Figure 8.
+The references to the method extra in the class TestXref1 before executing the python script
+And after executing the python script, we can see that a new cross-reference is added into the implementation of method.
+Figure 9.
+A new cross-reference is added into the implementation of method after executing script
+Using this script allows you to easily transition from a selector’s implementation to its references, and vice-versa.
+Have fun with reverse engineering Objective-C on Mac OS!
+Sign up for weekly Fortinet FortiGuard Labs Threat Intelligence Briefs and stay on top of the newest emerging threats.

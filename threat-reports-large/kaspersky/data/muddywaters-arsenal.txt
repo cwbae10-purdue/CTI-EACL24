@@ -1,0 +1,109 @@
+MuddyWater is an APT with a focus on governmental and telco targets in the Middle East (Iraq, Saudi Arabia, Bahrain, Jordan, Turkey and Lebanon) and also a few other countries in nearby regions (Azerbaijan, Pakistan and Afghanistan).
+MuddyWater first surfaced in 2017 and has been active continuously, targeting a large number of organizations.
+First stage infections and graphical decoys have been described by multiple sources, including in our previous research: “MuddyWater expands operations“
+Nevertheless, comprehensive details of what happens after the initial infection by MuddyWater have not previously been made publicly available.
+MuddyWater attackers deploy a variety of tools and techniques, mostly developed by the group itself in Python, C# and PowerShell, to implement their attacks and complete their victim infiltration and data exfiltration.
+Examples of such tools include multiple download/execute tools and RATs in C# and Python, SSH Python script, multiple Python tools for extraction of credentials, history and more.
+This report details a collection of tools used by this threat actor on its targets after initial infection.
+It also details deceptive techniques used to divert investigations once attack tools have been deployed inside victim systems (such as Chinese strings, Russian strings and impersonation of the “RXR Saudi Arabia” hacking group).
+The investigation revealed additional OPSEC mistakes by the attackers, but we are not detailing those here due to ongoing law enforcement investigations.
+During our research on MuddyWater campaigns, we were able to identify a number of tools and scripts used by this actor, providing a good understanding of this actor’s abilities.
+Most of the tools used are custom developed, while others are based on more generic and publicly available ones.
+The list includes:
+Nihay – C# Download-and-Execute tool
+LisfonService – C# RAT
+Client.py – Python RAT
+Client-win.py – SSH Python script
+Rc.py/Rc.exe – Basic Python RAT
+VBScript and VBA files
+Third-party scripts (Muddy, Losi Boomber, Slaver reverse tunnel…)
+Second stage PowerShell scripts
+Most of these tools are scripts written in Python or PowerShell.
+We noticed that MuddyWater compiles various offensive Python scripts into executables for portability, using Py2Exe and PyInstaller for this task.
+This includes Python scripts such as “CrackMapExec”, “shootback” and “Lazagne”.
+We have also noticed the use of “PS2EXE” to convert PowerShell scripts into executables, with the original PowerShell code embedded as a Base64-encoded string.
+In other cases, we have noticed a preference for using PowerShell Reflective DLL injection to deploy Metasploit Stageless Meterpreters.
+They use both 32-Bit and 64-Bit versions.
+Usually, the Stageless Meterpreter has the “Ext_server_stdapi.x64.dll”, “Ext_server_extapi.x64.dll”, and “Ext_server_espia.x64.dll” extensions.
+The tool called “Nihay” (as per its Pdb) is a basic “Download-and-Execute” Trojan written in C#.
+It downloads a PowerShell one-liner from a hardcoded URL (for instance, https://beepaste.io/view/raw/pPCMo1) and passes it to “cmd.exe /c”.
+LisfonService is a RAT very similar to the PowerShell RAT that we have analyzed in our previous publication.
+LisfonService randomly chooses a URL from a huge array of hardcoded Proxy URLs hiding the real C2 server.
+It collects some basic information about its victim: user name, domain or workgroup name, machine name, machine internal IP address, OS version, OS build and public IP address.
+Once the victim is successfully registered, a victim id is assigned to the victim and is used later to request commands from the C2, such as executing PowerShell code or causing a Blue Screen.
+Inside the decompiled C# code, there is a referenced variable named “str1” that is not actually used.
+We believe that it is a remnant from an earlier testing phase and it might be the IP address of the C2 behind the Proxy URLs.
+When reaching this URL it returns a funny chat that attackers may have left for researchers:
+Client.Py is a Python 3.6 RAT that we believe was developed by MuddyWater.
+It is deployed on victim computers as a compiled Python executable using PyInstaller.
+The execution flow is as follows:
+Collects basic information about the victim machine: machine name, OS name, OS version, and user name.
+It then sends the information to the C2 server at 192.64.86.174:8980.
+It supports multiple commands, some of them executed by creating a temporary .VBS file and running it by calling cscript.exe.
+The supported commands allow the RAT to implements basic keylogger functionality, stealing passwords saved in Chrome, killing task manager, remote command execution and displaying an alert message for the victim in a message box.
+This PyInstaller-compiled Python script makes use of the Python paramiko plugin to create a SSH connection to its C2.
+Connects to a hard-coded IP address for the C2 (for instance 104.237.233.38) on port 8085, sending the string “ip”.
+It should then receive a list of IPs in the form of “ip1::ip2::ip3”.
+The script then connects to the same hard-coded IP address ,sending the string “pw” so that it gets a list of passwords from the C2 in the form of “pw1\npw2\npw3”.
+Finally, it tries a list of hard-coded user names (such as ‘cisco’, ‘root’, ‘admin’) with each of the passwords received on each of the IPs obtained in step 1 to authenticate SSH sessions.
+This UPX-packed executable is a PyInstaller-compiled Python script (rc.py).
+The script receives the IP address of its C2 as parameters, connecting to it on the hard-coded port 9095.
+This basic RAT supports a few commands on victims’ systems to collect passwords and remote command execution.
+“kill” to self-terminate.
+“cd” for changing current directory.
+“dopass” for grabbing credentials from Chrome, IE, Mozilla, Opera and Outlook.
+“info” extracts basic info about victim machine: OS name/version, 32-bit/64-bit, processor name, user name, machine name, machine FQDN, internal IP address, MAC address, and public IP address.
+“shell” receives files from C2 and saves them in “C:\ProgramData”‘
+“exec” spawns a new process as determined by C2.
+Otherwise, cmd.exe /c is called to spawn a new process as determined by C2.
+Output is always sent to C2.
+One of MuddyWater’s preferred infection vectors is the use of weaponized macro-enabled Office 97-2003 Word documents.
+Its malicious VBA code includes a Base64-encoded payload.
+The first file is a malicious VBScript and the second file is the Base64-encoded payload.
+The VBS calls powershell.exe to Base64-decode the second file and invoke it, as follows:
+This same technique has been seen implemented in several VBScripts seen in the wild, also suspected of being used by this actor.
+We detected MuddyWater including several “Lazagne“-based scripts in its arsenal.
+The first one, called Losi Boomber, is used to extract credentials and history from browsers and Outlook.
+Losi Boomber command line arguments
+Muddy is another Lazagne-based script extracting credentials from mail clients and browsers.
+Muddy command line arguments
+In this case, it supports the following browsers: Chrome, IE, Mozilla, Opera and Coccoc.
+In terms of mail clients, it only supports Outlook.
+Some embedded imported Python modules
+Slaver.py is a compiled Python script taken from “ShootBack”, used for establishing a reverse tcp tunnel.
+Slaver command line arguments
+Cr.exe is a compiled Python script based on CrackMapExec, used for credential gathering and lateral code execution.
+Mmap.py (called “MapTools” by MuddyWaters) is also based on CrackMapExec and used for the same purpose.
+Embedded Imported Python Modules
+We detected MuddyWater making extensive use of PowerShell scripts for different purposes:
+Case1: To fetch next stage, which is also a PowerShell script:
+Besides disabling PowerShell Script Block Logging and bypassing AMSI (Anti-Malware Scan Interface), it fetches its next stage using the “InternetExplorer.Application” COM object to retrieve HTML content from http://104.237.233.40:7070/admin/get.php.
+Interestingly it uses a hard-coded CloudFlare HTTP header value: “CF-RAY: oBLKRK3GNKZcBGZeWl+s4ExIaQ0=”
+Case 2: We also identified MuddyWater’s PowerShell prototype RAT implementing functions to collect user info (internal IP address, user name, domain name, 32bit/64bit), RC4 encryption/decryption, Base64 encoding and decoding, changing cached group policy settings (cachedGroupPolicySettings) for PowerShell security settings, EnableScriptBlockLogging, EnableScriptBlockInvocationLogging.
+It also disables all HTTPS SSL certificate checks.
+We have seen cases where the above was renamed to “km” and directly invoked with its C2 IP set to “78.129.139.134 “port “8080” and RC4 key set to “KharashoNIKharasho!
+@#123456_6”:
+Case 3: We found an interesting case (apparently exclusive to this actor) of a WinRAR SFX (self-extracting archive) named “Iranicard.exe”.
+The embedded SFX pre-setup script is an MSHTA one-liner, which invokes a PowerShell one-liner that downloads and executes PowerShell code from ‘https://dzoz.us/js/js.js’.
+In our analysis of this actor’s activities we have detected multiple OPSEC mistakes and analyzed some of the distraction techniques it has used.
+Among the OPSEC mistakes, there were multiple PDB file paths left in some samples or in artifacts collected from the C2 server.
+The .Net RAT called “LisfonService” has PDB file paths referring to “dragon” and “Panda” as user names.
+Dragon in LisfonService PDB File Path
+Panda in TestService (LisfonService Earlier Version) PDB File Path
+Panda and dragon could have been deliberately used to point researchers to a possible Chinese actor, or it may just be the way attackers like to refer to themselves.
+It is worth mentioning that in some of the PowerShell RATs, attackers also used the “$dragon_middle” variable name for an array of C2 proxy URLs.
+$dragon_middle from the Powershell samples
+Multiple weaponized Office Word documents also contain embedded paths from their authors’ machines.
+These paths are embedded by Office under various circumstances: for instance, when somebody adds a binary object (like an OLE control such as a text box or a command button) into a Word document.
+These PDBs provide the following usernames: poopak, leo, Turk and Vendetta:
+Multiple Chinese strings can be found in some PowerShell RAT payloads (such as Ffb8ea0347a3af3dd2ab1b4e5a1be18a) that seem to have been left in on purpose, probably to make attribution harder.
+In another PowerShell sample (md5: e684aa1c6e51f4696a836ecb6ff1e143, filename: km.ps1), attackers used Russian words as the RC4 key when establishing a connection to the C2 server (78.129.139.134).
+Moreover, IP 78.129.139.134 is used as a C2 for other samples as well.
+Interestingly, when visiting the C2, it displays a blank webpage whose HTML source code shows a strange HTML tag value that suggests attackers have tried to impersonate a Saudi Hacking group called RXR Saudi Arabia.
+MuddyWater attacks have been expanding in recent years in terms of targets and malware functionality.
+The attackers seem to be reasonably well-equipped for their goals, with relatively simple and expendable tools to infiltrate victims and exfiltrate data, mostly using Python and PowerShell-based tools.
+These tools also seem to allow them flexibility to adapt and customize the toolset for victims.
+This continuous capability to steadily adjust and enhance attacks, adapting well to the changing Middle Eastern geopolitical scene, seems to make this actor a solid adversary that keeps growing.
+We expect it to keep developing or acquiring additional tools and abilities, possibly including zero-days.
+Nevertheless, its current OPSEC should be considered poor – for example, leaving details which could reveal different types of information about them.
+For more information about the attacks and the indicators of compromise, please contact: intelreports@kaspersky.com

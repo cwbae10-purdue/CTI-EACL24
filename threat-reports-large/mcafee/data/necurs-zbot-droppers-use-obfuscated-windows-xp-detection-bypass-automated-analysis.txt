@@ -1,0 +1,53 @@
+This blog was written by Sanchit Karve.
+McAfee Labs has recently come across a number of malware samples that drop Zbot and Necurs rootkits.
+These use a discreet technique to intentionally crash Windows XP.
+Interestingly, the malware achieves its OS awareness without using any standard Windows API functions.
+Instead, it relies on the differences in default register values as well as its own entry point for Windows XP and Windows 7.
+It is unclear exactly why the malware does this but it may be for one or more of the following reasons:
+Preventing the detection of operating system awareness by static malware analysis systems that look for GetVersion() or Version Helper calls.
+Preventing behavioral analysis of samples replicated on Windows XP, which isn’t uncommon.
+After all, several public malware analyzers– VirusTotal, Anubis, and others–use Windows XP by default.
+We can see that the sample fails to replicate on those systems.
+You can see the result of this technique thanks to Joe Security’s public listing of a sample’s execution results on both Windows XP and Windows 7, in which it’s clear that the sample replicates on Windows 7 but fails to do so on Windows XP.
+The packaged Zbot and Necurs rootkit were not designed for Windows XP.
+The malware distributors have no interest in infecting Windows XP systems.
+The Windows XP detection method is spread out across functions to make it difficult to (automatically or manually) identify its intention.
+The technique depends on the default values of registers EDI and EDX as well as on the sample entry-point address, which was probably conceived using information from Ange Albertini’s research on the subject.
+Static analysis of the anti-Windows XP approach
+At 0x40179C the samples push the default value of EDI as one of the arguments to an inner function.
+In the inner function, ESI is set to the value of EDI and EDI is set to zero, after which the next inner function is called.
+A hardcoded DWORD 0x6573E2BF (deceptively stored as a string) is pushed as an argument to the next inner function.
+At this stage the hardcoded DWORD is set in EAX while the value of EDI (stored in ESI) is pushed on the stack as an argument to the has_antiXPCode() function.
+It uses a well-known but nifty trick to fool smarter disassemblers into thinking that it’s an argument for the is_never_called() function, even though that function is in fact never called.
+It is actually an argument to the has_antiXPCode() function.
+After all the variables are set up, the sample is finally ready to perform the OS check.
+The samples first restore the original value of EDI (using the instruction: mov edi, esi).
+EDI appears to be subtracted by another value but is just an obfuscation.
+When executed, this value (at ECX + 0xC) is always zero and does not change the original value of EDI.
+ECX is then modified as follows:
+ECX = EAX + 0x144 + f(EDI) (where f is a function of a sequence of subtraction, right-shifts, and multiplication functions on EDI).
+The function f itself is irrelevant and is present only to obfuscate.
+What is important, though, is that ECX now has a value of at least 0x6573E403 (the hardcoded constant + 0x144).
+This value is then assigned to EBX like so: EBX = ECX + (original_EDI_value – 4).
+This causes EBX to also have a large value and is necessary for the sample to crash if Windows XP is detected.
+The next bit sets the zero flag by decrementing ECX and checking if its least significant bit (LSB) is set (using the instruction: test cl, 1).
+The hardcoded constant and the function f() is specifically chosen such that the LSB of ECX is never set, causing the zero flag to be set by the test instruction.
+However, just in case the numbers don’t work out, the malware author has added a sanity check to confirm that the zero flag has been set by exiting the function immediately if it isn’t.
+Finally, the sample checks if the LSB of the EDX register is set.
+If it is, the test instruction unsets the zero flag causing the jump at the JNZ instruction to be taken to the location that calls the maliciousCodePath() function.
+If it isn’t, the jump is not taken and is likely to cause an access violation when [ebx + 4] is read as EBX contains a large value (at least 0x6573E403) that is probably not accessible by the process.
+To make sense of this process, let’s look at the default values of the EDX and EDI registers on Windows XP and Windows 7 (at entry point):
+Windows XP
+Since the LSB of EDX is not set, the zero flag will be set by the instruction test dl, 1.
+This ensures that the jump to the location where the real malicious code is executed is never called and instead moves to a part of the code where the value at the address stored in EBX is read.
+But as EDI is set to 0x7C910208 on Windows XP, EBX eventually attempts to read the value (0xE3FB0E8E), which exists in system memory and is inaccessible from user mode, thus guaranteeing an access violation.
+Windows 7
+On Windows 7, EDX is always set to the entry point of the process being executed.
+The samples in question have been crafted such that their entry point is at an address whose LSB is set to 0x40424D.
+Due to this, the test instruction will unset the zero flag causing the jump to take place and execute the malicious code.
+Even though the sample uses a convoluted technique to achieve OS awareness, at its heart it simply checks the default value of EDX as demonstrated by this C program:
+When compiled with the /ENTRY:xpcheck linker switch, the resulting binary can detect Windows XP.
+McAfee detects these malware variants as PWSZbot-FQC.
+The Necurs rootkit can be removed using Rootkit Remover.
+Samples that use this technique (MD5)
+e3399b629fcd534726739fc8792d1a2a 074d8bb5443cd0640fb8ec3896106baa 6c7cb0625df7b4a8a76168ce26cce7d1 220516c214afc9aa340c145937f299b4 2e1c10912ef4a578160414616400fca3 a5923e1efd90be7542c779184f4a7843 5eda655aa0dfacf975e20b52f64073c6

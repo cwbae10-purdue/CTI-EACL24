@@ -1,0 +1,74 @@
+Recently, the McAfee Advanced Exploit Detection System (AEDS) has delivered some interesting RTF files to our table.
+These RTFs have executables “attached” to the documents.
+Usually, some words in the documents try to convince users to click and run the attachments.
+The following figure shows the point at which a user clicks on the attachment.
+This warning appears when a user tries to execute the attached malware.
+Because there are strong warnings, we don’t see these threats as a problem.
+However, we strongly suggest users not run any of the files attached to these documents.
+McAfee antivirus products already provide detection against this type of attack.
+Our story doesn’t end here.
+Just as we used AEDS to discover a potential security issue in PDFs, we have identified a suspicious (or maybe “interesting”) behavior while opening such an RTF: The attached file was dropped into the temporary folder of the current user (typically, in C:\Users\<username>\AppData\Local\Temp).
+The following figure shows the file reader.exe after it is dropped in the temporary folder for the particular RTF sample.
+The file Reader.exe is dropped into the current user’s temporary folder when the RTF is opened.
+We observed this behavior on Windows 7 and 8 with or without Office installed.
+(Using WordPad to open the RTF is enough to trigger the behavior.)
+We didn’t see the behavior on Windows XP.
+The file is dropped through the “Package” ActiveX Control.
+The format looks like this:
+The “Package” ActiveX Control is invoked by the RTF.
+The registry information for the “Package” ActiveX Control:
+CLSID: {F20DA720-C02F-11CE-927B-0800095AE340} ProgID: Package InProcServer32: %SystemRoot%\system32\packager.dll
+During our tests, we observed the following:
+The filename as well as the content of the dropped file are controlled by the RTF
+Opening the RTF document is enough to trigger this behavior; no additional user interaction is required
+If the filename already exists in the temporary folder, the malware will drop as <filename> (2).<ext>.
+The current file will not be overwritten.
+When the document is closed, the dropped file is removed
+This behavior allows anyone to drop an arbitrary file with an arbitrary filename into the temporary folder when the RTF document is opened.
+This certainly raises security concerns.
+The best practice for temporary files is to create unique filenames, such as using random filenames or creating an application-specific directory under the temporary folder.
+For example, Adobe Reader 11 uses the directory acrord32_sbx (C:\Users\<username>\AppData\Local\Temp\acrord32_sbx) for its various temporary file operations.
+How could an attacker abuse this behavior?
+Because most applications and the operating system frequently use the temporary folder and we don’t know how each program uses each temporary file, answering the question is difficult.
+Here are some thoughts.
+In some conditions, an application runs an executable from the temporary folder as long as the file exists.
+Certainly, opening the RTF could be dangerous in such conditions.
+This also applies to DLLs.
+In the real world, we expect that these conditions are infrequent.
+Instead, most applications will first create the executable or DLL (or overwrite it if the file is already there), and then run it.
+DLL-preloading problems.
+Some applications may create an executable in the temporary folder and execute it.
+In this situation, when the .exe has DLL-preloading problems, it will search for that named DLL in the temporary folder.
+If a DLL with the same name is placed in the temporary folder, the DLL will be loaded right away.
+Applications may rely on some specifically named nonexistent non-executable files for operations.
+When such a file is placed in the temporary folder, it may change the application’s behavior or program flow, bringing future security problems.
+We call these situations vulnerable temp folder access.
+With the aid of the vulnerable temp folder access from other programs, an attacker could abuse this behavior to run arbitrary code on the victim’s system.
+A typical attacking scenario would include the following steps:
+The attacker sends an RTF file to the victim.
+The victim opens it, and one or more specific files are dropped into the temp folder.
+If another program is accessing the temp folder in one of the vulnerable ways we discussed, code execution may occur automatically at this point.
+The document could contain some social-engineering text to convince the victim to perform future apparently safe actions, such as running legal applications.
+If the victim follows these instructions, successful exploitation may occur if the user action triggers one of the vulnerable accesses we discussed.
+Therefore, to attack successfully, another program’s vulnerable access to the temp folder is a must.
+Sometimes the attack might require additional user interactions, sometimes not.
+Are any attackers trying to exploit this behavior?
+It’s hard to tell.
+A successful exploitation requires the attacker to learn, prior to the attack, whether the target has a vulnerable temp folder access as well as the details.
+Thus from an analyst’s point of view, examining the RTF samples is usually not enough to understand the attacker’s intention.
+For example, an RTF dropping Reader.exe into the temp folder could be just a “click to run” trick, or it could be an exploitation attempt of this behavior if the attacker knows that the target is running some programs accessing the Reader.exe in the temp folder in a vulnerable way.
+We have seen some in-the-wild malicious RTFs drop files with “interesting” names:
+CEH.exe du.sfx.exe FINCEN~2.EXE inicio.bat inv_875867001426_74653003.cpl pastelyearendguidedm (3).exe QUICKSHIPPINGDUEINVOICE.exe Reader.exe test.vir
+Advanced persistent threats usually consist of learning the targets well before the attack occurs.
+We recommend to organizations with concerns about this issue to specially focus on sophisticated targeted attacks.
+Keeping safe If users always open RTFs with Microsoft Word, there is a workaround to disable the “Package” ActiveX Control through the Office kill bit.
+We have found that the problem is solved in Office by setting the following registry key/value.
+Windows Registry Editor Version 5.00 [HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\Common\COM Compatibility\{F20DA720-C02F-11CE-927B-0800095AE340}] "Compatibility Flags"=dword:00000400
+However, the preceding workaround won’t work for users who employ WordPad to open RTF documents.
+As we have said many times for document-based exploits, the best practice is to not open documents from untrusted sources.
+Close the document as soon as possible when you find it’s suspicious, and don’t follow any actions suggested in the document.
+These steps can reduce the chance of success of a potential attack.
+Our investigation of suspicious behavior when handling RTF documents in Windows and Office shows that exploitation is not only about memory corruption or a single application or system; it’s a far broader concept.
+The breadth of exploitation poses challenges to organizations and security companies.
+McAfee is committed to meeting those challenges.
+Thanks to Bing Sun, Chong Xu, Jun Xie, and Xiaoning Li (of McAfee Labs) for their help with this research and investigation.

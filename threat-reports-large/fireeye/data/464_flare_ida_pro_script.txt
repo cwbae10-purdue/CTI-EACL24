@@ -1,0 +1,62 @@
+The FireEye Labs Advanced Reverse Engineering (FLARE) Team continues to share knowledge and tools with the community.
+This is the third IDA Pro script we’ve released via this blog and we’ll continue to release these scripts here.
+This blog describes an IDAPython script to assist with malware reverse engineering.
+FLIRT signatures help IDA Pro recognize common functions in compiled programs and automatically rename them for the reverse engineer.
+The IDAPython script idb2pat.py generates IDA Pro FLAIR patterns from existing IDB files.
+You can use it to generate FLIRT signatures for 32- or 64-bit executables loaded into IDA Pro, even if you don't have the typical requirements of an original source or static libraries.
+Because idb2pat.py is written in Python, you won't need to recompile it after each IDA Pro SDK release.
+IDA Pro uses Fast Library Identification and Recognition Technology (FLIRT) signatures to quickly identify compiler-generated and statically linked functions in programs.
+Once identified, IDA Pro renames the common functions and marks these as library functions to guide the reverse engineer toward more relevant sections of code.
+For example, without FLIRT signatures, the reverse engineer may encounter the complex function shown in Illustration 1, and work to understand its purpose.
+With FLIRT signatures enabled, IDA Pro renames the function as printf, and the analyst can likely pass over it.
+Hex-Rays distributes utilities in the Fast Library Acquisition for Identification and Recognition (FLAIR, no relation to the FireEye FLARE team :-) ) package to generate custom FLIRT signatures on its website.
+These utilites operate on static libraries such as .a files on Linux and .lib files on Windows.
+Reverse engineers can easily teach IDA Pro to identify custom libraries with the FLAIR utilities.
+Typically the reverse engineer starts by using a utility such as pelf to generate a pattern file that describes major features of each function in the library.
+They then use the sigmake utility to translate the textual pattern file into a binary signature file.
+This second step resolves conflicts in the signatures and produces an efficient format that IDA Pro can digest.
+The reverse engineer can now load the signature file and instruct IDA Pro to rename custom library functions in a statically linked program.
+For example, during the FLARE-On challenge, some of the successful participants completed the sixth challenge (linhax) using custom FLIRT signatures.
+The statically linked Linux executable was stripped, so many common functions appeared mixed in with key functionality.
+Using the FLAIR utilities on the matching runtime libraries created the FLIRT signatures required to resolve many of the support function names in linhax.
+Unfortunately the FLAIR utilities only work on static libraries, which makes them most useful when a reverse engineer has access to source code or libraries prior to linking.
+Usually this is just fine; however, there are a few edge cases.
+For instance, Go binaries are always statically linked to their Go-language dependencies, and it is not possible to build these libraries separately.
+When I loaded a stripped "Hello, World!"
+program into IDA Pro, I encountered 1,777 unnamed functions!
+I'd save a lot of time if a majority of those functions could be renamed automatically.
+For more than a decade, IDA plugins that extract signatures from programs loaded into IDA Pro have been freely available online.
+Notably, idb2pat and idb2sig are shared library plugins that you can download here.
+Illustration 2 shows a reverse engineer generating a pattern file from ntdll.dll using idb2sig in IDA Pro.
+These plugins are fast and well-tested.
+However, since they are written in C++, they must be recompiled with each update to the IDA Pro SDK.
+Also, many plugins have limited support for 64-bit programs.
+The IDAPython script idb2pat.py generates FLAIR patterns from IDB files.
+It works on both 32- and 64-bit programs.
+It is a very close port of the C++ idb2sig (by mercury, and updated by TQN) to Python.
+The script idb2pat.py is provided under the Apache License, version 2.0, and can be downloaded from the FLARE team's Github repository here.
+Once downloaded, you can run the standalone script directly using IDA Pro's scripting dialog.
+The script will prompt you for the output file path, and use sane defaults while generating patterns of each function in the current project.
+These defaults can be tweaked, and sufficient documentation is found in the plugin file.
+I was motivated to develop idb2pat.py while considering how to reverse engineer Go binaries.
+As an example, I compiled the "Hello, World!"
+sample program available on the Go tutorial website here, for 64-bit Linux.
+The Go compiler includes copious debugging information and symbols in the default executable format, and IDA Pro's analysis helpfully renamed all 1,777 functions in the binary file.
+However, after stripping the file, IDA Pro was unable to rename any functions and I had a difficult time differentiating support code from the main function's disassembly.
+Illustration 3 and Illustration 4 show the before and after function listings when stripping the Go binary.
+To help IDA Pro identify support functions, I used idb2pat.py to generate a pattern file from the unstripped binary.
+Illustration 5 shows the plugin output as the script generated 1,754 patterns.
+Next, I ran the FLAIR utility sigmake to identify 18 pattern conflicts in the file, and subsequently remove them from the database.
+This resulted in 1,718 patterns that I translated into a signature file, also using sigmake.
+I used the following command to invoke sigmake against the pattern file:
+sigmake -ngolang-linux64 helloworld.pat helloworld.sig
+Then, I opened up the stripped version of the program, applied the FLIRT signature, and watched IDA Pro rename most of the functions.
+The few functions it missed were due to either the 18 pattern conflicts, or functions with fewer than six bytes of instructions (too short to effectively signature).
+Illustration 6 shows a basic block of an initialization routine when no names are recognized, and Illustration 7 shows the same block after the FLIRT signatures have been applied.
+The second view shows much more contextual information via the function names.
+Applying the same signature to other programs in the Go tutorial series also yielded good coverage since many of the support and library functions are the same.
+I plan on developing a Go program that imports all standard libraries and using this as the source for a comprehensive FLIRT signature for Go.
+You can use the IDAPython script idb2pat.py to quickly and easily generate function patterns for IDA Pro FLIRT signatures.
+This helps IDA automatically rename common functions in compiled programs.
+The script works on both 32- and 64-bit programs, and because it is written in Python, it can be easily updated and modified by users.
+I hope you'll give this free tool a shot by downloading it from the FLARE team's Github repository!

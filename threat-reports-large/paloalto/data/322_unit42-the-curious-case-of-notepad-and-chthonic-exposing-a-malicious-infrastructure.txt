@@ -1,0 +1,93 @@
+Recently, I’ve been investigating malware utilizing PowerShell and have spent a considerable amount of time refining ways to identify new variants of attacks as they appear.
+This posting is a follow-up of my previous work on this subject in “Pulling Back the Curtains on EncodedCommand PowerShell Attacks”.
+In a sample I recently analyzed, something stood out as extremely suspicious which led me down a rabbit hole, uncovering malicious infrastructure supporting Chthonic, Nymaim, and other malware and malicious websites.
+Throughout this blog post I present my analysis and thought process during this research, but if you would just like a list of the findings, they are over on our Unit42 GitHub.
+Most commonly, PowerShell is launched from a Microsoft Office document that uses a VBA macro to launch PowerShell to perform something malicious – typically downloading the “real” malware to run.
+I focused my hunting on the PowerShell activity with Palo Alto Networks AutoFocus to determine whether it’s worth digging into further based on “uniqueness” and functionality.
+In this case, the first sample I looked at stood out for another reason entirely.
+If you take a look at the below PowerShell, you’ll quickly understand why.
+This code downloads a file from the legitimate Notepad++ website.
+My initial thought was the worst-case scenario – they’ve been compromised and are distributing malware!
+I immediately downloaded the file from the website, but everything looked normal.
+Of course, I had to investigate further.
+The sample stayed true to the previous outline I laid out for these attacks: the Microsoft Excel document appeared to be a lure about financial information, specifically a VAT invoice written in Polish as shown below.
+Looking under the hood we see the VBA code that builds the PowerShell command and launches it but something seemed off.
+There are a ton of functions that are clearly decoding information from arrays after which it executes an already decoded PowerShell command.
+I decided to debug the macro and see exactly what it’s doing before I made any decisions.
+If you look at the above image, there are five things to note.
+1.
+The variable ‘horrorr’ (double ‘r’) is the result of all of the previously mentioned decoding functions.
+This builds a PowerShell command.
+2.You can see ‘Shelleeeee horrorr, 0’ commented out, I believe this was intended to launch the previous PowerShell command.
+3.
+The ‘Debug.Print horrorr’ prints the content of that variable in the ‘Immediate’ area shown in the screenshot.
+The domain in this command is NOT ‘notepad-plus-plus.org’ and can be seen below.
+4.
+The ‘MsgBox’ will pop-up and not display anything, because the variable passed is ‘horror’ (1 ‘r’) along with the message ‘Do you really think I’m not a virus?’ in Polish.
+5.
+The hard coded PowerShell command with ‘notepad-plus-plus.org’ will run.
+The most likely conclusion that can be drawn here is that an analyst or researcher obtained this file, modified it to see the content (misspelling the variable name along the way) post-decoding, and uploaded it to see what it did in a sandbox.
+To be sure though, I needed to find other samples and see how they stacked up against this one.
+Going back to the PowerShell command, the initial reason I stopped to look at it was due to the way they concatenated variables to form the download command and output.
+This also provides a perfect pivot point to hunt for samples.
+Using the below string to search Process Activity in AutoFocus revealed 171 samples.
+The dates were all fairly recent, having been received in the past few days since the beginning of August.
+The documents shared the same themes for lures but the VBA macro and resulting PowerShell were more along the lines of what I expected.
+For sample “538ff577a80748d87b5e738e95c8edd2bd54ea406fe3a75bf452714b17528a87” the following is an excerpt from the VBA macro building the PowerShell command.
+Along with the subsequent Process Activity using the newly built PowerShell command, which aligns with what was commented out of the first sample analyzed.
+Given this, I iterated over all 171 samples and extracted the following URL’s where PowerShell is downloading a payload.
+Going back to the Process Activity, we can see the SHA256 value of each downloaded file and compile a list of hashes for further pivoting as shown below.
+After iterating over the 171 samples, we’re left with this list of hashes for the downloaded files.
+Note that there are fewer payloads than there are samples, indicating many of the documents download the same payload.
+Below is a table with the compile date and some PDB strings found within a few of the binaries.
+Most of the compile times are within the past two months, with 6 in August and a couple from as recently as two days ago at the time of this writing.
+At least one of the binaries compiled in August had a PDB string I was able to locate online in a collection of other PDB files, so they may be introducing their malicious code into these files before compiling someone else’s project.
+Once the file has been downloaded and executed, the new process will launch a legitimate executable, such as “msiexec.exe”, and inject code into it.
+This code will then download further payloads through a POST request to various websites.
+This pattern is shared across the original samples.
+These HTTP requests match known patterns for a banking Trojan named Chthonic, which is a variant of Zeus.
+A good write-up from 2014 on the malware can be found in this writeup from Yury Namestnikov, Vladimir Kuskov, Oleg Kupreev at Kaspersky Lab here and indicates that the returned data is an RC4 encrypted loader that sets-up the main Chthonic module which can download additional modules or malware.
+Iterating once again over the 171 samples and scraping out the HTTP POST requests, I ended up with the below set of domains.
+Using this as the next pivot, we have 6,034 unique samples that get returned in AutoFocus having made POST requests to these sites.
+Additionally, we can see there were at least 3 very large campaigns where Palo Alto Networks saw activity to these sites in July.
+From these distribution sites, we can see that 5,520 samples are making HTTP requests to them and these samples have been identified as another downloader Trojan named Nymaim.
+The majority of the overall samples came from the following four sites.
+The ‘ejtmjealr.com’ domain is particularly interesting due to a similar domain, ‘ejdqzkd.com’ being discussed by Jarosław Jedynak of CERT.PL in this analysis of Nymaim from earlier in the year.
+They go on to discuss how Nymaim uses a static configuration to contact that domain, which will return IP’s that go into a DGA and output the actual IP addresses needed for C2 communication.
+Ben Baker, Edmund Brumaghin and Jonah Samost of Talos have a fantastic write-up of this process here.
+Raising the dead – Infrastructure Archeology
+To continue my analysis, I shifted focus to Maltego so as to visually graph the infrastructure.
+For this task, I used PassiveTotal’s Passive DNS and AutoFocus Maltego transforms.
+We see below the passive resolutions for these domains and how it reveals a number of IP addresses being shared between the four domains identified above.
+All of the 707 IP addresses can be found here.
+Note that while these IP’s have been found to be hosting malicious content, this could change in the future.
+Pivoting off the five highlighted IP’s above with a shared infrastructure, I pulled the reverse DNS to see what other sites may be present.
+The below is a sampling of the domains returned through this process.
+The “idXXXXX.top” pattern immediately stands out and may suggest a pattern in the static configuration for the initial domains used by the DGA for Nymaim since the previous two started with “ejX.com.
+Given the level of overlap already, I proceeded to grab all of the passive DNS available for each of the 707 IP addresses.
+A full list of the domains can be seen here.
+The below Maltego graph is used to simply illustrate the two distinct clusters of infrastructure that appeared and their interconnectedness.
+From the first cluster on the left, if we sort by incoming links per node a pattern stands out in the domain names looking similar to the previously mentioned Nymaim ones.
+In the below image, the top domains are sorted by incoming links on the right side.
+Each link is a corresponding IP address and show that these domains have been rotated quite a bit between the infrastructure.
+A quick search with the AutoFocus transform to pull tag information shows these are specifically related to Nymaim, most likely for the DGA seed; however, looking at domains with less links, other malware families begin to emerge.
+The cluster on the right is actually collapsing one collection of entities due to the sheer size of it.
+Below is the collection expanded in all of its glory.
+Below are the domain names linked to the singular IP address in the center.
+All of these connected domains follow a pattern similar to phishing attacks masquerading as legitimate services – in this case “online.verify.paypal” (588) and “hmrc.secure.refund” (1021).
+In addition to domains of that type, there is evidence of other malware distribution being carried out on this infrastructure.
+Collapsing the collection back down, note the two domains “brontorittoozzo.com” and “randomessstioprottoy.net” that fall outside of the collection due to more infrastructure connections.
+A quick search for these domains will land you on fellow Unit 42 researcher Brad Duncan’s malware-traffic-analysis (MTA) site for post “2017-06-22 – LOCKY MALSPAM – PDF ATTACHMENTS WITH EMBEDDED .DOCM FILES” in which he lists out URL’s found within malicious Microsoft Word documents that download Locky as shown below.
+In some of the other smaller clusters, you’ll find groupings of like malicious sites.
+For example, there is a group with gems like “premarket.ws” like you see below being hosted on this shared infrastructure, which is a forum for less than legal services.
+Along with sites like “slilpp.ws” which is another less than reputable site as shown below.
+Which ironically has a Twitter support account that specifically states the following.
+And yet another here below…
+There are 632 people happily following along with relatively easy to track down accounts and usernames.
+A substantial amount of these accounts, on quick review, appear to follow the typical Nigerian cybercrime patterns detailed in other blogs.
+Finally, there were multiple clusters of domains used by the Hancitor malware dropper to host the initial check-in and tracking as shown here.
+Which can be seen as having been used in a campaign on July 03, 2017 via a post on MTA below.
+By pivoting off of one sample we were able to zoom out and identify a sizable infrastructure of what appears to be 707 IP’s and 2,611 domains being utilized for malicious activity.
+As such, these findings represent a collection of compromised websites, compromised registrar accounts used to spin up subdomains, domains used by malware DGA’s, phishing kits, carding forums, malware C2 sites, and a slew of other domains that revolve around criminal activity.
+Hopefully this analysis has been helpful in understanding how truly connected some of these infrastructures can be and how with a little digging, you can uncover a substantial amount of operationally useful indicators to protect you and yours.
+AutoFocus users can identify and track these threats using the Chthonic, Nymaim, and NotepadInfrastructure tags.

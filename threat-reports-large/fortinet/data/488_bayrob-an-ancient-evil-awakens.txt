@@ -1,0 +1,63 @@
+While ransomware has attracted much attention from security researchers lately, other malware hasn’t stopped.
+They are quietly seizing their own place in the attack market.
+This article analyses one of them - “Bayrob”.
+Our analysis is based on a new variant of Bayrob.
+We will discuss its background and describe some of its most interesting features, including the purpose of several different processes/services, code obfuscation, data encryption, and its C&C; communication.
+The family of “Bayrob” malware first showed up around 2007.
+However, it was not very well known and seems to have disappeared until the beginning of this year.
+Despite being in the wild for so long, and perhaps because of its complexity, there has been no detailed technical analysis written about Bayrob.
+We have been tracking the Bayrob family of malware since it first appeared, and our VEX system started capturing a new Bayrob variant near the beginning of the year.
+This variant was spreading quickly and more intensely than previous variants.
+We discovered that it uses complicated techniques and features similar to previous variants, but has introduced a new C&C; communication protocol.
+One interesting thing about Bayrob is its multiple processes.
+Bayrob drops several copies of itself into a folder on the infected machine and creates new processes / services from those copies.
+Each process or service has their own tasks and follows their own route to finish the tasks.
+The diagram below shows the process tree of the first three processes.
+Figure-1 Process tree when malware is running
+The original sample drops one copy of itself, runs the first copy, and exits.
+The name of the first copy is a fixed prefix (“ulms” in the sample we analyzed), appended with a randomly generated string.
+The original process also displays a fake error message to hide its actual malicious behavior.
+Below shows how it achieves this and the actual message.
+Figure-2 Fake error message
+The first copy then drops another copy of itself.
+It also creates and starts a service, as shown below.
+The service runs major tasks such as C&C; communication.
+Figure-3 Start service stage
+Bayrob differentiates its running stage (in different processes/services) by file names.
+To identify where in the lifecycle it is, Bayrob also uses some dummy drops (not PE files) as identifiers.
+Figure-4 Check different running stage with current file name
+Bayrob also adds a lot of junk code into its normal functions to hinder static and dynamic analysis.
+This junk code is everywhere.
+Figure-5 shows the extent and format of the junk code.
+The malicious code (marked as “Useful Code” in the figure) is part of a routine which checks if the caller is an admin.
+Figure-5 Junk code in function
+Besides code obfuscation, Bayrob also encrypts critical data, including most strings.
+As shown below, the string “Software\Microsoft\Windows\CurrentVersion\Run” is decrypted by the function “Decryption,” with two arguments that are associated to the original data and size.
+After decryption, malware will use this string as a registry path so it can survive when the system reboots.
+Figure-6 Bayrob referring decrypted string
+The decryption routine uses keys to do the decryption.
+The keys are fetched from a key table generated before the decryption routine.
+We used python script to simulate this key generation algorithm as shown below.
+This function takes two parameters: a hard-coded init_key and a hard-coded size.
+Figure-7 Main part of key generation script
+The function “Decryption” mentioned above is a customized algorithm.
+This function takes two arguments: the first one is an offset; the second one is the size of data to decrypt.
+We also used python script in IDA to simulate the Decryption function (Decryption (offset, size)) as shown below.
+Figure-8 Main part of decryption script
+After the executing of the decryption script, we can access all the decrypted data, including the text strings, some of which are shown below.
+Figure-9 Some decrypted strings
+This variant of Bayrob uses custom protocols over TCP/IP to communicate with its C&C; server.
+Different network packets are encrypted in different levels using different methods.
+Bayrob has an interesting sequence with regards to its sending packet size.
+The first four packets sent have the following sequence: 8 bytes of data, 1 byte, 2 bytes, and 2 bytes of data to verify/register itself.
+The size of the fifth packet is indicated by the contents of the second packet.
+Bayrob sends the first group of packets mainly to verify/register itself to its C&C; server.
+Figure-10 Wireshark Network Traffic Snapshot
+We will provide more details about the Bayrob C&C; communications in the next blog post.
+The authors of Bayrob have introduced a lot of tricks to make this malware much more difficult to analyze.
+Our mission is not only to protect our customers, but to also provide critical technical information to those who are interested in further investigation.
+Of course, we will keep tracking this malware family and provide further analysis results and updates once we gather more information.
+MD5: f3fc7891f9a8205354324d6f890890f1
+SHA256: 5685707a428bf6134a21e581866734522ba41e729c1bb1d945245e2659fd8a80
+Fortinet Detection Name: W32/Bayrob.C!tr
+http://www.welivesecurity.com/2016/01/28/application-not-compatible-bayrob-may-be-stealing-your-info/

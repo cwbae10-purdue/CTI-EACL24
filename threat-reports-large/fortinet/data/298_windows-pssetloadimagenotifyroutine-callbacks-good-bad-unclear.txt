@@ -1,0 +1,47 @@
+A FortiGuard Labs Threat Analysis Report: This blog originally appeared on the enSilo website on September 11, 2017, and is republished here for threat research purposes.
+enSilo was acquired by Fortinet in October 2019.
+A programming error in the Windows kernel could prevent you from identifying which modules have been loaded at runtime.
+And the fix for it isn’t as foolproof as it may seem.
+During research into the Windows kernel, enSilo’s Threat Intelligence team (now part of FortiGuard Labs) came across an interesting issue with PsSetLoadImageNotifyRoutine, which, as its name implies, provides notifications of module loading.
+After registering a notification routine for loaded PE images with the kernel, the callback may receive invalid image names.
+In our previous blog post, we broke down different components in the kernel related to this bug.
+After explaining the cause, we sought out to find a solution for it.
+One of the things that seemed quite peculiar to us is that while this mechanism is very old, no one seems to have encountered this issue before us.
+How could it be that after all these years a documented and widely-used mechanism in the Windows kernel suffers from a prominent problem that hasn’t been fixed, or at least documented?
+Doing a quick search online provided us with some references for the existence of the bug, but we couldn’t find any official documentation about it or any information on what causes it.
+We also came across a specific reference to a similar issue in the community, which taught us a few significant things:
+This issue detailed in the community, which we were also able to reproduce, stems from the same problem as the one we had been working on.
+The same bug with the notification routine was experienced at least more than a decade ago, if not even earlier (we didn’t find the previous thread mentioned, which dates back to 2001).
+Microsoft was most likely made aware of the issue.
+While looking for a workaround for this bug, we saw some tools that were trying to solve it in several different ways – of which none seemed to actually work.
+Some used ObQueryNameString or various different API functions that basically have the same result ,while others simply joined the name of the DEVICE_OBJECT related to the file with the FILE_OBJECT.FileName, which at this point in the object’s lifetime shouldn’t be used at all.
+At this point, we decided to keep on going and check other notification routines that provide the path of the PE image that was loaded, such as PsSetCreateProcessNotifyRoutineEx, which was introduced with Windows Vista SP1.
+We wanted to see if the same bug could be found elsewhere within the kernel.
+What totally baffled us was that in this case, the CreateInfo parameter has a specific flag, FileOpenNameAvailable, that when set to “TRUE, indicates the string specifies the exact file name that is used to open the executable file.
+If FileOpenNameAvailable is FALSE, the operating system might provide only a partial name.”
+When looking at the disassembly of nt!PspInsertThread, it’s quite obvious that when this flag is set to FALSE, ImageFileName is the FileName field of the FILE_OBJECT (of the process’ SECTION).
+This is the exact same issue we had encountered earlier in the load image notification routine, except in this case we have a flag indicating that the integrity of the argument being passed cannot be trusted.
+So it seems that Microsoft is at least somewhat aware of this issue, or at least the developers who were in charge of PsSetCreateProcessNotifyRoutineEx are.
+The fact that Microsoft has never addressed the bug in PsSetLoadImageNotifyRoutine remains a mystery to this day.
+When searching for more documentation about PsSetCreateProcessNotifyRoutineEx, we were able to find a document from Microsoft dated back to May 2007 titled, “Kernel Data and Filtering Support for Windows Server 2008”, which is no longer available on Microsoft’s website (attached here for reference).
+This document states that when using the process creation callback “… the driver can retrieve additional properties through filter manager APIs like FltGetFileNameInformationUnsafe”.
+Relying on this information, we were sure FltGetFileNameInformationUnsafe provided us with the most elegant and straightforward solution to the bug.
+Using this function allows us to solve this issue without the need to implement a file-system mini-filter driver.
+We receive the FILE_OBJECT in the PsSetLoadImageNotifyRoutine callback in a very similar manner to how we receive it in the PsSetCreateProcessNotifyRoutineEx callback, so it looks like a possible solution in our case as well.
+What satisfied us even more was that some of Windows own components, such Windows Defender and Firewall, use this function themselves in that scenario.
+Using FltGetFileNameInformationUnsafe in the load image notification routine would still fail on occasion, returning a STATUS_OBJECT_NAME_NOT_FOUND error.
+However, this error code isn’t noted as a possible error code for the function in its MSDN documentation.
+After some experimenting, we figured out the exact sequence of events that allows us to consistently recreate this error state.
+It turns out that FltGetFileNameInformationUnsafe at a certain stage calls fltmgr!FltpExpandShortNames, which actually tries to verify the existence of file’s path.
+The problem, though, is that this validation is only partial: the code validates the existence of all directories in the path; however, it neglects to check the existence of the file itself in the given path.
+As a result, the error code received proves itself quite useful since we now know that the file doesn’t currently reside in its original path and we can at least try to obtain its opened name (by passing the appropriate flag to FltGetFileNameInformationUnsafe).
+So, we have only one last thing to deal with: whenever a call to FltGetFileNameInformationUnsafe succeeds, we need to make sure that a file actually exists in the path we get as a result.
+Moreover, we need to verify that the file is indeed the same file we received in the load image notification routine.
+In theory, this bug in the Windows kernel, whose origin is described in the preceding blog, could potentially be used to dupe security products that blindly rely on the information supplied by this notification mechanism.
+This flaw seems like a coding error that has existed since Windows 2000, and it affects all versions up to the most recent Windows 10 release.
+This means that until Microsoft fixes this bug, security vendors who develop products for the Windows environment must not rely on the faulty information supplied by this notification routine.
+Vendors must find alternative, more trustworthy, methods to obtain this information, hopefully, utilizing information shared in these blogs.
+Note: A majority of the analysis in this report was done on a Windows 7 SP1 x86 fully patched and updated machine.
+The findings were also verified to be present on Windows XP SP3, Windows 7 SP1 x64, and Windows 10 Anniversary Update (Redstone) – both x86 and x64 – and all fully patched and updated.
+Learn more about FortiGuard Labs threat research and the FortiGuard Security Subscriptions and Services portfolio.
+Sign up for the weekly Threat Brief from FortiGuard Labs.

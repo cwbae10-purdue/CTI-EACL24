@@ -1,0 +1,98 @@
+The story involving Meltdown and Spectre continues as vendors (including major players like Apple Oracle, and Microsoft, among others ) scramble to issue patches for their products.
+Even Intel’s own patches have hidden problems that have led to higher-than-expected reboot rates, and these problems extend all the way from Sandy Bridge (2011) to Kaby Lake (2016).
+In a previous blog post, FortiGuard Labs detailed the implementation of Spectre, and in another we provided a technical analysis of Microsoft‘s patches (Microsoft Security Advisory ADV180002).
+One of the key features of Microsoft‘s patches is the “Kernel Virtual Address Shadow” (a term coined by Microsoft), or KVAS for short.
+This feature effectively blocks the Meltdown attack, as it leaves very little kernel memory accessible to user mode code.
+In this blog post we provide a deep dive analysis of this feature.
+Before digging into the details, it’s worthwhile to understand the overall context.
+The following table summarizes the Spectre and Meltdown attacks:
+Figure 1 Executive Summary (credits go to CERT)
+As we can see, the difficulty of mounting a Meltdown attack is low (i.e.
+low cost) hence the chance of it being exploited in the real world scenarios will be high, as evidenced by the AV-Test research team’s discovery of 119 new malicious samples in just the two weeks following the disclosure of the vulnerability.
+As a result, it makes perfect sense for Microsoft to focus on defending against that attack first.
+Before delving into the details, we wrote this piece assuming that readers already possess a strong knowledge of low level system concepts and mechanisms such as virtual memory, 32-bit (aka x86) vs 64-bit (aka x64), MSR, kernel-mode vs user-mode, and so on.
+For details about those concepts and mechanisms, the Intel® 64 and IA-32 Architectures Software Developer's Manuals are the authoritative resources.
+Providing a primer on those concepts is beyond the scope of this paper, and we recommend that those unfamiliar with these details to start there.
+Figure 2 The Overall Design
+Figure 2 depicts the overall idea behind KVAS.
+Conceptually speaking, the system is partitioned into three parts: the entries, arbitrary control flow in the middle, and the exits.
+The key insight here is that the kernel space and the user space are separated thanks to clever paging structures.
+Only a minimal numbers of pages are mapped in both the user space and the kernel space.
+As a result, even if a Meltdown attack were to be successful, it still could not leak kernel memory.
+That’s because the entries and the exits swap address spaces back and forth such that only the kernel code can access kernel memory space.
+An extra benefit of this design is that it achieves its goal simply by manipulating the paging structures without having to rely on any extra support at the hardware level (e.g.
+microcode updates)
+Figure 3 NtOpenProcess Is Not Accessible
+As can be seen in figure 3, the code region of NtOpenProcess is not accessible because it is not mapped using UserDirectoryTableBase.
+This section highlights key findings of our analysis of the Kernel VA Shadow Feature (KVAS).
+Here are the key details of the NT Kernel itself:
+Windows 7 x64: 6.1.7601.24000
+Size: 5581544 bytes
+Sha256: 9A6C19B29EBB8D9399C771F2B570E6DCDDF75AC7F2A5F4E8013F4EC7A31F7CA8
+We found that KVAS is initialized very early in the boot process.
+Specifically, KVAS is enabled in the OS initialization itself.
+The entry point of the NT Kernel is called KiSystemStartup, and is invoked by the OS loader.
+KiSystemStartup in turn performs basic initialization of several things, one of which is the calling of KiInitializeBootStructures.
+Figure 4 KiInitializeBootStructures
+KiInitializeBootStructures in turn calls KiEnableKvaShadowing, which is responsible for enabling KVAS and sets KiKvaShadow = 1.
+Figure 5 KiEnableKvaShadowing
+We also observed that based on process-context identifiers (PCID - which is a performance optimization feature to avoid flushing the entire translation lookaside buffer), the global flag KiKvaShadowMode will be set accordingly to either 1 (KiFlushPcid != 0) or 2 (KiFlushPcid == 0).
+Figure 6 KiKvaShadow and PCID
+The key part of the whole process is the setting up of the system call handlers themselves.
+Figure 7 Setting Up of the System Call Handlers
+But first, a quick primer about the mechanism used to perform system calls.
+When the SYSCALL instructions are executed (e.g.
+in ntdll.dll), the code execution is switched to a kernel-mode routine whose address is pointed to by a Model Specific Register (MSR).
+MSRs are special registers that must be accessed through rdmsr and wrmsr CPU instructions using indices.
+For example, the index for IA32_STAR is C0000081 and IA32_LSTAR is C0000082 and so on.
+IA32_STAR (0xC0000081) - Ring 0 and Ring 3 Segment bases, as well as SYSCALL EIP.
+Lower 32 bits = SYSCALL EIP, bits 32-47 are the kernel segment base, and bits 48-63 are the user segment base.
+IA32_CSTAR (0xC0000083) - The kernel's RIP for SYSCALL in compatibility mode.
+IA32_LSTAR (0xC0000082) - The kernel's RIP for SYSCALL in long mode (64-bit software)
+Basically, this all results in the global flag KiKvaShadow being checked.
+If the flag check for KiKvaShadow is TRUE, the normal system call handlers (KiSystemCall32 and KiSystemCall64) will not be used, and the shadow versions will be used instead.
+Further, if the processor is from AMD then the AMD variant will be used.
+When the SYSCALL instructions are executed, control is then transferred to the system call handlers immediately, which means those handlers have to be mapped in UserDirectoryTableBase as well.
+Figure 8 KiSystemCall64Shadow is Mapped
+Similarly, interrupt service routines (ISRs) also have shadow versions:
+Figure 9 ISR is Shadowed
+And these ISRs also have to be readily accessible.
+Figure 10 KiNmiInterruptShadow
+To illustrate how the address spaces get swapped back and forth, we will focus on one prime example: system calls.
+As before, we will intentionally gloss over the details.
+Any background information or details, if needed, can be found in Intel’s System Programming Guide (Volume 3).
+Figure 11 KiSystemCall64Shadow
+First, SWAPGS is used to exchange the current GS base register value with the value contained in MSR address C0000102H (IA32_KERNEL_GS_BASE).
+Initially, very little kernel memory is mapped (i.e.
+secure) so all important information has to be obtained through the GS segment.
+GS:6000h in turn contains the physical address of the base of PML4 (i.e.
+page directory for x64).
+Figure 12 Key Parameters in GS Segment
+A flag (gs:6018h) will be checked, and if swapping is needed then the base of PML4 (corresponding to the kernel address space) will be moved into CR3.
+At this point the kernel stack is finally accessible and everything works normally.
+We note that swapping may not always be needed as it may have already happened previously (for example, interrupt while servicing system calls).
+One subtle thing to notice is that after the new PML4 has been moved into CR3 the address space is switched instantaneously, and the very next instruction fetch happens on the new address space (private to the kernel).
+But since KiSystemCall64Shadow is mapped into the very same virtual address, everything “just works”.
+Figure 13 KiSystemCall64AmdShadow
+As can be seen here, the differences between the Intel version and the AMD version of the system call handler is quite minimal: both end up calling KiSystemCall64ShadowCommon, which in turn routes system calls as usual using KeServiceDescriptorTable (a.k.a.
+the System Service Descriptor/Dispatch Table - SSDT for short) or KeServiceDescriptorTableShadow (contains routine addresses in win32k.sys)
+Figure 14 Return From System Calls
+The address space gets secured before returning back to user mode through the sysret instruction.
+We applied the same analysis to the entries and exits of the kernel.
+Take, for example, the case of Interrupt Service Routines (ISRs).
+Figure 15 Interrupt Service Routines
+Figure 16 Exit From the Kernel
+We can see that the same design is applied to ISRs.
+Thanks to this clever design, it is a rather straightforward process to deduce its security strategy.
+Since only the entries and the exits (and a small amount of supporting data) is mapped it is clear, the kernel is therefore hardened against kernel attacks like Meltdown.
+Certainly, there is no such thing as a free lunch.
+Previously, when an application made a system call into the kernel or an interrupt was received, the kernel page tables were always present, so most context switching-related overheads (TLB flushing, page-table swapping, etc.)
+of KVAS were nonexistent.
+With KVAS, however, we can also expect that in syscall-heavy and interrupt-heavy workloads (e.g.
+heavy IOs like NVM Express SSD) that there will be degradation in performance.
+This could be severe in cloud services, such as what already happened with EpicGames:
+Overall, Kernel Virtual Address Shadow is an elegant feature.
+It gets the job done with what we consider to be a reasonable performance trade-off.
+As always, FortiGuard Labs will keep monitoring the threat landscape and keep everybody updated with insightful research.
+-= FortiGuard Lion Team =-
+Sign up for our weekly FortiGuard intel briefs or to be a part of our open beta of Fortinet’s FortiGuard Threat Intelligence Service.

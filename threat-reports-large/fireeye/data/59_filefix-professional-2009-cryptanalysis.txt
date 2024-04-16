@@ -1,0 +1,170 @@
+The Filefix Professional 2009 (wizard.exe) demo
+version will uncorrupt (read: decrypt) one file.
+Which means that
+I can learn everything I need to know to decrypt all files from analyzing
+just this binary itself.
+So, where to start looking?
+Well a file decryption routine is going to
+need to read and write files, so search for calls to ReadFile.
+Almost the first thing I find is a loop that calls ReadFile,
+has an inner loop that XOR's over each byte in the buffer, and
+then calls WriteFile.
+Hmmm… (See appendix.)
+Now all I need are some encrypted files.
+Filefix Pro doesn't encrypt
+anything itself, and I didn't have a sample of the malware which did.
+Fortunately (for me), we were in contact with some of the victims, so as
+soon as I had some samples it confirmed my suspicion about the encryption just being
+ECB-XOR.
+The only thing which took me more than a minute to figure out was
+that the crypto key was stored at the end of the file.
+(Since I had already
+figured out how to decrypt it without knowing the key.)
+Spending a little more time reading the binary, I also found the routine
+which checks for valid keys at the ends of files.
+This allows Filefix to tell
+corrupt and non-corrupt files apart when scanning the disk.
+There is a
+strict mathematical relationship between the four bytes of the key.
+Implemented as three simple boolean tests.
+If you do the math, this
+also means that there are only 256 possible valid keys.
+Using the key 0x6622CDAB as an example:
+Divide 0xCD by two, and compare to 0x66
+XOR 0xAB by 0x66 and compare to 0xCD
+AND 0xAB by 0x66 and compare to 0x22
+I have to wonder if the original was written in assembly too.
+Compilers generally don't generate code like this.
+By shuffling the math around a bit, you can generate all of the possible valid keys like this (in Perl)
+With a keyspace of only 255 valid keys out of 4,294,967,296, and assuming a
+perfectly random distribution (YMMV), there is a 1 in 16,843,009 chance that
+a non-encrypted file will be decrypted, and corrupted for-reals, since the
+last four bytes will be truncated.
+The file will also be (re-)encrypted,
+since this crypto function is its own inverse.
+(Well, almost, the missing
+key will stop Filefix from re-re-decrypting the file, except for one chance
+in 4,294,967,296, when the last four bytes of the encrypted file are the same
+as the last four bytes of the original file.
+There are 253 chances out of
+4,294,967,296 that it will re-re-re-encrypt the file again with a new key (with
+just the XOR's of the two wrong keys.)
+(If the keys form an Algebraic Group
+then this doesn't matter.)
+(Each time you go through this composition,
+you'll loose eight bytes from the end of the file.)
+(Ok my quick analysis of
+the keyspace leads me to believe that the XOR operator does not form a
+group over this set.)
+The second/third byte of the key… ok
+the $C or $key[2] byte from the above examples,
+can only have one of 34 possible values, and 0x03 is not
+one of them.
+But 0x01 and 0x02 are valid, so if you
+XOR'd them together the result would be 0x03, which is
+not valid.
+Therefore this keyspace is not closed under XOR and is not an Algebraic Group.
+(So you now have at most 2,147,483,648 possible keys, as
+the first byte (big-endian) will never have the high-bit set.)
+But anyway, yeah, there is a non-zero chance that Filefix will chop one of
+255 possible byte patterns off the end of your perfectly good file, and
+then be unable to re-decrypt it itself.
+(If this happens to you, you can
+XOR the first four bytes of the now for-reals corrupt file with the
+magic-number of that filetype's signature (i.e.
+"JFIF" for JPEGs, "%PDF"
+for PDFs, 0xD0CF11E0 for Office Documents.)
+and use that as
+the key, and put those four bytes back onto the end of the file.
+(I've never actually tried any of this, it's all purely hypothetical.)
+Anyway, you don't really need to know any of the above in order to decrypt a file…
+Filefix searches the entire filesystem for files with one of the following (28) extensions: "doc", "xls", "ppt", "pdf", "jpg", "jpeg", "png", "mp3", "wma", "mdb", "pst", "docx", "docm", "dotx", "dotm", "xlsx", "xlsm", "xltx", "xltm", "xlsb", "xlam", "pptx", "pptm", "potx", "potm", "ppam", "ppsx", "ppsm"
+"doc", "xls", "ppt", "pdf", "jpg", "jpeg", "png", "mp3",
+"wma", "mdb", "pst", "docx", "docm", "dotx", "dotm", "xlsx",
+"xlsm", "xltx", "xltm", "xlsb", "xlam", "pptx", "pptm", "potx",
+"potm", "ppam", "ppsx", "ppsm"
+It opens each file, and reads the last four bytes.
+If these four bytes satisfy a particular boolean formula (see above), then the file is corrupt, and the file is added to the to-decrypt list.
+satisfy a particular boolean formula (see above), then the file is corrupt,
+and the file is added to the to-decrypt list.
+Create a new file, which is this four byte key repeatedly XOR'd over the victim-file.
+Think of it as XOR in ECB mode with a 32-bit key.
+victim-file.
+Think of it as XOR in ECB mode with a 32-bit key.
+Don't write the key back out to the new file.
+The newly created file will be four bytes shorter than the encrypted file.
+Delete the encrypted file, and give the newly decrypted file the same filename as the original.
+(Filesystem metadata is not preserved.)
+be four bytes shorter than the encrypted file.
+Delete the encrypted file,
+and give the newly decrypted file the same filename as the original.
+(Filesystem metadata is not preserved.)
+Yeah, that's it.
+I don't have a sample of the trojan which performs this encryption, but
+based upon other people's reports, these are my deductions and speculations:
+The installer for this malware [Vundo?]
+has the MD5 hash of d54340d03ebf417ac29ce5a087e944c2 (UPX packed) and injects C:\WINDOWS\SYSTEM32\fpfstb.dll into the explorer.exe process using InjectLibraryRemote.
+[Information via Norman Sandbox (Mar-08-2009) and Bleeping Computer] There may be other variants of this malware.
+See Also: http://www.virustotal.com/analisis/63f02eea746bdf7b784dfaf9d3a0369e
+The installer for this malware [Vundo?]
+has the MD5 hash of
+d54340d03ebf417ac29ce5a087e944c2 (UPX packed) and injects
+C:\WINDOWS\SYSTEM32\fpfstb.dll into the explorer.exe process using
+InjectLibraryRemote.
+[Information via Norman Sandbox (Mar-08-2009) and
+Bleeping Computer] There may be other variants of this malware.
+From the decryption algorithm above, we can deduce the encryption algorithm.
+The malware generates a random (maybe?)
+key like this (except not using Perl obviously): $B = 255 * rand(); # There's probably a test for (0==$B) in the malware $D = $B >> 1; $A = $B ^ $D; $C = $A & $D; print sprintf("%02x%02x%02x%02x\n", $A, $B, $C, $D); Create a new file, which is this key repeatedly XOR'd over the victim-file.
+Think of it as XOR in ECB mode with a 32-bit key.
+Append the four byte key to the end of the new corrupted file, and delete the original.
+The new file grows by four bytes longer than the original.
+Apparently the filenames match up, but no other metadata.
+The malware generates a random (maybe?)
+key like this (except not using Perl obviously): $B = 255 * rand(); # There's probably a test for (0==$B) in the malware $D = $B >> 1; $A = $B ^ $D; $C = $A & $D; print sprintf("%02x%02x%02x%02x\n", $A, $B, $C, $D);
+Create a new file, which is this key repeatedly XOR'd over the victim-file.
+Think of it as XOR in ECB mode with a 32-bit key.
+victim-file.
+Think of it as XOR in ECB mode with a 32-bit key.
+Append the four byte key to the end of the new corrupted file, and delete the original.
+The new file grows by four bytes longer than the original.
+Apparently the filenames match up, but no other metadata.
+delete the original.
+The new file grows by four bytes longer than the
+original.
+Apparently the filenames match up, but no other metadata.
+According to victim reports, the trojan encrypts all of the files (matching above extension list) within the My Documents directory, and then files in other locations, only when opened.
+This makes me wonder if the trojan has hooked a function or two in explorer.exe and is only encrypting on file open or close, and that everything ending up encrypted under My Documents is a side effect of another benign system process scanning through the files.
+(This is pure speculation on my part.)
+(matching above extension list) within the My Documents directory, and
+then files in other locations, only when opened.
+This makes me wonder if
+the trojan has hooked a function or two in explorer.exe and is only
+encrypting on file open or close, and that everything ending up encrypted
+under My Documents is a side effect of another benign system process
+scanning through the files.
+(This is pure speculation on my part.)
+Puts an icon into the Windows System Tray, which pops up balloons about fixing corrupt files.
+Apparently directs you to the Filefix Professional 2009 website.
+fixing corrupt files.
+Apparently directs you to the Filefix Professional
+Please be aware, I can not vouch for any of these, as I have not tested
+them at all.
+Use at your own risk; if it
+breaks you get to keep the pieces, [include standard disclaimers here].
+Boban Spasic [malzilla.org] wrote a batch decryptor in Delphi (I think, but
+it's a Windows EXE so you don't have to care), which is probably the easiest
+option currently if you don't know how to program.
+Aaron Atwater [Dalhousie University] wrote a batch decrptor in Java.
+Available here:
+There's my own hastily written proof-of-concept Perl script [See
+entry], which you probably shouldn't use if you don't know Perl.
+I should have mentioned, the instructions for Bobby's tool (linked above) are at: http://www.bleepingcomputer.com/virus-removal/remove-filefix-professional
+Thanks to everyone I mentioned, and anyone I forgot.
+Thanks also go to Dan and Travis (via Devshed) who sent me some encrypted files.
+Ok, you can stop reading now.
+The Filefix Pro 2009 executable I examined has the following properties:
+Build Time: Wed Mar 18 09:03:10 2009
+Julia Wolf @ FireEye Malware Intelligence Lab
+Questions/Comments to research [@] fireeye .
+com

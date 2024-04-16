@@ -1,0 +1,95 @@
+In the previous blog from FortiGuard Labs in this series, we discussed how to monitor process execution with command line arguments using MACF on macOS.
+In this blog, we will continue to discuss how to monitor file system events (including file open, read, write, rename, and delete operations) and dynamic library loading via MACF on macOS.
+I will provide all the technical details below.
+Let’s get started
+It’s very common for a regular program to perform file operations during its lifecycle.
+The malware on macOS is the same.
+In general, malware can make a mess of file operations.
+Additionally, malware often dynamically loads a .dylib as its main module to performs its primary malicious activities.
+As seen from our previous blog, MACF is a powerful framework for monitoring many kinds of system events in kernel on macOS.
+It is certainly able to monitor file system and dylib loading events very well.
+The tool I developed can monitor all common file system events, including file open, read, write, rename, and delete operations.
+As shown in the header file bsd/security/mac_policy.h, the structure mac_policy_ops includes more than 300 policy module operations.
+The operations related to file system events are listed below.
+The initialization of the structure mac_policy_ops is as follows.
+I divided the five callbacks of file operations into two categories depending on their implementation.
+One includes file open, read, write, and delete operations, and the other one is the file rename operation.
+For the first category, we chose file delete operation to use as an example for showing technical details.
+The others operations in this category are similar to the callback for the file delete operation.
+The callback of the file delete operation is mpo_vnode_check_unlink.
+Its declaration is shown below.
+It requires six parameters.
+The implementation of the callback deleteFileHook is shown next.
+We can use the function vn_getpath to get the path to a vnode to delete.
+That is the path of the file to be deleted.
+And we can also get uid, pid, ppid, respectively, by invoking the functions kauth_getuid(), proc_selfpid(), and proc_selfppid().
+We then get the process name by invoking the function proc_selfname, and get the parent process name by invoking proc_name.
+Next, we fill out the data buffer with the useful info obtained by us.
+Finally, we send the data buffer using the function ctl_enqueuedata.
+Next, we’ll continue to look at the callback of the file rename operation.
+The callback of file rename operation is a little different from the callback of other file operations.
+In this callback, we need to obtain both the original path and destination path of the file.
+The following is a code snippet for obtaining the full path of the file to be renamed.
+The variable vp represents the vnode to be renamed.
+We can get its name by invoking the function vnode_getname().
+The variable dvp represents the directory vnode.
+We can then get the path of the directory by invoking the function vn_getpath().
+Finally, we get the full path of the file to be renamed by jointing the two parts with the character ‘/’.
+At the beginning, I also used this same process to get the destination path of the file to be renamed.
+However, sometimes the variable tvp is NULL, so I then get the destination vnode name by tcnp->cn_nameptr instead of vnode_getname(tvp).
+The variable tcnp is a pointer to the structure componentname, which is defined as follows:
+Its member variable cn_nameptr is a pointer to the looked up name.
+So far, we have obtained the original and destination path of the file to be renamed.
+The rest of the work is the same as the file delete operation.
+Finally, I show the tool for monitoring file system events on macOS.
+The dynamic loader, dyld is designed to dynamically link and load the dynamic libraries on the macOS platform.
+The dynamic library has the extension .dylib, which is similar to DLL files on the Windows operating system, and the .so files on the Linux operating system.
+In order to monitor a dylib loading event, we first need to understand how the dyld dynamic loader works inside.
+The dyld is open sourced by Apple at https://opensource.apple.com/source/dyld/dyld-519.2.2/.
+In this blog, I do not plan to provide the entire process of analyzing source code.
+You can read the dyld’s source code for that.
+Here, I only provide the key analysis of code.
+The following is a code snippet of the function mapSegments of the class ImageLoadMachO.
+This function is used to map the segments in Mach-O binary into virtual memory.
+It uses the function xmmap, which is a wrapper of the function mmap used to perform the mapping.
+The manual page of the function mmap can be found at https://developer.apple.com/legacy/library/documentation/Darwin/Reference/ManPages/man2/mmap.2.html.
+Because the dylib is an executable program, we only focus on the segment with PROT_EXEC privilege.
+The parameter flags in the function mmap is taken with MAP_FIXED | MAP_PRIVATE.
+In the structure mac_policy_ops, the module operation mpo_file_check_mmap is used to check the access control for mapping a file.
+We only filter the mapping with PROT_EXEC privilege and MAP_FIXED | MAP_PRIVATE flags.
+The declaration of the callback mpo_file_check_mmap_t is shown below:
+The following is the implementation of callback for monitoring the dylib loading event.
+The 4th parameter prot, and the 5th parameter flags are from the system called mmap.
+The constant variable for PROT_EXEC is 0x04, for MAP_FIXED is 0x10, and for MAP_PRIVATE is 0x02, which are defined in the header file bsd/sys/mman.h.
+The expression ((prot & 0x4) && (flags & 0x12)) is used to filter the mapping with PROT_EXEC privilege and MAP_FIXED | MAP_PRIVATE flags.
+The other significant parameter is the 2nd one.
+It is a pointer to the structure fileglob, which is defined in the header file bsd/sys/file_internal.h.
+Since the structure file glob is a private type, the head file file_internal.h cannot be imported in XCode.
+Therefore, we need to calculate the corresponding offset of the member variables in the structure fileglob, rather than directly getting the values through fg->fg_data, fg->fg_cred, and fg->fg_ops->fo_type in XCode.
+The structure fileglob represents the file to the map.
+So I need to find the vnode data structure inside it.
+We can see that the member variable fg_data represents either a vnode or socket or SHM or semaphore, depending on the descriptor type.
+The member variable fo_type of the structure fileops simply represents the descriptor type.
+We only filter the file type, which represents that fo_type is equal to DTYPE_VNODE.
+The member variable fg_cred represents the credential associated with the descriptor.
+It’s offset in structure fileglob is 0x20, so I check if the credentials match.
+If so, we next continue to check if the fo_type is DTYPE_VNODE.
+If it’s the type of vnode we are looking for, we calculate the offset of fg_data in the structure file glob.
+The offset is equal to 0x38.
+At this point, the variable fg_data represents the vnode.
+Once we have the vnode, we’re able to obtain the path via invoking the function vn_getpath.
+So far, I discussed the key technical details regarding how to monitor the dylib loading event.
+Finally, I’ll show the screenshot of this tool.
+After launching Safari and Wireshark, we can see that my tool can monitor the dylib loading event very well.
+In this blog, we discussed the key technical details regarding how to monitor file system events and dylib loading events using MACF.
+It is very useful for monitoring malicious behaviors of malware on macOS.
+The other significant behavior of malware is network activity.
+In the next blog I will discuss how to monitor network activities (udp, tcp, DNS query and response, etc.)
+in the kernel on macOS.
+You are invited to stay tuned!
+1.
+MacOS and iOS Internals, Volume III: Security & Insecurity By Jonathan Levin
+2.
+Mac OS X Internals: A Systems Approach By Amit Singh
+3. https://opensource.apple.com/source/dyld/dyld-519.2.2/
+Sign up for our weekly FortiGuard intel briefs or to be a part of our open beta of Fortinet’s FortiGuard Threat Intelligence Service.

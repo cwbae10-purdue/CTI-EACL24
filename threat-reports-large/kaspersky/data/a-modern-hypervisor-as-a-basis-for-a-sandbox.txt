@@ -1,0 +1,99 @@
+In the field of information security, sandboxes are used to isolate an insecure external environment from a secure internal environment (or vice versa), to protect against the exploitation of vulnerabilities, and to analyze malicious code.
+At Kaspersky Lab, we have several sandboxes, including an Android sandbox.
+In this article, we will look at just one of them that was customized to serve the needs of a specific product and became the basis of Kaspersky Anti Targeted Attack Platform.
+This particular sandbox is an analysis system for Windows applications that helps automate the analysis and detection of malicious code, conduct research and promptly detect the latest types of attacks.
+There are several ways of implementing a sandbox to perform dynamic analysis of malicious code.
+For example, the following methods can be used:
+Standard emulation, interception of functions in the user space and in the kernel space;
+Information from kernel callback functions and from various filter drivers;
+Hardware virtualization.
+Combinations of these methods are also possible.
+Practice has shown that implementation of full-fledged emulation is a costly affair as it requires continuous support and enhancements to the emulation of API functions, as well as increased attention to execution evasion and emulation detection techniques.
+Interceptors didn’t last too long either: malware learned to bypass them using relatively simple methods, ‘learning’ to identify if they are present and refusing to execute their malicious payload to avoid detection.
+Methods to detect and bypass splicing have been known for years – it’s sufficient to check or trace the prologues of popular API functions or build your own prologues to bypass an interceptor (the latter is used by cryptors and packers).
+Moreover, splicing technology itself is fairly unstable in a multithreaded environment.
+It’s also obvious that in a user space the level of isolation of malicious code from interceptors is effectively zero, because the operating system itself is modified – something that is very conspicuous.
+And that’s not all.
+In order to receive the results for the execution of an API function, it’s necessary to regain control after its execution, which is typically done by rewriting the return address.
+This mechanism has also proven unstable.
+However, the biggest headache came with the attempt to transfer this sort of mechanism to new operating systems.
+Therefore, if a security solution vendor claims their sandbox uses splicing of API functions, takes events from the Windows kernel and is “amazing, unique, undetectable and produces near-100% results”, we recommend you avoid them like the plague.
+Some vendors may be perfectly happy with that sort of quality, but we definitely aren’t.
+Having taken note of all the above facts (and a number of others), we have implemented our own sandbox based on hardware virtualization.
+At the current time this is an optimal solution in terms of balance between performance, extendibility and isolation.
+A hypervisor provides a good degree of isolation of the guest virtual machine from the host by ensuring control over CPU and RAM.
+At the same time, modern processors have a minimal impact on performance when virtualization is used.
+The hardware for our sandbox has been acquired at different times over recent years, and is still being added to, so its infrastructure is rather diverse.
+Today, we have around 75 high-performance servers deployed, constituting four nodes in three data centers; in total, there are some 2500 vCPUs.
+We use a variety of hardware types, from M2 systems and blade servers to M5 systems running Intel Xeon E5, with support for the technologies we need.
+Up to 2000 virtual machines are running at any given time.
+Up to four million objects per day are processed by the service at peak times, and around two million at off-peak times.
+For Internet access within the sandbox, about 15 channels are used, the details of which we prefer not to disclose.
+Outgoing traffic from the node reaches 5 Gb/s at peak times and 2 Gb/sec at off-peak times.
+Our sandbox consists of multiple components, each of which is responsible for designated functions.
+The transport subsystem communicates with the outside world, receives commands from the outside and passes on the collected information.
+There are subsystems that perform file and network interactions, monitor threads/processes and references to the Windows registry.
+The logging subsystem collects the input and output information of API functions.
+There is also a component in the system that emulates user actions.
+In addition, we have included an option to create and use plugins, so the functional capabilities can be extended.
+The advantage of our solution is its broad functionality, plus the logging system can be installed on any operating system or on actual hardware.
+The image of the guest operating system can be customized to suit the client’s needs.
+Our analysts can also create dedicated subprograms to perform detection based on collected artifacts, as well as carry out different types of research.
+These subprograms include those that operate within the sandbox in real time.
+Depending on the type of file that comes in for processing, it will be ‘packed’ by the Task Processor component into a special kind of packet that contains additional information on how the file should be launched, which operating system to select, the amount of time for processing, etc.
+After that, another component, the Task Executor, performs the following actions:
+Launches virtual machine;
+Submits file;
+Applies extra configuration to guest operating system;
+Executes file;
+Waits until execution is complete;
+Scans and/or transfers collected artifacts.
+The following artifacts are collected by Kaspersky Lab’s sandbox:
+Program’s execution log (all API function calls with all parameters, plus some events);
+Dumps of various memory ranges, loaded modules etc.
+;
+All types of changes in file system and system registry;
+PCAP files containing networking data;
+Screenshots.
+The central mechanism of Kaspersky Lab’s sandbox is the logging subsystem that implements the method of non-invasive interception of called API functions and the return values.
+This means the subsystem is capable of ‘suspending’ the thread of the process being investigated at those moments when it calls an API function or returns from it, and of processing that event synchronously.
+All this takes place without any modifications to the code.
+For each page of the virtual address space, we introduce an attribute of that page’s association with the DLL Known Module (KM).
+At any given point in time for a particular thread, either the pages that have the KM attribute installed are executable, or those pages where it has not been installed, but never both at the same time.
+This means that when an API function call is attempted, control is delegated to the KM page which at that moment is not executable according to the above rule.
+The processor generates an exception, which results in an exit to the hypervisor, and that event is processed.
+The exact opposite takes place when the API function returns control.
+The left-hand side of the above diagram represents the memory of a typical process: the areas highlighted in red are those where execution of instructions is disabled, and the areas in green are those where execution of instructions is enabled.
+The right of the diagram shows the same process in two states: execution is enabled in the system libraries or elsewhere, but never both at the same time.
+Accordingly, if you learn how to turn the entire address space of user mode red at the right time, you can catch the returns from system calls.
+For all of this to work, copies of original address space page tables are introduced.
+They are used to translate the virtual address into a physical address.
+In one of the copies, the pages with the KM attribute are executable, and the pages without the KM attribute are non-executable.
+In the other copy, it is the other way around.
+Each record in this sort of table corresponds to a certain page of the virtual address space and, among other things, has the NX attribute that tells the processor if it can execute the instructions on that page.
+The above rule defines the content of this attribute, depending on the copy and the page’s association with KM.
+To keep the copies of page tables up to date, there is a module in the subsystem that reacts synchronously to changes in the original address space and, in accordance with our rules, makes those changes to the copies of the address spaces.
+The operating system, meanwhile, is unaware of the fact that it is running on copies of the original address space, and as far as it is concerned everything is transparent.
+Modern malware uses a whole variety of methods to evade execution of code that may expose malicious activity.
+The following techniques are used most frequently:
+Detecting a virtual runtime environment (a sandbox, emulator, etc.)
+from indirect evidence;
+‘Targeted’ execution: malicious activity is exposed only if the program is launched in the right/required runtime environment, at a specific time, etc.
+If malicious code detects a research environment, the following (or more) may happen:
+Instantaneous termination;
+Self-destruction;
+Execution of a useless section of code;
+Execution of a secure section of code;
+Attempt to compromise the detected research system;
+Other.
+If the system does not meet the required parameters, the malicious program may perform any of the above, but most probably it will destroy itself so that it leaves no traces in the system.
+Sandbox developers need to pay particular attention to evasion techniques, and Kaspersky Lab is no exception.
+We find out about these techniques from a variety of sources, such as public presentations, articles, open-source tools (e.g.
+Pafish) and, of course, from analyzing malicious code.
+Along with the continuous improvements we make to our sandbox, we have also implemented automated randomization of various guest environment parameters to reduce execution evasion rates.
+As a result of the Vault 7 leak, we discovered the following information about a potential method for evading code execution in our sandbox:
+“The Trojan Upclicker (as reported by eEye) uses the SetWindowsHookExA API with the WH_MOUSE_LL parameter to wait until the user lets up the left mouse button (WM_LBUTTONUP) before performing any malicious functionality (then it injects into Explorer.exe).
+A sandbox environment that does not mimic mouse actions (probably most of them) will never execute the malicious behavior.
+This is probably effective against Kaspersky and others.”
+This was an interesting assumption, so we immediately checked it.
+We implemented a console-based application (the source code is attached, so readers can use it to check their sandboxes), and it was little surprise that the function ExecuteEvil() executed successfully.

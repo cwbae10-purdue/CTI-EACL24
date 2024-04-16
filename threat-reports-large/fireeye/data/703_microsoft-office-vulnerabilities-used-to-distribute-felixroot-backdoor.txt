@@ -1,0 +1,102 @@
+In September 2017, FireEye identified the FELIXROOT backdoor as a payload in a campaign targeting Ukrainians and reported it to our intelligence customers.
+The campaign involved malicious Ukrainian bank documents, which contained a macro that downloaded a FELIXROOT payload, being distributed to targets.
+FireEye recently observed the same FELIXROOT backdoor being distributed as part of a newer campaign.
+This time, weaponized lure documents claiming to contain seminar information on environmental protection were observed exploiting known Microsoft Office vulnerabilities CVE-2017-0199 and CVE-2017-11882 to drop and execute the backdoor binary on the victim’s machine.
+Figure 1 shows the attack overview.
+Figure 1: Attack overview
+The malware is distributed via Russian-language documents (Figure 2) that are weaponized with known Microsoft Office vulnerabilities.
+In this campaign, we observed threat actors exploiting CVE-2017-0199 and CVE-2017-11882 to distribute malware.
+The malicious document used is named “Seminar.rtf”.
+It exploits CVE-2017-0199 to download the second stage payload from 193.23.181.151 (Figure 3).
+The downloaded file is weaponized with CVE-2017-11882.
+Figure 2: Lure documents
+Figure 3: Hex dump of embedded URL in Seminar.rtf
+Figure 4 shows the first payload trying to download the second stage Seminar.rtf.
+Figure 4: Downloading second stage Seminar.rtf
+The downloaded Seminar.rtf contains an embedded binary file that is dropped in %temp% via Equation Editor executable.
+This file drops the executable at %temp% (MD5: 78734CD268E5C9AB4184E1BBE21A6EB9), which is used to drop and execute the FELIXROOT dropper component (MD5: 92F63B1227A6B37335495F9BCB939EA2).
+The dropped executable (MD5: 78734CD268E5C9AB4184E1BBE21A6EB9) contains the compressed FELIXROOT dropper component in the Portable Executable (PE) binary overlay section.
+When it is executed, it creates two files: an LNK file that points to %system32%\rundll32.exe, and the FELIXROOT loader component.
+The LNK file is moved to the startup directory.
+Figure 5 shows the command in the LNK file to execute the loader component of FELIXROOT.
+Figure 5: Command in LNK file
+The embedded backdoor component is encrypted using custom encryption.
+The file is decrypted and loaded directly in memory without touching the disk.
+After successful exploitation, the dropper component executes and drops the loader component.
+The loader component is executed via RUNDLL32.EXE.
+The backdoor component is loaded in memory and has a single exported function.
+Strings in the backdoor are encrypted using a custom algorithm that uses XOR with a 4-byte key.
+Decryption logic used for ASCII strings is shown in Figure 6.
+Figure 6: ASCII decryption routine
+Decryption logic used for Unicode strings is shown in Figure 7.
+Figure 7: Unicode decryption routine
+Upon execution, a new thread is created where the backdoor sleeps for 10 minutes.
+Then it checks to see if it was launched by RUNDLL32.exe along with parameter #1.
+If the malware was launched by RUNDLL32.exe with parameter #1, then it proceeds with initial system triage before doing command and control (C2) network communications.
+Initial triage begins with connecting to Windows Management Instrumentation (WMI) via the “ROOT\CIMV2” namespace.
+Figure 8 shows the full operation.
+Figure 8: Initial execution process of backdoor component
+Table 1 shows the classes referred from the “ROOT\CIMV2” and “Root\SecurityCenter2” namespace.
+Table 1: Referred classes
+SELECT Caption FROM Win32_TimeZone
+SELECT CSNAME, Caption, CSDVersion, Locale, RegisteredUser FROM Win32_OperatingSystem
+SELECT Manufacturer, Model, SystemType, DomainRole, Domain, UserName FROM Win32_ComputerSystem
+Registry entries are read for potential administration escalation and proxy information.
+Registry key “SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System ” is queried to check the values ConsentPromptBehaviorAdmin and PromptOnSecureDesktop.
+Registry key “Software\Microsoft\Windows\CurrentVersion\Internet Settings\” is queried to gather proxy information with values ProxyEnable, Proxy: (NO), Proxy, ProxyServer.
+Table 2 shows FELIXROOT backdoor capabilities.
+Each command is performed in an individual thread.
+Fingerprint System via WMI and Registry
+Drop File and execute
+Terminate connection with C2
+Download and run batch script
+Download file on machine
+Table 2: FELIXROOT backdoor commands
+Figure 9 shows the log message decrypted from memory using the same mechanism shown in Figure 6 and Figure 7 for every command executed.
+Figure 9: Command logs after execution
+FELIXROOT communicates with its C2 via HTTP and HTTPS POST protocols.
+Data sent over the network is encrypted and arranged in a custom structure.
+All data is encrypted with AES, converted into Base64, and sent to the C2 server (Figure 10).
+Figure 10: POST request to C2 server
+All other fields, such as User-Agents, Content-Type, and Accept-Encoding, that are part of the request / response header are XOR encrypted and present in the malware.
+The malware queries the Windows API to get the computer name, user name, volume serial number, Windows version, processor architecture and two additional values, which are “1.3” and “KdfrJKN”.
+The value “KdfrJKN” may be used as identification for the campaign and is found in the JOSN object in the file (Figure 11).
+Figure 11: Host information used in every communication
+The FELIXROOT backdoor has three parameters for C2 communication.
+Each parameter provides information about the task performed on the target machine (Table 3).
+This parameter contains target machine information in the following format:
+<Computer Name>, <User Name>, <Windows Versions>, <Processor Architecture>, <1.3>, < KdfrJKN >, <Volume Serial Number>
+This parameter includes the information about the command executed and its results.
+This parameter contains the information about data associated with the C2 server.
+Table 3: FELIXROOT backdoor parameters
+All data is transferred to C2 servers using AES encryption and the IbindCtx COM interface using HTTP or HTTPS protocol.
+The AES key is unique for each communication and is encrypted with one of two RSA public keys.
+Figure 12 and Figure 13 show the RSA keys used in FELIXROOT, and Figure 14 shows the AES encryption parameters.
+Figure 12: RSA public key 1
+Figure 13: RSA public key 2
+Figure 14: AES encryption parameters
+After encryption, the cipher text to be sent over C2 is Base64 encoded.
+Figure 15 shows the structure used to send data to the server, and Figure 16 shows the structural representation of data used in C2 communications.
+Figure 15: Structure used to send data to server
+Figure 16: Structure used to send data to C2 server
+The structure is converted to Base64 using the CryptBinaryToStringA function.
+FELIXROOT backdoor contains several commands for specific tasks.
+After execution of every task, the malware sleeps for one minute before executing the next task.
+Once all the tasks have been executed completely, the malware breaks the loop, sends the termination buffer back, and clears all the footprints from the targeted machine:
+Deletes the LNK file from the startup directory.
+Deletes the registry key HKCU\Software\Classes\Applications\rundll32.exe\shell\open
+Deletes the dropper components from the system.
+CVE-2017-0199 and CVE-2017-11882 are two of the more commonly exploited vulnerabilities that we are currently seeing.
+Threat actors will increasingly leverage these vulnerabilities in their attacks until they are no longer finding success, so organizations must ensure they are protected.
+At this time of writing, FireEye Multi Vector Execution (MVX) engine is able to recognize and block this threat.
+We also advise that all industries remain on alert, as the threat actors involved in this campaign may eventually broaden the scope of their current targeting.
+Table 4: FELIXROOT IOCs
+Accept-Encoding: gzip, deflate
+Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 6.1; Trident/4.0; SLCC2; .NET CLR 2.0.50727; .NET CLR 3.5.30729; .NET CLR 3.0.30729; Media Center PC 6.0; .NET4.0C; .NET4.0E; InfoPath.2)
+Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 6.1; SLCC2; .NET CLR 2.0.50727; .NET CLR 3.5.30729; .NET CLR 3.0.30729; Media Center PC 6.0; .NET4.0C; .NET4.0E; InfoPath.2)
+Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 6.1; Trident/4.0; SLCC2; .NET CLR 2.0.50727; .NET CLR 3.5.30729; .NET CLR 3.0.30729; Media Center PC 6.0; .NET4.0C; .NET4.0E; InfoPath.2)
+Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 6.1; Trident/4.0; SLCC2; .NET CLR 2.0.50727; .NET CLR 3.5.30729; .NET CLR 3.0.30729; Media Center PC 6.0; .NET4.0C; .NET4.0E; InfoPath.2)
+{"1" : "https://88.198.13.116:8443/xmlservice","2" : "30","4" : "GufseGHbc","6" : "3", "7" :
+{"1" : "https://217.12.204.100/news/","2" : "30","4" : "KdfrJKN","6" : "3", "7" :
+Table 5: FireEye Detections
+Special thanks to Jonell Baltazar, Alex Berry and Benjamin Read for their contributions to this blog.

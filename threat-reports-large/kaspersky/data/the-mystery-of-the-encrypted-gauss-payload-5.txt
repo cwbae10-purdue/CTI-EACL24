@@ -1,0 +1,78 @@
+There are many remaining mysteries in the Gauss and Flame stories.
+For instance, how do people get infected with the malware?
+Or, what is the purpose of the uniquely named Palida Narrow font that Gauss installs?
+Perhaps the most interesting mystery is Gauss encrypted warhead.
+Gauss contains a module named Godel that features an encrypted payload.
+The malware tries to decrypt this payload using several strings from the system and, upon success, executes it.
+Despite our best efforts, we were unable to break the encryption.
+So today we are presenting all the available information about the payload in the hope that someone can find a solution and unlock its secrets.
+We are asking anyone interested in cryptology and mathematics to join us in solving the mystery and extracting the hidden payload.
+Infected USB sticks have two files that contain several encrypted sections.
+Named System32.dat and System32.bin, they are 32-bit and 64-bit versions of the same code.
+These files are loaded from infected drives using the well-known LNK exploit introduced by Stuxnet.
+Their primary goal is to extract a lot of information about the victim system and write it back to a file on the drive named .thumbs.db.
+Several known versions of the files contain three encrypted sections (one code section, two data sections).
+The decryption key for these sections is generated dynamically and depends on the features of the victim system, preventing anyone except the designated target(s) from extracting the contents of the sections.
+By the way, the 64-bit version of the module has some debug information left in it.
+The module contains debug assertion strings and names of the modules:
+.loader.cpp
+NULL != encSection
+Path
+NULL != pathVar && curPos < pathVarSize
+NULL != progFilesDirs && curPos < progFilesDirsSize
+NULL != isExpected
+NULL != key
+(NULL != result) && (NULL !=str1) && (NULL != str2)
+.encryption_funcs.cpp
+The mysterious encrypted data is stored in three sections:
+The files also contain an encrypted resource 100 that seems to be the actual payload, given the relatively small size of the encrypted sections.
+It is most likely that the section .exsdat contains the code for decrypting the resource and executing its contents.
+The code that decrypts the sections is very complex compared to any regular routine we usually find in malware.
+Here is a brief description of the algorithm:
+Make a list of all entries from GetEnvironmentVariableW(Path), split by separator ; Append the list with all entries returned by FindFirstFileW / FindNextFileW by mask %PROGRAMFILES%*, where cFileName[0] > 0x007A (UNICODE z)
+Make a list of all entries from GetEnvironmentVariableW(Path), split by separator ;
+Append the list with all entries returned by FindFirstFileW / FindNextFileW by mask %PROGRAMFILES%*, where cFileName[0] > 0x007A (UNICODE z)
+Note: in essence, this means the specific program which is installed in %PROGRAMFILES% has a name which starts either with a special char such as ~, as in our example, or uses an UNICODE special char table, such as Arabic or Hebrew, where all chars are higher than 0x007A.
+Make all possible pairs from the entries of the resulting list.
+For each pair, append the first hard-coded 16-byte salt and calculate MD5 hash.
+Make all possible pairs from the entries of the resulting list.
+For each pair, append the first hard-coded 16-byte salt and calculate MD5 hash.
+Example of the string pair, second string starting from ~dir and first salt
+Calculate MD5 hash from the hash ( i.e.
+hash = md5(hash) ), 10000 times.
+Compare if the MD5 hash matches the hard-coded value.
+If not, then exit.
+The sections are decrypted in the following order: .exsdat, .exrdat, .exdat
+Use the PATH/PROGRAMFILES pair that was used to generate the expected MD5 hash in the validation code above.
+Append the pair with the second hard-coded 16-byte salt and bytes 0x15, 0x00
+Use the PATH/PROGRAMFILES pair that was used to generate the expected MD5 hash in the validation code above.
+Append the pair with the second hard-coded 16-byte salt and bytes 0x15, 0x00
+Example of the string pair, second string starting from ~dir and first salt
+Calculate MD5 hash from the resulting buffer.
+Calculate MD5 hash from the hash ( i.e.
+hash = md5(hash) ), 10000 times.
+Derive the RC4 key from the resulting hash using WinAPIs CryptDeriveKey(hProv, CALG_RC4, hBaseData, 0, &hKey).
+Decrypt the section (RC4), treating its first DWORD as the length of the buffer to decrypt and encrypted buffer starting at offset 4 of the section.
+Compare DWORDs in the decrypted buffer at positions 0 or 7 with magic value 0x20332137.
+Proceed only if any of the DWORDs match.
+Increase the last WORD in the pair+salt buffer (the one initially set to 0x0015) by 1.
+Decrypt another section, goto 3.
+After all the sections are decrypted: call the function at the beginning of the .exsdat section.
+The string pair is created by concatenating the strings.
+The strings and the salt buffer are not separated by any character.
+Sample test Strings, Unicode (without quotes):
+“C:Documents and SettingsjohnLocal SettingsApplication DataGoogleChromeApplication”
+“~dir1”
+First salt, hex dump: 97 48 6C AA 22 5F E8 77 C0 35 CC 03 73 23 6D 51
+MD5 at validation step 6: 76405ce7f4e75e352c1cd4d9aeb6be41
+Second salt, hex dump: BB 49 4E 77 F9 25 EE C0 3B 89 FC ED C2 22 4A 21
+MD5 at decryption step 5: 00916031b3e9513044436ee42b6aa273
+We have tried millions of combinations of known names in %PROGRAMFILES% and Path, without success.
+The check for the first character of the folder in %PROGRAMFILES% indicates that the attackers are looking for a very specific program with the name written in an extended character set, such as Arabic or Hebrew, or one that starts with a special symbol such as “~”.
+Of course, it is obvious that it is not feasible to break the encryption with a simple brute-force attack.
+We are asking anyone interested in breaking the code and figuring out the mysterious payload to join us.
+The resource section is big enough to contain a Stuxnet-like SCADA targeted attack code and all the precautions used by the authors indicate that the target is indeed high profile.
+We are providing the first 32 bytes of encrypted data and hashes from known variants of the modules.
+If you are a world class cryptographer or if you can help us with decrypting them, please contact us by e-mail: theflame@kaspersky.com.
+We are providing up to 32 bytes from the beginning of each encrypted section, skipping the DWORD that contains the length of the encrypted buffer.
+Please contact us by e-mail theflame@kaspersky.com if you need more encrypted data.

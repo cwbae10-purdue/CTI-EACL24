@@ -1,0 +1,68 @@
+The malicious binary behind the Travnet botnet has been updated.
+The new code has a new compression algorithm, steals the list of running processes, adds new file extensions to its list of files to steal, and has improved its control commands.
+Also, after the malware has uploaded the stolen files on its remote server, the bot installs the malicious PCRat remote administration tool (RAT), which can take full control of the victim’s machine.
+The control server and the list of file extensions are hard coded in the binary with a simple XOR key.
+Here is a look at the hard-coded XOR and decoded strings:
+The bot steals files with the extensions .doc, .docx, .ppt, .pptx, .xls, .xlsx, .rtf, .pdf, .dwg, .cdw, and .cdr as well as source code files such as “.c” from the victim’s machine.
+The three new file extensions:
+.dwg = used by CAD applications
+.cdw = used by CAD applications
+.cdr = used by CorelDraw applications
+The bot copies the main binary into the %TEMP% folder with the name cmss.exe, creates the startup link seruvice.lnk, and creates the mutex Assassin.
+The old Travnet bot used to initially steal a lot of information about a victim’s machine, but the new binary collects only the list of running processes on the system.
+Here is a snippet of code from the new binary:
+The bot creates process.dll in the %TEMP% folder and writes all running processes in it.
+The malware then compresses the file data using an algorithm similar to LZSS.
+The bot generates its own format with the magic string “Begin” and appends the compressed data to it.
+This formatted data is encoded with a custom Base64 algorithm before being sent over the wire.
+New Algorithm
+In my earlier blog, I wrote about the old Travnet bot’s using a variant of LZSS compression with sliding window of 65KB.
+The output of the compression was straightforward, reading bits from the start to the end of the full stream.
+The new binary modifies this algorithm, using 1,024 bytes in a sliding window and requires a fixed 10 bits to store the offset.
+The algorithm outputs 9 bits for a single byte (1 bit for the flag and 9 bits for literal) and 11 bits for flag and offset.
+The length of the match is written in a special way.
+To make standard decompression difficult, the bot writes the output byte in a different way by writing MSB bits into LSB bits in the output.
+This means you can’t treat the first bit of whole steam as a flag bit.
+The compression algorithm needs to maintain the previously written bits count to avoid losing all bits.
+Here is a look at the pseudo code for the new algorithm:
+The compressed data is appended to a 15-byte custom header:
+The structure of the custom format:
+2 bytes = compressed length
+2 bytes = compressed length
+5 bytes = string “Begin”
+1 byte = space
+4 bytes = random number
+1 byte = space
+………….
+compressed data
+The preceding data is encoded with a similar custom Base64 algorithm as used previously.
+This data is first sent over the network to the remote server in an HTTP GET request format.
+The malicious control server replies with further commands.
+Decompressing the data using a new tool:
+The decompressed text now looks like this:
+At this point, the attacker knows which processes are running on the victim’s machine.
+The control server instructs the bot to upload important files.
+The bot scans all the drives for these files and creates index.ini, which contains the newly generated name and path of filenames:
+Thus the malware steals all of the important files from the victim’s machine.
+The new binary has only two commands, namely uninstall and upload.
+PCRat
+Once the victim’s data has been uploaded, the control server instructs the bot to download and install the remote admin program PCRat, a malicious tool written in Chinese.
+I found a copy of the PCRat builder that supports English:
+Once installed, PCRat connects to different remote control server on higher ports and sends information about the machine in encrypted format.
+Here is the packet capture:
+PCRat first sends an HTTP GET request followed by encrypted data:
+The structure of the PCRat encrypted data:
+5 bytes = magic string “PCRat”
+4 bytes = whole packet length
+4 bytes = compressed length of data
+… Zlib compressed data
+PCRat sends some information about system.
+The decompressed data:
+PCRat has many commands to control the victim’s machine:
+The MD5 hashes:
+Updated Binary : 8D78A9E3DF1E19F9520F2BBB5F04CB54
+PCRat Binary: DA0C19DB8215D8CBF3D0FBA4A1A00183
+With the help of PCRat, the Travnet botnet takes full control of a victim’s machine.
+The attackers behind Travnet are very active.
+Not only have they updated the main binary, but they are also randomly generating the .asp files that control the bot from their control servers.
+We have also seen that the attackers are actively restoring previous domains that were down and .asp files so that they can continue to collect data from previously infected machines.

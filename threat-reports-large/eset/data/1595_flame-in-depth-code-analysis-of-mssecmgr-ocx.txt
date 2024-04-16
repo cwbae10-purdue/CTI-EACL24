@@ -1,0 +1,126 @@
+Analysis of the Flame worm (Win32/Flamer) reveals some interesting facts about the internal structure of its main module.
+The Flame worm (detected by ESET as Win32/Flamer) is one of the most interesting targeted threats of this year.
+Although several articles about it have been published, many of the facts about the internal structure of its main module (mssecmgr.ocx) have not been disclosed yet.
+In this blog post we want to shed light on some of the implementation details of this component.
+We first became acquainted with complex targeted threats through our analyses of Stuxnet ( Stuxnet Under the Microscope ), continued with Duqu ( Win32/Duqu: It’s A Date ), and now it’s Flame’s turn.
+Analysis of the Stuxnet code required quite an effort in order to comprehend the complete functionality of the worm.
+In the case of Duqu we found the architecture and implementation quite similar to those of Stuxnet, which made the process of analysing Duqu much easier.
+Flame is quite another story; there are lots of interconnected modules as well as internal storage for configuration information, and a payload with a format as yet unknown.
+Despite these difficulties we are going to reveal some interesting details about the main module mssecmgr.ocx.
+It is clear that Flame is malware of the same kind as Stuxnet and Duqu.
+These malicious programs implement quite complex logic, with elaborate architecture and implementation details.
+They are intended to maintain a persistent presence on the attacked system.
+The object-oriented style of Flame programming in C++ makes code analysis more complex, because the process of analysis necessitates the reconstruction not only of Flame workflow logic, but compiler logic too.
+For example, a reconstruction of call method Rc4_GetBufferSize looks like this:
+In static analysis, one problem commonly encountered is that of ascertaining the single-valued relationship with an exact value in VTABLE, which will be called by the VPTR pointer.
+In the process of static analysis we use a method involving defining structures for the emulation of C++ objects.
+This method has been well described in the article: Reversing C++ programs with IDA pro and Hex-rays .
+In the blog post Win32/Duqu: It’s a Date it is mentioned that Duqu is based on the same source code as Stuxnet.
+Based on the binary analysis of the main module of Flame (henceforth in this article this term will referr to mssecmgr.ocx) it may be concluded that the developers of the malware used different source code to that of Stuxnet or Duqu.
+Although mssecmgr.ocx makes heavy use of object oriented code this is quite different to how object oriented programming is used in both Stuxnet and Duqu.
+If we look at the implementation details for certain objects we see that they are signficantly different.
+Consider, for instance, objects representing strings, which are almost the most frequently used type of object in all the malware considered here.
+In the figure below we present structures describing string objects in Stuxnet and in Flame and they are clearly quite different.
+The same applies to the methods implementation of these objects.
+Figure 1 Structures describing string types in Stuxnet and Flame
+Such types are responsible for working with files, file mappings, synchronization objects, memory buffers, memory streams and so on, and are different from those implemented in Stuxnet.
+Another distinguishing feature of Flame code is the frequent use of smart pointers like objects in order to handle pointers to objects of different types.
+Apart from the convenience of this approach (from the point of view of the developers) using smart pointers bulks up the code and makes it more difficult to analyze.
+Flame stores its components in various files within the Windows file system.
+It uses three distinct naming schemes in order to store the files.
+The malware chooses a specific scheme in each case, based on configuration information and the environment in which it is run.
+The following table contains information on these naming schemes.
+Table 1 Flame naming schemes
+When the malware is installed in the system it is registered as an LSA authentication package in the system registry.
+This results in loading mssecmmgr.ocx as part of the lsass.exe system process during system startup.
+Interestingly, LSA authentication packages are required to expose a specific set of routines as interface for LSA.
+None of these interface routines are implemented by the main module of Flame.
+When the main module of the malware is launched it performs some checks as to whether the Operating System version is supported by the malware and whether the machine was loaded in safe mode:
+Figure 2 Flame initialization checks on startup
+The malware doesn’t run on 64-bit operating systems, but runs on all versions of Windows starting from Windows 2000 up to but not including Windows 8).
+When the main Flame module is loaded it performs checks as to what security software is installed on the machine to be infected.
+The list of the programs whose presence on the system should be checked is stored in configuration information which is discussed later.
+In the samples we analyzed there are approximately 320 different names which correspond to security software of different kinds: personal firewalls, antivirus software, parental control and so on.
+Depending on several conditions as defined by configuration information the malware may stop execution if specific security software is spotted in the system.
+All the detected products are split into groups depending on their functionality:
+Personal firewalls;
+HIPS;
+Antivirus software;
+Network packet analyzers;
+Parental control systems;
+System monitors;
+DLP systems etc.
+Let’s look at how the malware propagates among processes within the infected system.
+Before going any further it is worth mentioning a nice publication on Flame’s injection technique (Inside Flame: You Say Shell32, I Say MSSECMGR).
+To be able to inject code into the address space of other processes the malware carefully uses such standard API routines as:
+VirtualAllocEx to allocate memory for the module injected into the target process;
+WriteProcessMemoryReadProcessMemory to inject the code;
+CreateRemoteThreadRtlCreateUserThread to transfer control to the injected module.
+As a result, at some point the address space of the target process will look like this:
+Figure 3 Target process address space layout during injection
+What makes Flame difficult to detect is an interesting trick with the shell32.dll library.
+To map the image of the injected module, Flame allocates memory by mapping system library shell32.dll.
+The code responsible for doing this looks like this when it is decompiled:
+Figure 4 Reusing memory region of shell32.dll
+This results in the creation of all the necessary system structures for the injected module and as a result it looks like a legitimately-loaded module.
+When all the data and code are written into target address space, Flame creates a remote thread, by executing either the CreateRemoteThread or RtlCreateUserThread API calls and specifying the address of Stub 2 as entry point and the injected data as a parameter.
+Stub 2 contains loader code, the purpose of which is to map the injected module into the address space of the process as follows:
+Allocate memory for the image;
+Apply base relocations;
+Initialize import address table;
+Call entry point.
+It uses injected data as a helper structure containing the address of all the necessary routines and supplemental string constants.
+Here is a piece of the code responsible for initialization of this structure:
+Figure 5 Initialization of supplemental structures
+Another thing that Stub_2 does is to hook the msvcrt.dll entry point with Stub_1 code.
+Later it will be shown why and how this hooking is implemented.
+The main functionality of Stub_1 code is to call the entry point of the injected module whenever the entry point of msvcrt.dll is called.
+As a result the injected module is able to receive all the events msvcrt.dll receives.
+It allows the malware to partially recreate the same execution environment as the legitimately loaded module creates.
+Flame hooks the msvcrt.dll entry point in quite an unusual way.
+Instead of splicing the code it overwrites the corresponding field of the PEB_LDR_DATA structure in InLoadOrderModuleList found in the PEB (Process Environment Block).
+After injection is completed the malware cleans up traces of penetration into process address space.
+Flame’s configuration information storage is quite complicated and differs significantly at the implementation level from that of Stuxnet or Duqu.
+When the malware penetrates initially into the system, all the configuration data are contained inside resources belonging to the main module.
+Looking at Flame’s main module we notice a resource with the ID 146 in the resource directory.
+This is the place where all the configuration data are stored.
+Depending on the version of the malware the size of the resource may differ, ranging from 37 Kb up to 3 Mb.
+Unlike Stuxnet and Duqu, which store configuration data in a simple binary file, Flame employs a more sophisticated kind of storage which isn’t straightforward to parse.
+To be able to get access to the configuration information one needs to decrypt the resource and decompress the decrypted data.
+The encryption algorithm is rather simple, as presented in Figure 6.
+Figure 6 Flame resource decryption algorithm
+When decrypted the data are de-compressed with the inflate mode of the data compression algorithm.
+Thus the malware proceeds to decompress the data in small data portions (less than a kilobyte each).
+To bypass sandboxes the malware calls the Sleep API routine to wait for 10 milliseconds.
+between portions.
+This makes the process of decompression quite resilient:
+Figure 7 Inserting delays in resource decompression algorithm
+Finally, after decompressing the decrypted resource, Flame applies a permutation to it as defined by the following byte array:
+Figure 8 Configuration data decryption permutation
+All the Flame’s configuration data are split into specially formatted blocks of the following natural structure:
+Figure 9 Flame configuration data storage basic block layout
+Here, the block byte describes the type of the information contained inside the block.
+There are two types of blocks:
+blocks containing supplemental information about configuration information items;
+blocks containing the values for configuration information items.
+The data field is structured as follows for blocks containing supplemental information:
+Figure 10 Flame configuration data storage basic block layout with supplemental information
+Namely, it specifies the offset of the block with item data, the offset of the block containing supplemental information on the next configuration data item, and the name of the item.
+The root block is located at offset 0x1A from the beginning of the configuration data.
+In the next figure you can see a sample block describing configuration item RTS.MEDIA_SETUP.FILES_TO_DELETE:
+Figure 11 Flame configuration data storage basic block
+Unlike Stuxnet and Duqu, where configuration information items were nameless, in the case of Flame malware researchers were able to take advantage of item naming to make understanding Flame functionality easier.
+The type of data of configuration information items may be determined by the value of the block byte.
+Here are some block byte values corresponding to different types of items:
+0x08 DWORD (4-byte integer);
+0x06 WORD (2-byte integer);
+0x09 QWORD (8-byte integer)
+0x05 NULL-terminated Unicode string;
+0x04 raw binary data;
+0x03 item description block (see Figure 10)
+0x02 root block.
+Depending on several conditions, when the malware infects the system it stores configuration information in a file with the name mscrypt.da0 or wpgfilter.da0 (see corresponding entry in Table 1)
+We continue our in-depth code analysis of Win32/Flamer and will shortly return to you with new information.
+Related ESET comment:
+The negative impact on GDP of state-sponsored malware like Stuxnet and Flame
+Stuxnet, Flamer, Flame, Whatever Name: There’s just no good malware

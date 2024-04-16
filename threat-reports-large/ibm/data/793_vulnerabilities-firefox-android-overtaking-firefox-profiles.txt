@@ -1,0 +1,88 @@
+We have recently discovered a series of vulnerabilities in Firefox for Android that allows a malicious application to leak sensitive information pertaining to the user profile.
+We developed attacks that first try to determine the random Firefox profile directory name and then exfiltrate sensitive data, such as cookies and cached information, from the derandomized folder, breaking Android’s sandbox.
+This blog post describes the vulnerabilities and attacks in an informal manner.
+The full analysis can be found in our white paper.
+Firefox for Android stores the personal data under the profile directory, located at /data/data/org.mozilla.firefox/files/mozilla/<RANDOM-STRING>.default.
+Randomizing the profile directory name is a good.
+It provides another layer of defense, preventing unwanted access to this directory in case of Firefox exploitation.
+Access to this directory should indeed be carefully scrutinized since it contains sensitive information, such as the user cookies, browsing history and cache.
+View on-demand demo on how to pinpoint Vulnerabilities in Android applications
+The generation of the profile directory is done using the following code:
+So basically it takes a very simple approach.
+It generates the profile directory name by picking up characters located at 8 random indices in an alphanumeric array:
+For example, if the vector of random indices is (0,4,3,1,26,29,4,3), then the generated profile is:
+The Math.random() used by the saltProfileName function (which generates the profile directory name) returns a pseudo-random number between 0 and 1.
+This method relies on the java.util.Random class which is seeded in its default constructor using the following code:
+If the attacker knows the seed of the Pseudo-Random Number Generator (PRNG), he can predict its output and eventually the generated Firefox Profile name.
+For example, if the attacker realizes that the seed is 1036571834, then he can calculate its corresponding vector of indices, (2,14,26,4,13,27,3,12), by simply initializing Math.random with the predicted seed (1036571834) and invoking it 8 times (we haven’t witnessed any call to Math.random before the profile generation, so knowing the seed means knowing the PRNG state).
+This vector of indices yields the following profile name:
+In the Math.random case, the auto-generated seed depends on a couple of values.
+The current time in milliseconds precision (System.currentTimeMillis()).
+The identity hash code of the Random object (System.identityHashCode(this)).
+Both factors can somewhat be predicted with the attacker, making a brute-force attack on the unknown bits feasible:
+Most of the information of the time factor can be leaked.
+The identity hash code is the Virtual Address (VA) of the Random object in the Dalvik VM heap.
+Due to ineffective ASLR in Dalvik apps, most of the VA bits can be leaked by a malicious application by simply querying its own process.
+The conclusion is that Math.random is cryptographically insecure and using it results in a predictable Profile Directory name.
+The random Profile Directory Name is written to the Android System Log (logcat) in various locations.
+For instance, upon Profile creation, the following data is written:
+In Android 4.0 and below, the Android log can easily be read by all apps including malicious ones by acquiring the READ_LOGS permission.
+Android 4.1 has introduced a change to this behavior to prevent such log leakage attacks: The READ_LOG permissions are no longer required; however, applications can only listen to their own logs.
+We will next see how a malicious app can manipulate Firefox for Android to leak its own private log in order to overcome this obstacle.
+Any file that cannot be rendered by Firefox for Android is automatically downloaded to the SD card (/mnt/sdcard/Download), a folder that can be read by a malicious application by acquiring the READ_EXTERNAL_STORAGE permission.
+Interestingly, this permission was not even enforced before Android 4.4.
+This allows a malicious application to extract non-renderable data such as the cookies database once it has managed to derandomize the profile directory name.
+The org.mozilla.gecko.CrashReporter class is an exported activity.
+Its purpose is to send crash dumps to Mozilla when needed:
+When the activity is launched, the following actions take place:
+The given minidump file is moved to the pending minidumps path: /data/data/org.mozilla.firefox/files/mozilla/Crash Reports/pending.
+A meta-data filename is deduced from the given minidump file path, by replacing all ‘.dmp’ occurrences with ‘.extra’.
+The meta-data file is moved to the pending minidumps path.
+The meta-data file is parsed as key/value file format.
+The target server URL (the server that the crash information is sent to) is specified here using the ServerURL key.
+A crash dialog is presented to the user.
+If the user presses the Close or Restart buttons with the Send report check-box enabled, the minidump alongside with other sensitive information is sent to the specified server.
+It should be noted that, if the user has also checked the Include the address check-box, then Android logs are sent as well.
+The CrashReporter activity consumes the minidump path from the input intent although it should be considered untrusted data since the activity is exported in the Android Manifest File.
+Therefore, a malicious application can control the source path of the moved minidump file and the deduced meta-data file (the extra file).
+We will next see how controlling the minidump Intent extra enables the attacker to extract sensitive information from the application.
+The attacker (by the use of a malicious application) can exploit a subset of the aforementioned vulnerabilities in order to:
+Determine the profile directory name.
+Exfiltrate sensitive data (such as cookies and cached information) from the profile directory.
+The following are possible exploitation options:
+The attacker can leak most of the bits of the profile directory creation time and the VA of the Random object in order to drastically reduce the set of possible profile names.
+Afterwards, he can brute-force the candidate profile names in a practical amount of time.
+The attacker creates a specially crafted world-readable HTML file and commands Firefox to load it (by using an Intent).
+This file includes the list of candidate profile names ordered by their probabilities.
+The JavaScript code in the HTML file goes over the list, searching for the correct profile.
+When there is a match, it can download any file under the profiles directory by creating an iframe targeting the filename.
+As per the automatic download vulnerability, if Firefox cannot render the file, it will automatically download the file to the SD card (/mnt/sdcard/Download), a folder that can be read by the attacker.
+The following image shows a successful run of our proof-of-concept exploit.
+As can be seen, sensitive files have been downloaded to the SD card:
+The full exploitation technique and probability analysis can be found in our white paper.
+On Android 4.0 and below, the Android System Log can easily be read by all apps including the malicious one, which allows the attacker to deduce the profile directory path.
+Android 4.1 has introduced a change to this behavior to prevent such log leakage attacks: The READ_LOG permissions are now not required; however, applications can only listen to their own logs.
+Since Firefox sends its own private log alongside the crash dump report, the Crash Reporter vulnerability can be exploited for sending the logs to the attacker:
+The malicious app creates two world-readable files under its data directory: /data/data/malicious app/foo.dmp with an arbitrary content (can be left empty) and /data/data/malicious app/foo.extra which contains the attacker’s server, ServerURL=http://attacker/.
+The malicious app generates an Intent object that targets the CrashReporter activity with a minidumpPath parameter set to /data/data/malicious app/foo.dmp
+After the above actions take place, according to the operation of the CrashReporter activity, Firefox will move foo.dmp and foo.extra from the malicious application’s data directory to the Firefox crash report’s pending path and then parse foo.extra for key-value pairs.
+Since the extra file contains the attacker’s IP as the ServerURL, if the user pressed one of the buttons on the CrashReporter dialog, Firefox would send the crash report to the attacker.
+If the user has also checked the Include the address check-box, then Firefox would also append the Android Log output, which contains the Firefox private logs that include the random profile directory name.
+It should be noted that, since Firefox sends a 200-line window of the log only, the leaked path can be out of that window since it is logged upon Firefox’s launch.
+In order to make sure that the path is within the window, the attacker can restart Firefox by crashing it.
+This can be easily done by invoking the CrashReporter activity without a minidumpPath parameter.
+Once the attacker has learnt the profile path, he can leak files by exploiting the Automatic File Download vulnerability.
+The attacker simply invokes Firefox using an Intent with a payload set to the target file path.
+Here the attacker learns the profile directory name by the exact same technique described in Option II.
+Data exfiltration, however, is done by exploiting the Crash Reporter File Manipulation vulnerability.
+The attacker indirectly injects the ServerURL=http:// string to the target file in order to trick Firefox to use this file as the minidump extra.
+For instance, by using this method, the attacker can leak the cache.
+First, he opens Firefox (using an Intent) on an attacker’s controlled website, which contains the following string in its HTML body:
+After the cache has been prepared, the attacker can leak it by generating another Intent that targets the CrashReporter activity, with the minidump path parameter set to the cache file.
+Since the cache file path has no ‘.dmp’ substring, the computed extra file will be the same, and the target server URL will be parsed out of the cache file.
+CVE-2014-1484 was fixed in Firefox 27 by MSFA 2014-06.CVE-2014-1506 was fixed in Firefox 28 by MSFA 2014-24.CVE-2014-1515 was fixed in Firefox 28.0.1 by MSFA 2014-33.CVE-2014-1516 will be fixed in future versions.
+Because its severity is now much lower with the CVE-2014-1515 fix, we were allowed by Mozilla to publicly disclose this vulnerability.
+03/25/2014 Public disclosure.03/25/2014 Firefox 28.0.1 is released (CVE-2014-1515 fix).03/18/2014 Firefox 28 is released (CVE-2014-1506 fix).03/15/2014 Permission granted.03/12/2014 Requested permission to disclose CVE-2014-1516 despite missing fix.02/14/2014 Firefox 27 is released (CVE-2014-1484 fix).11/28/2013 Reported vulnerabilities to Mozilla.
+The Application Security Research Group researches new security threats and vulnerabilities and provides regular rule updates to AppScan.
+Roee leads the X-Force Application Security Research Team at IBM.
+He has vast knowledge and experience in network and mobile security.

@@ -1,0 +1,46 @@
+Recently, we - i.e Giuseppe Pacelli (student at Eurecom), Matteo Bertolino (student at Eurecom) and their supervisors Ludovic Apvrille (Telecom ParisTech) and myself - had a closer look at a few Android samples infected with the Feiwo adware.
+This adware family is not new, but the instances we analyzed were still undetected by all anti-virus vendors last week, as far as we know.
+Besides aggressively serving ads to your mobile phone, this potentially unwanted application (PUA) posts your phone number and list of applications you installed to their remote servers.
+We caught the adware red-handed trying to deceive our analysis.
+As it often happens, the PUA tries to detect it is running on a real phone or not.
+Figure 1 shows it checks whether the IMEI or phone model is fake.
+If it detects fake IMEI or fake model it assumes it is running on an emulator or test device and just won't work.
+Too bad for the AV analyst, more steps will be required... See Figure 2, there is no advertisement traffic at all: the only two packets which were captures correspond to a Google server which has no relationship with Feiwo.
+Figure 2: The PUA shows absolutely no web traffic at all on a standard emulator in the wrong country.
+The PUA also checks the phone is located in the appropriate country for its advertisement.
+So, if we change the emulator's GPS coordinates, we notice a little more traffic (see Figure 3) but still not much since this is an emulator.
+Setting the GPS coordinates for the emulator:
+Figure 3: When in the appropriate country, the PUA shows a little more web traffic, but still not much because it detects it is running on an emulator
+The full traffic only shows up (see Figure 4) if running on a real device in the real country.
+Or if we ensure our emulator does not use "000000000000000" as IMEI, "sdk" or "google_sdk" as model, and fix the GPS coordinates.
+Figure 4.
+Full traffic for the PUA - hidden from a quick analysis
+So, we finally managed to capture HTTP traffic, but besides it being gzipped, it also appeared to be encrypted (see Figure 5).
+Figure 5.
+Encrypted data posted by the PUA to its remote server
+Reversing the code, we figured out the data was encrypted using DES-ECB (which is a poor choice by the way).
+But where is the password?
+!
+That's when we noticed many obfuscated strings:
+Those strings are also encrypted using DES-ECB, but the key is hard-coded (but different for each sample we analyzed), so we decrypted the strings, just to peep in.
+Hurray!
+Plenty of information (our decryption program prints first the encrypted string, then decrypted):
+That's where the string "bXXXXXXe#66#88" drew our attention (NB.
+parts of this string are censored to preserve your privacy in case you are infected with Adware/Feiwo).
+A strange string, not too long, and with no apparent meaning.
+So we searched in the code where it was used.
+Of course, do not search for "bXXXXXXe#66#88" but for the encrypted version "CB2AF10CBF6C0C26..." (note: the encryption key is different each time).
+Yes, that's the key used to encrypt/decrypt communication with Feiwo's remote servers.
+But, a DES key is only 8 byte long, and here we have 16.
+Reading the specs of DESKeySpec, we see the input may be longer, but only the first 8 bytes are taken into account.
+So, actually, the end "e#66#88" is totally useless.
+We quickly set up a Python script to decrypt our packets:
+print DES.new('bXXXXXXX', DES.MODE_ECB).decrypt(open('answer.raw', 'r').read())
+and finally were able to see what the PUA was sending to its servers: a big JSON object with our phone number and list of installed applications...
+...
+"brand": "unknown", "devAppPackage": "org.vv.mathhandbook", "imei": "123456789112000", "mobileSystem": "android", "model": "sdk", "network": "3G", "operator": "260", "phoneNumber": "15555215554", "resolution": "768*1184", "sdkVersion": "2.1.3", "simSerialNum": "89014103211118510720", "systemVersion": "4.4.4"
+AV analysts: with this blog post, you should be able to keep an eye and detect similar samples.
+Customers: the following samples are detected as Adware/Feiwo!Android (SIGID: 125095892- 125095894).
+To get rid of it, you simply need to remove the corresponding application.
+SHA256: 5633b0be503c0ab3b6b734a8f8220d696fe3e5b54e54be58b8480c58d5093741 e0ce7b387340f565f466fee462c004134fb2727139acbcee4ce5be20ef3c7b43 9024e43150377046060409fff98b5f65df567f12c7c09d7b8a8dd11788763c38
+-- the Crypto Girl

@@ -1,0 +1,183 @@
+The Sage ransomware variant appears to have been out of circulation for a while in the malware scene.
+Since we published our article on Sage 2.0 last February, and the discovery of version 2.2 in March, the FortiGuard Labs team hasn’t seen significant activity with this malware for over six months.
+However, we just recently found new Sage samples that, while they appear to still be Sage 2.2, now have added tricks focused on anti-analysis and privilege escalation.
+In this article, we will share our findings of these recent updates.
+Using our Kadena Threat Intelligence System, we have identified that this malware is being delivered through spam emails with malicious JavaScript attachments that download this new Sage 2.2 variant.
+Figure 1.
+KTIS view of attack vector of the new Sage 2.2 variant
+Some of the samples are also delivered through document files with malicious VB Macro downloader code that we believe are also attached to spam emails.
+Based on the data from the Kadena Threat Intelligence System, it looks like URLs where this new variant of Sage are downloaded use the .info and .top top-level domain (TLD) name for the domain, and a number for the path.
+What’s really interesting is that we confirmed that there are also Locky ransomware files that share the same download servers with Sage.
+Figure 2.
+KTIS view of servers that host some samples of both Locky and the new Sage 2.2 variant
+Figure 3.
+Examples of download URLs
+While we will not go into the details of the things that didn’t change in this variant from earlier versions of the Sage ransomware, we will highlight some important details that we think users should be aware of.
+As with earlier variants, this version comes packed with a variety of crypters.
+It uses the same encryption algorithm as Sage 2.0, which is ChaCha20, to encrypt files.
+Names of encrypted files are still appended with a .sage extension.
+It also still avoids infecting machines in some countries based on the following keyboard layout:
+Belarusian
+Kazak
+Uzbek
+Russian
+Ukrainian
+Sakha
+Latvian
+The discovered variant also sets the desktop wallpaper with the same message used by earlier variants of Sage.
+Figure 4.
+Sage ransomware desktop wallpaper
+While examining the current malware variant we observed that one interesting update is that most of the strings are already encrypted in an effort to conceal its malicious content.
+As it turns out, the strings are encrypted using the Chacha20 cipher.
+Every encrypted string also has its own hard-coded decryption key.
+Figure 5.
+String decrypt function
+In addition to encrypted strings, this malware variant has also implemented some checks to determine if it is being analyzed, or if it has been loaded into a sandbox or a virtual machine.
+If these checks are met, it immediately terminates itself in order to avoid being analyzed.
+Following are the checks this malware performs:
+This variant of Sage enumerates all the active running process on the machine, computes a hash using Murmurhash3, and then checks it against a list of hard-coded hashes.
+Table 1 shows the list of some of the blacklisted process names along with their corresponding Murmurhash3 hashes.
+Table 1.
+List of blacklisted process names
+It also looks for the occurrence of the following names in the full path of where the malware executes.
+sample
+malw
+sampel
+virus
+{sample’s MD5}
+{samples’s SHA1}
+These names are commonly used as the filename or directory name for analyzing malware samples.
+It appears that Sage assumes it is being analyzed if any of these names appear in its full path.
+By using StrStrI(), this comparison is also not case-sensitive.
+Figure 6.
+File full path checking
+There have been a lot of different studies on the ways that malware detects that has been loaded into an AV Sandbox.
+One of these is by checking the known computer or user names used in a Sandbox environment.
+This malware variant includes a list of hard-coded computer names and user names, which are also in its Murmurhash3.
+So far, we have only identified one from these lists, which is the computer name “abc-win7”.
+Aside from the hash list, it also contains encrypted strings of computer names and user names that it avoids.
+Here is the decoded list:
+Wilbert
+Customer
+Administrator
+Miller
+user
+CUCKOO-
+TEST-
+DESKTOP-
+WORKSTATION
+JOHN-PC
+ABC-PC
+SARA-PC
+PC
+D4AE52FE38
+This malware also uses the x86 instruction CPUID to get the processor details, such as the processor brand string.
+This brand string is then checked against the following blacklisted CPU IDs, which are commonly used in Virtualization environments:
+KVM
+Xeon
+QEMU
+AMD Opteron 2386
+Figure 7.
+Check CPU ID
+Lastly, it checks to see if the computer has an instance of a running Antivirus and checks it against a set of blacklisted MAC addresses.
+The malware checks if there is an Antivirus running by enumerating the services running under Service Control Manager, computing these services names to a Murmurhash3, and then checking them against its list of hard-coded hashes.
+Table 2 and Table 3, respectively, list some of the blacklisted Antivirus services names and MAC addresses.
+Table 2.
+Blacklisted services names
+Table 3.
+Blacklisted MAC addresses
+It’s common for malware to seek to obtain a privilege level higher than those provided to normal user accounts because a higher privilege level allows them to gain full control of the system and then do almost everything it wants on the infected system.
+This is particularly important for crypto ransomware due to the fact that they require higher privilege level to ensure that all victims’ files are encrypted, including those precious files stored in protected folders.
+In our recent analysis we also found that Sage has been armed with the ability to elevate its privilege by either exploiting an already patched Windows kernel vulnerability or User Account Control (UAC) feature.
+In fact, Sage is not the first malware family to leverage the Windows kernel vulnerability introduced in CVE-2015-0057.
+However, the exploitation technique – namely the write-what-where (WWW) privilege it uses – distinguishes itself from other malware families.
+It’s important to note that this vulnerability and the methods used to exploit this vulnerability have been well documented by numerous publicly available articles, so the following analysis mainly focuses on how it transfers code execution from ring-3 to ring-0 in the post-exploitation stage.
+Due to the nature of this vulnerability, it is able to arbitrarily read and write data in any portion of the machine’s memory.
+In the exploit code we found in Sage, the exploit is able to leverage some Windows GUI functions, such as InternalGetWindowText/NtUserInternalGetWindowText and NtUserDefSetText, to carry out arbitrary read/write.
+For a traditional kernel exploit it often targets HalDispatchTable and then overwrites one of the pointers located in the table for code transition from ring-3 to ring-0.
+For Sage, it picked the Local Descriptor Table (LDT) for its ring-3 to ring-0 transition point, as shown in the following code snippet:
+List 1: Exploit calls first stage kernel shellcode payload via far call to LDT
+The following debugger output shows the existing LDT entry before the commented code shown in List 1 above is executed:
+List 2: Content of LDT before exploit code is executed
+After the commented code shown in List 1 is executed, we can see the new LDT entry was added successfully to the EPROCESS structure:
+List 3: Content of LDT after exploit code is executed
+After adding the fake LDT to GDT via the exploit, it continues to make the far call and reaches the first stage of the kernel shellcode:
+List 4: Using far call to trigger the first stage kernel shellcode
+List 5: First stage kernel exploit shellcode
+At the prologue of the kernel shellcode, the exploit attempts to disable the Supervisor Mode Execution Prevention (SMEP) bit stored at the CR4 register, which would allow kernel-mode code to execute user-mode code after being disabled, and then transfer the code execution to 0x587AD2 in user-mode.
+List 6: Finding the NT kernel image address from within IDT
+Interestingly, this version of the exploit used different techniques to retrieve the ntoskrnl.exe image base address compared to the kernel exploit we observed previously.
+When we displayed the contents of the IDT from address 0x80b93400, we noticed that there is a constant value 0x82888e00, which represents the value of KIDTENTRY.Access and KIDTENTRY.ExtendedOffset respectively, as shown in List 5.
+In fact, this constant value turned out to fall within the ntoskrnl.exe image.
+Subtracting the 0x1000 offset at a specific time can eventually lead to the ntoskrnl.exe image base address, as demonstrated by the shellcode in List 4.
+Our hunch as to why this technique is used is that maybe the coders wanted to evade behavioral detection by some security vendors that could spot the traditional ways of loading the ntoskrnl.exe image base, which are publicly known in open source kernel exploits.
+Finally, the exploit replaced the System process’ token with its own process token to gain SYSTEM privilege.
+The UAC bypass trick used by this malware is not really new at all, but this is the first time we’ve seen Sage use it.
+It uses the eventvwr.exe and registry hijacking to suppress the UAC popup.
+Figure 5 provides us with an overview of how this trick operates.
+We have also explained this technique in detail in a previous article.
+Figure 8.
+UAC bypass
+Earlier Sage ransomware variants include a ransomware note named !HELP_SOS.hta containing instructions on how to recover the encrypted files.
+The note comes with several language translations, including:
+English
+German
+Italian
+French
+Spanish
+Portuguese
+Dutch
+Korean
+Chinese
+Persian
+Arabic
+One noticeable change in this variant is the addition of six more language translations, leading us to conclude that the author may aim to target more countries in the future:
+Norwegian
+Malay
+Turkish
+Vietnamese
+Indonesian
+Hindi
+Figure 9.
+Ransomware note with additional language translations
+There is also a change in how much the user has to pay to recover their encrypted files.
+The ransom note contains a link to an onion site that the user has to visit using a TOR browser, which is a browser designed for anonymous internet browsing and downloading, in order to purchase the “SAGE Decrypter software.” The page displays the usual information, such as further instructions and the initial ransom amount, which has been raised from $99 and $1000 in earlier variants to $2000.
+Figure 10.
+Ransom amount
+For some reason, the Sage version indicated on the payment site is still 2.0.
+As with earlier variants, the author lets the affected user upload an encrypted file less than 15KB in size to test the decryption capabilities.
+Figure 11.
+Test file decryption
+After a few minutes, the user can download the decrypted file.
+Figure 12.
+Decrypted file is available for download
+Compared to the earlier version of the Sage Ransomware, this variant has added some tricks to gain a better foothold on the victim’s system through the use of Privilege Escalation.
+To avoid being detected by auto analysis systems, it also has a heavy focus on utilizing several techniques to detect virtualized environments.
+But even with those enhancements, Fortinet’s FortiSandbox is still able to bypass these tricks and rate this new variant as “High Risk” without any additional re-configuration.
+Figure 13.
+FortiSandbox detects Sage and gives it a High Risk rating
+FortiMail blocks all spam emails.
+FortiGuard Antivirus service detects Sage samples as W32/SageCrypt.KAD!tr.
+FortiGuard Webfilter service blocks and tags all download URLs as malicious.
+FortiSandbox rates the Sage samples as High Risk.
+-= FortiGuard Lion Team =-
+884263ac1707e15e10bcc796dfd621ffeb098d37f3b77059953fc0ebd714c3df – W32/SageCrypt.KAD!tr
+00f1e3b698488519bb6e5f723854ee89eb9f98bdfa4a7fe5137804f79829838e - W32/Sage.KAD!tr
+0eb72241462c8bfda3ece4e6ebbde88778a33d8c69ce1e22153a3ed8cf47cc17 - W32/Sage.KAD!tr
+2b0b7c732177a0dd8f4e9c153b1975bbc29eef673c8d1b4665312b8f1b3fb114 - W32/Sage.KAD!tr
+43921c3406d7b1a546334e324bdf46c279fdac928de810a86263ce7aa9eb1b83 - W32/Sage.KAD!tr
+47a67a6fb50097491fd5ebad5e81b19bda303ececc6a83281eddbd6bd508b783 - W32/Sage.KAD!tr
+5b7d2b261f29ddef9fda21061362729a9417b8ef2874cc9a2a3495181fc466d0 - W32/Sage.KAD!tr
+a14ee6e8d2baa577a181cd0bb0e5c2c833a4de972f2679ca3a9e410d5de97d7e - W32/Sage.KAD!tr
+b381d871fcb6c16317a068be01a7cb147960419995e8068db4e9b11ea2087457 - W32/Sage.KAD!tr
+bbc0e8981bfca4891d99eab5195cc1f158471b90b21d1a3f1abc0ee05bf60e93 - W32/Sage.KAD!tr
+cb6b6941ec104ab125a7d42cfe560cd9946ca4d5b1d1a8d5beb6b6ceb083bb29 - W32/Sage.KAD!tr
+df64fcde1c38aa2a0696fc11eb6ca7489aa861d64bbe4e59e44d83ff92734005 - W32/Sage.KAD!tr
+eff34c229bc82823a8d31af8fc0b3baac4ebe626d15511dcd0832e455bed1765 - W32/Sage.KAD!tr
+f5f875061c9aa07a7d55c37f28b34d84e49d5d97bd66de48f74869cb984bcb61 - W32/Sage.KAD!tr
+f93c77fd1c3ee16a28ef390d71f2c0af95f5bfc8ec4fe98b1d1352aeb77323e7 - W32/Kryptik.FXNL!tr
+903b0e894ec0583ada12e647ac3bcb3433d37dc440e7613e141c03f545fd0ddd - W32/Kryptik.DMBP!tr
+c4e208618d13f11d4a9ed6efb805943debe3bee0581eeebe22254a2b3a259b29 - W32/GenKryptik.AZLB!tr
+e0a9b6d54ab277e6d4b411d776b130624eac7f7a40affb67c544cc1414e22b19 - W32/Kryptik.FXNL!tr
+1] Fortinet's Kadena Threat Intelligence System (KTIS) is an interactive platform that extracts contextual information from files, URLs, and other artifacts for more accurate malware identification, fast-tracked analysis, detailed analytics, and easier data correlation.
+Sign up for our weekly FortiGuard intel briefs or to be a part of our open beta of Fortinet’s FortiGuard Threat Intelligence Service.
