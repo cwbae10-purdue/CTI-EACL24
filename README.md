@@ -28,7 +28,11 @@ The dataset consists of pretraining dataset, threat reports per APT groups and a
 
   - Our dataset is as of 2022. 06, we will be releasing our collector as a tool (working on... will be uploaded soon)
 
-  ## Author Information 
+  ## MISC
+
+  - Copyrights of all dataset belong to original authors or their vendors.
+
+  - Any misuse of attack information is strictly prohibited.
   
   - Please contact us (Chanwoo Bae, bae68@purdue.edu) for any questions.
 
